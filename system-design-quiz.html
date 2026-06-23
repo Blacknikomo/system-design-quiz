@@ -63,6 +63,7 @@
   .feedback .more{color:var(--txt);opacity:.82;font-size:13px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
   .feedback .src{margin-top:9px;font-size:12.5px}
   .feedback .src a{color:var(--accent)}
+  .feedback .accept{color:var(--warn);font-size:13px;margin-top:8px}
   .nav{display:flex;justify-content:space-between;align-items:center;margin-top:16px;gap:10px}
   .progress{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden;margin-bottom:16px}
   .progress > div{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));width:0;transition:.3s}
@@ -189,7 +190,11 @@
       <div class="label">Recent sessions</div>
       <div id="histList"></div>
     </div>
-    <button class="btn ghost" id="resetBtn">Reset all history</button>
+    <div class="row">
+      <button class="btn" id="exportBtn">⬇ Export weak-topics analysis (JSON)</button>
+      <button class="btn ghost" id="resetBtn">Reset all history</button>
+    </div>
+    <p class="small muted" style="margin-top:8px">The JSON captures your weak topics, per-level accuracy, and the exact questions you missed (by id) — designed to feed targeted, more-detailed question generation later.</p>
   </div>
 </div>
 
@@ -1586,17 +1591,37 @@ function loadStore(){
   try{ return JSON.parse(localStorage.getItem(LS_KEY)) || defaultStore(); }
   catch(e){ return defaultStore(); }
 }
-function defaultStore(){ return {topics:{}, sessions:[]}; }
+function defaultStore(){ return {topics:{}, sessions:[], levels:{}, missed:{}}; }
 function saveStore(s){ try{ localStorage.setItem(LS_KEY, JSON.stringify(s)); }catch(e){} }
 let STORE = loadStore();
+// migrate older saved stores that predate levels/missed
+if(!STORE.levels) STORE.levels = {};
+if(!STORE.missed) STORE.missed = {};
 
 function topicStat(t){
   if(!STORE.topics[t]) STORE.topics[t] = {correct:0, total:0};
   return STORE.topics[t];
 }
-function recordAnswer(topic, correct){
-  const ts = topicStat(topic);
+function recordAnswer(q, correct){
+  const ts = topicStat(q.topic);
   ts.total++; if(correct) ts.correct++;
+  // per-seniority-level tally
+  const lv = q.level || "Unknown";
+  if(!STORE.levels[lv]) STORE.levels[lv] = {correct:0, total:0};
+  STORE.levels[lv].total++; if(correct) STORE.levels[lv].correct++;
+  // track missed questions by id (for targeted future question generation)
+  if(!correct){
+    const prev = STORE.missed[q.id];
+    STORE.missed[q.id] = {
+      id:q.id, topic:q.topic, level:lv,
+      question:q.q,
+      misses:(prev?prev.misses:0)+1,
+      lastMissed:Date.now()
+    };
+  } else if(STORE.missed[q.id]){
+    // got it right later — mark recovered but keep the record
+    STORE.missed[q.id].recoveredAt = Date.now();
+  }
 }
 function isWeak(t){
   const s = STORE.topics[t];
@@ -1721,6 +1746,7 @@ function renderQ(){
   html += `<div class="feedback ${answered?(answered.correct?'good show':'bad show'):''}" id="fb">
     <b>${answered? (answered.correct?'✅ Correct':'❌ Not quite') : ''}</b>
     <span class="why">${answered? q.why : ''}</span>
+    ${answered && q.accept ? `<div class="accept">↔ Also defensible: ${q.accept}</div>` : ''}
     ${answered && q.more ? `<div class="more">${q.more}</div>` : ''}
     ${answered ? `<div class="src">📖 Source: <a href="${srcUrl}" target="_blank" rel="noopener">${sourceLabel(srcUrl)}</a></div>` : ''}
   </div>`;
@@ -1752,7 +1778,7 @@ document.getElementById("checkBtn").onclick = ()=>{
   const isCorrect = picks.size===correctSet.size && [...picks].every(p=>correctSet.has(p));
   s.answered[s.i] = {correct:isCorrect};
   s.results[s.i] = {topic:q.topic, correct:isCorrect};
-  recordAnswer(q.topic, isCorrect);
+  recordAnswer(q, isCorrect);
   saveStore(STORE);
   renderQ();
 };
@@ -1853,6 +1879,71 @@ document.getElementById("resetBtn").onclick = ()=>{
     STORE = defaultStore(); saveStore(STORE);
     renderStats(); renderTopicChips();
   }
+};
+
+// Build a rich weak-topics analysis object for export
+function buildWeakAnalysis(){
+  const topicMeta = {}; // topic -> {total questions in bank, levels}
+  QUESTIONS.forEach(q=>{ (topicMeta[q.topic]=topicMeta[q.topic]||{bank:0}); topicMeta[q.topic].bank++; });
+  const byTopic = allTopics().map(t=>{
+    const s = STORE.topics[t] || {correct:0,total:0};
+    const acc = s.total ? +(s.correct/s.total).toFixed(3) : null;
+    return {
+      topic:t,
+      attempts:s.total, correct:s.correct,
+      accuracy:acc,
+      weak:isWeak(t),
+      bankSize:topicMeta[t]?topicMeta[t].bank:0,
+      source: SOURCES[t] || (B+"in-a-hurry/introduction")
+    };
+  });
+  const weakTopics = byTopic.filter(x=>x.weak)
+    .sort((a,b)=>(a.accuracy??1)-(b.accuracy??1))
+    .map(x=>({...x, recommendation:`Generate more detailed ${x.topic} questions; current accuracy ${(x.accuracy*100).toFixed(0)}% over ${x.attempts} attempts. Ground new questions in: ${x.source}`}));
+  // also surface "untested" topics (no attempts) as a softer signal
+  const untested = byTopic.filter(x=>x.attempts===0).map(x=>x.topic);
+  const byLevel = {};
+  Object.entries(STORE.levels||{}).forEach(([lv,s])=>{
+    byLevel[lv] = {attempts:s.total, correct:s.correct, accuracy:s.total?+(s.correct/s.total).toFixed(3):null};
+  });
+  const missed = Object.values(STORE.missed||{})
+    .sort((a,b)=>b.misses-a.misses)
+    .map(m=>({
+      id:m.id, topic:m.topic, level:m.level,
+      question:m.question,
+      misses:m.misses,
+      recovered: !!m.recoveredAt,
+      source: SOURCES[m.topic] || (B+"in-a-hurry/introduction")
+    }));
+  let tot=0,cor=0; Object.values(STORE.topics).forEach(s=>{tot+=s.total;cor+=s.correct;});
+  return {
+    schema:"sd-quiz-weak-analysis/v1",
+    exportedAt:new Date().toISOString(),
+    summary:{
+      totalAnswered:tot, totalCorrect:cor,
+      overallAccuracy: tot?+(cor/tot).toFixed(3):null,
+      sessions:(STORE.sessions||[]).length,
+      weakTopicCount:weakTopics.length,
+      bankSize:QUESTIONS.length
+    },
+    weakTopics,
+    untestedTopics:untested,
+    byLevel,
+    byTopic,
+    missedQuestions:missed,
+    note:"weak = accuracy < 60% over >= 3 attempts. Use weakTopics + missedQuestions (by id) to drive targeted, more-detailed question generation; each entry links its HelloInterview source."
+  };
+}
+document.getElementById("exportBtn").onclick = ()=>{
+  const data = buildWeakAnalysis();
+  if(data.summary.totalAnswered===0){ alert("No answers recorded yet — take a quiz first, then export."); return; }
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0,10);
+  a.href = url; a.download = `weak-topics-analysis-${stamp}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
 };
 
 /* ============================================================
