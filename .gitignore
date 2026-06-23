@@ -1,0 +1,5 @@
+# macOS
+.DS_Store
+
+# transient build artifacts (quiz option-rebalancing slices/patches/backups)
+_patches/
