@@ -1,0 +1,2048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Design Quiz — FAANG EM Prep</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#1a212b; --panel2:#222b38; --line:#2d3744;
+    --txt:#e6edf3; --muted:#8b98a8; --accent:#4f9cf9; --accent2:#7c5cff;
+    --ok:#2ecc71; --okbg:#11331f; --bad:#ff5c5c; --badbg:#3a1518;
+    --warn:#ffb84d; --chip:#26313f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--txt);line-height:1.5;font-size:15px}
+  .wrap{max-width:920px;margin:0 auto;padding:24px 18px 80px}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+  .row{display:flex;flex-wrap:wrap;gap:8px}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:9px;padding:10px 16px;font-size:14px;
+    font-weight:600;cursor:pointer;transition:.15s}
+  .btn:hover{filter:brightness(1.1)}
+  .btn.sec{background:var(--panel2);border:1px solid var(--line);color:var(--txt)}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--muted)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .chip{background:var(--chip);border:1px solid var(--line);color:var(--txt);border-radius:20px;
+    padding:6px 13px;font-size:13px;cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:6px}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .chip .ct{opacity:.7;font-size:11px}
+  .label{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px}
+  /* question */
+  .qtop{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+  .qmeta{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .tag{font-size:11px;padding:3px 9px;border-radius:6px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  .tag.topic{color:var(--accent);border-color:#2c4a6e}
+  .tag.tricky{color:var(--warn);border-color:#5a4520}
+  .tag.lvl-Mid{color:#8b98a8;border-color:#3a4654}
+  .tag.lvl-Senior{color:#4f9cf9;border-color:#2c4a6e}
+  .tag.lvl-Staff{color:#ffd24d;border-color:#6b5410;background:#2c2410}
+  .qtext{font-size:17px;font-weight:600;margin:10px 0 4px}
+  .multi-note{font-size:12px;color:var(--warn);margin-bottom:12px}
+  .opt{display:flex;gap:11px;align-items:flex-start;background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px;margin-bottom:9px;cursor:pointer;transition:.12s}
+  .opt:hover{border-color:var(--accent)}
+  .opt.sel{border-color:var(--accent);background:#1c2c40}
+  .opt.correct{border-color:var(--ok);background:var(--okbg)}
+  .opt.wrong{border-color:var(--bad);background:var(--badbg)}
+  .opt .box{width:20px;height:20px;border-radius:5px;border:2px solid var(--muted);flex:0 0 auto;margin-top:1px;
+    display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+  .opt.radio .box{border-radius:50%}
+  .opt.sel .box{border-color:var(--accent);color:var(--accent)}
+  .opt.correct .box{border-color:var(--ok);color:var(--ok)}
+  .opt.wrong .box{border-color:var(--bad);color:var(--bad)}
+  .opt.locked{cursor:default}
+  .feedback{border-radius:10px;padding:13px 15px;margin-top:12px;font-size:14px;display:none}
+  .feedback.show{display:block}
+  .feedback.good{background:var(--okbg);border:1px solid var(--ok)}
+  .feedback.bad{background:var(--badbg);border:1px solid var(--bad)}
+  .feedback b{display:block;margin-bottom:5px}
+  .feedback .why{color:var(--txt);opacity:.92}
+  .feedback .more{color:var(--txt);opacity:.82;font-size:13px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+  .feedback .src{margin-top:9px;font-size:12.5px}
+  .feedback .src a{color:var(--accent)}
+  .nav{display:flex;justify-content:space-between;align-items:center;margin-top:16px;gap:10px}
+  .progress{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden;margin-bottom:16px}
+  .progress > div{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));width:0;transition:.3s}
+  /* stats */
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center}
+  .stat .n{font-size:26px;font-weight:700}
+  .stat .l{font-size:12px;color:var(--muted);margin-top:2px}
+  .bar-row{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+  .bar-row .name{width:160px;font-size:13px;flex:0 0 auto}
+  .bar-row .track{flex:1;height:18px;background:var(--panel2);border-radius:5px;overflow:hidden;position:relative}
+  .bar-row .fill{height:100%;border-radius:5px}
+  .bar-row .pct{width:78px;text-align:right;font-size:12px;color:var(--muted);flex:0 0 auto}
+  .weak{color:var(--bad);font-weight:600}
+  .hist-item{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .hist-item:last-child{border:none}
+  .muted{color:var(--muted)}
+  .hide{display:none!important}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:10px;background:var(--panel2);border:1px solid var(--line)}
+  a.link{color:var(--accent);cursor:pointer}
+  .toprow{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+  select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="toprow">
+    <div>
+      <h1>System Design Quiz</h1>
+      <div class="sub">FAANG EM (L6) prep · topic-tagged · tracks weak areas · saves history</div>
+    </div>
+    <div class="row">
+      <button class="btn sec" id="tab-quiz">Quiz</button>
+      <button class="btn ghost" id="tab-stats">Stats &amp; History</button>
+    </div>
+  </div>
+
+  <!-- ============ SETUP ============ -->
+  <div id="view-setup">
+    <div class="card">
+      <div class="label">1 · Pick topics</div>
+      <div class="row" id="topicChips" style="margin-bottom:10px"></div>
+      <div class="row">
+        <button class="btn ghost" id="selAll">Select all</button>
+        <button class="btn ghost" id="selNone">Clear</button>
+        <button class="btn ghost" id="selWeak">Weak topics only</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">2 · Options</div>
+      <div class="row" style="align-items:center">
+        <label class="muted" style="font-size:13px">Difficulty
+          <select id="diffSel">
+            <option value="all">All</option>
+            <option value="basic">Basic only</option>
+            <option value="tricky">Tricky only</option>
+          </select>
+        </label>
+        <label class="muted" style="font-size:13px">Seniority
+          <select id="levelSel">
+            <option value="all">All levels</option>
+            <option value="Mid">Mid</option>
+            <option value="Senior">Senior</option>
+            <option value="Staff">Staff</option>
+          </select>
+        </label>
+        <label class="muted" style="font-size:13px">Length
+          <select id="lenSel">
+            <option value="10">10 questions</option>
+            <option value="20">20 questions</option>
+            <option value="0">All matching</option>
+          </select>
+        </label>
+        <label class="chip"><input type="checkbox" id="shuffleChk" checked style="accent-color:var(--accent)"> Shuffle</label>
+      </div>
+    </div>
+    <button class="btn" id="startBtn" style="font-size:16px;padding:13px 28px">Start quiz →</button>
+    <span class="muted" id="poolInfo" style="margin-left:12px;font-size:13px"></span>
+  </div>
+
+  <!-- ============ QUIZ ============ -->
+  <div id="view-quiz" class="hide">
+    <div class="progress"><div id="progFill"></div></div>
+    <div class="card" id="qCard"></div>
+    <div class="nav">
+      <button class="btn ghost" id="quitBtn">Quit</button>
+      <div class="row">
+        <button class="btn" id="checkBtn">Check</button>
+        <button class="btn" id="nextBtn" disabled>Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RESULT ============ -->
+  <div id="view-result" class="hide">
+    <div class="card">
+      <h1 style="margin-bottom:14px">Session result</h1>
+      <div class="stat-grid" id="resStats"></div>
+    </div>
+    <div class="card">
+      <div class="label">By topic this session</div>
+      <div id="resTopics"></div>
+    </div>
+    <div class="row">
+      <button class="btn" id="againBtn">New quiz</button>
+      <button class="btn sec" id="retryWeakBtn">Retry weak topics</button>
+    </div>
+  </div>
+
+  <!-- ============ STATS ============ -->
+  <div id="view-stats" class="hide">
+    <div class="card">
+      <div class="label">All-time totals</div>
+      <div class="stat-grid" id="allStats"></div>
+    </div>
+    <div class="card">
+      <div class="toprow" style="margin-bottom:12px">
+        <div class="label" style="margin:0">Mastery by topic</div>
+        <span class="muted" style="font-size:12px">red = weak (&lt;60% &amp; ≥3 answered)</span>
+      </div>
+      <div id="topicBars"></div>
+    </div>
+    <div class="card">
+      <div class="label">Recent sessions</div>
+      <div id="histList"></div>
+    </div>
+    <button class="btn ghost" id="resetBtn">Reset all history</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   QUESTION BANK
+   type: "single" | "multi"
+   correct: array of option indices
+   Aligned to Denis's System Design tracker + miss log.
+   ============================================================ */
+const QUESTIONS = [
+  // ---------- SQL vs NoSQL ----------
+  {id:"q150s", topic:"SQL vs NoSQL", diff:"basic", level:"Mid", type:"single",
+    q:"What is the strongest single reason to reach for a NoSQL store like Cassandra/DynamoDB over Postgres?",
+    options:["It is always faster","Very high write throughput with known key-based access patterns","It supports JOINs better","It guarantees stronger consistency"],
+    correct:[1],
+    why:"The real differentiator is the access pattern + write profile — not ACID. NoSQL shines for huge write throughput and queries by a known key; SQL wins for complex/ad-hoc queries, joins, and transactions."},
+  {id:"q132o", topic:"SQL vs NoSQL", diff:"tricky", level:"Senior", type:"single",
+    q:"You're designing a billing/ledger system at massive scale. Which is the better default and why?",
+    options:["NoSQL — scale always wins","SQL — you need multi-row transactions, integrity and ad-hoc queries even if it costs scale","NoSQL — money is just key/value","Either, it doesn't matter at scale"],
+    correct:[1],
+    why:"Finance/billing is the classic 'SQL despite scale' case: transactions, joins and auditability matter more than raw write throughput. NoSQL fits activity feeds, telemetry, chat — not ledgers."},
+  {id:"q1l7t", topic:"SQL vs NoSQL", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which workloads are natural fits for NoSQL? (select all)",
+    options:["Activity feed","Double-entry accounting","Device telemetry / time-series","Chat message history"],
+    correct:[0,2,3],
+    why:"Feeds, telemetry and chat are high-volume, key-accessed, tolerant of eventual consistency. Double-entry accounting needs transactions → SQL."},
+
+  // ---------- Sharding ----------
+  {id:"q14ds", topic:"Sharding", diff:"basic", level:"Mid", type:"single",
+    q:"What problem does sharding primarily solve?",
+    options:["Making queries strongly consistent","Horizontal scaling beyond one node's capacity","Removing the need for replication","Eliminating hotspots automatically"],
+    correct:[1],
+    why:"Sharding = horizontal partitioning to scale past a single node. It does NOT remove replication, and it can actually create hotspots."},
+  {id:"q10dm", topic:"Sharding", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which are genuine pains introduced by sharding? (select all)",
+    options:["Hot shards (celebrity / skewed key)","Cross-shard queries & distributed transactions","Resharding / rebalancing cost","Loss of all indexing ability"],
+    correct:[0,1,2],
+    why:"The three big pains: hotspots, cross-shard joins/transactions, and the cost of resharding. Indexes still exist — just per shard."},
+  {id:"qh29l", topic:"Sharding", diff:"tricky", level:"Senior", type:"single",
+    q:"You shard by user_id with a hash. A few celebrity users overwhelm their shard. Best first mitigation?",
+    options:["Switch the whole DB to range sharding","Add a secondary cache / split the hot key (sub-sharding, dedicated handling)","Increase replication factor everywhere","Remove sharding"],
+    correct:[1],
+    why:"Hotspots are handled by isolating/splitting the hot key (dedicated shard, key-splitting, caching the celebrity), not by re-architecting the whole scheme."},
+
+  // ---------- Replication & consistency ----------
+  {id:"qx9pl", topic:"Replication", diff:"tricky", level:"Senior", type:"single",
+    q:"What defines MULTI-leader replication (vs single-leader)?",
+    options:["A standby that takes over on failover","Several nodes accept writes simultaneously (e.g. multi-DC)","One node serves reads, another serves writes","Clients write to a quorum of nodes"],
+    correct:[1],
+    why:"Multi-leader = multiple nodes accept writes at once (common across data centers); its core pain is write-conflict resolution. It is NOT 'failover' — that's single-leader."},
+  {id:"q1tvi", topic:"Replication", diff:"tricky", level:"Senior", type:"single",
+    q:"In leaderless replication (Dynamo/Cassandra), how is consistency tuned?",
+    options:["By electing a leader per partition","By quorum: ensure W + R > N","By using two-phase commit","By disabling replication on reads"],
+    correct:[1],
+    why:"Leaderless: client writes/reads multiple replicas; you get strong-ish consistency when write quorum + read quorum exceed the replica count (W + R > N)."},
+  {id:"qvqce", topic:"Replication", diff:"tricky", level:"Senior", type:"single",
+    q:"'Read-after-write consistency' guarantees that…",
+    options:["The system waits for full replication before any read","A user immediately sees their OWN write","All users see the write at the same time","Reads always hit the leader"],
+    correct:[1],
+    why:"Read-your-writes = a user sees their own just-made write, even if other replicas lag. It does NOT mean global sync or that everyone sees it instantly."},
+  {id:"q1jab", topic:"Replication", diff:"basic", level:"Staff", type:"single",
+    q:"Single-leader replication handles a leader crash via…",
+    options:["Conflict resolution","Leader election / failover to a replica","Quorum reads","Sharding"],
+    correct:[1],
+    why:"Single-leader: all writes go to one node; on crash a replica is promoted via failover/leader election."},
+
+  // ---------- CAP / PACELC ----------
+  {id:"q1tib", topic:"CAP / PACELC", diff:"basic", level:"Staff", type:"single",
+    q:"What do the three letters in CAP stand for?",
+    options:["Cache, Availability, Performance","Consistency, Availability, Partition tolerance","Consistency, Atomicity, Persistence","Concurrency, Availability, Parallelism"],
+    correct:[1],
+    why:"Consistency, Availability, Partition tolerance. (Easy to blank on A & P under pressure — anchor it.)"},
+  {id:"q1vto", topic:"CAP / PACELC", diff:"tricky", level:"Staff", type:"single",
+    q:"The 'real' CAP choice in practice is between…",
+    options:["Consistency vs Partition tolerance","Availability vs Partition tolerance","Consistency vs Availability DURING a partition","Latency vs Consistency"],
+    correct:[2],
+    why:"Partitions are inevitable, so you can't trade away P. The actual decision is C vs A when a partition happens: CP refuses to answer; AP answers possibly-stale."},
+  {id:"qv7zr", topic:"CAP / PACELC", diff:"tricky", level:"Staff", type:"single",
+    q:"What does PACELC add beyond CAP?",
+    options:["A third consistency level","Even with no partition (Else), you trade Latency vs Consistency","A way to avoid partitions entirely","Partition detection"],
+    correct:[1],
+    why:"PACELC: if Partition → choose A or C; Else (normal operation) → choose Latency or Consistency. It captures the everyday latency cost of strong consistency."},
+
+  // ---------- Caching ----------
+  {id:"qxb1q", topic:"Caching", diff:"basic", level:"Mid", type:"single",
+    q:"In cache-aside, who writes to the cache on a miss?",
+    options:["The database","The application code, after reading from the DB","The cache populates itself","A background job only"],
+    correct:[1],
+    why:"Cache-aside (lazy loading): app checks cache, on miss reads DB and then populates the cache. Write-through writes cache+DB synchronously; write-back defers the DB write."},
+  {id:"q17el", topic:"Caching", diff:"tricky", level:"Senior", type:"single",
+    q:"A popular key expires and thousands of requests hit the DB at once to rebuild it. This is…",
+    options:["Cache stampede / thundering herd","Cache-aside","A hot shard","Write amplification"],
+    correct:[0],
+    why:"Cache stampede / thundering herd. Mitigate with a lock/single-flight (one rebuild), TTL jitter, or refresh-ahead."},
+  {id:"q111r", topic:"Caching", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which mitigate a cache stampede? (select all)",
+    options:["Single-flight / lock so only one request rebuilds","Add TTL jitter so keys don't expire together","Refresh-ahead before expiry","Disable the cache under load"],
+    correct:[0,1,2],
+    why:"Lock/single-flight, TTL jitter and refresh-ahead all spread or collapse the rebuild. Disabling the cache just sends everything to the DB."},
+  {id:"q14pg", topic:"Caching", diff:"tricky", level:"Senior", type:"single",
+    q:"Beyond eviction, the two hard cache problems are staleness/invalidation and…",
+    options:["Compression","Cache stampede / thundering herd","Serialization format","Key naming"],
+    correct:[1],
+    why:"Invalidation/staleness and stampede are the two that bite in interviews."},
+
+  // ---------- CDN / Blob ----------
+  {id:"q1qfn", topic:"CDN / Blob", diff:"basic", level:"Mid", type:"single",
+    q:"You store user-uploaded videos. What goes in the relational DB?",
+    options:["The raw binary as a BLOB column","Only the object-store URL / reference","A base64 string of the file","Nothing, DB isn't involved"],
+    correct:[1],
+    why:"Keep binaries in object storage (S3/GCS) and store only the URL/reference in the DB — binaries wreck index and cache efficiency."},
+  {id:"q1t2q", topic:"CDN / Blob", diff:"basic", level:"Mid", type:"single",
+    q:"A CDN's main job is to…",
+    options:["Run application logic at the edge","Geo-cache static content near users, cutting latency and offloading origin","Replace your database","Encrypt all traffic"],
+    correct:[1],
+    why:"CDN = geographically distributed edge cache for static assets; reduces latency and origin load. It often sits in front of blob storage."},
+
+  // ---------- Redis ----------
+  {id:"q1prk", topic:"Redis", diff:"tricky", level:"Senior", type:"single",
+    q:"Redis command execution model is…",
+    options:["Multi-threaded with locks per key","Single-threaded — commands run atomically, but a heavy command blocks the whole box","Process-per-connection","Lock-free across cores"],
+    correct:[1],
+    why:"Core architectural fact: Redis executes commands single-threaded. That gives atomicity for free, but an expensive command (e.g. KEYS, big sort) stalls everything."},
+  {id:"q1f9d", topic:"Redis", diff:"tricky", level:"Senior", type:"single",
+    q:"A single-node Redis is best described as…",
+    options:["Consistent but not durable","Durable but not consistent","Both consistent and durable","Neither"],
+    correct:[0],
+    why:"Single node is consistent (one copy, atomic ops) but not durable by default (in-memory). Common miss: saying it 'sacrifices consistency' — it sacrifices durability."},
+  {id:"qbp3s", topic:"Redis", diff:"tricky", level:"Senior", type:"single",
+    q:"How does Redis Cluster map keys to nodes?",
+    options:["Consistent hashing ring","16384 fixed hash slots, slot = CRC16(key) mod 16384","Range partitioning by key prefix","Random assignment"],
+    correct:[1],
+    why:"Redis Cluster uses 16384 fixed hash slots (CRC16 mod 16384), NOT consistent hashing. Slots move between nodes on rebalance; clients follow MOVED/ASK redirects."},
+  {id:"q12db", topic:"Redis", diff:"tricky", level:"Senior", type:"single",
+    q:"What is the DEFAULT eviction policy in Redis?",
+    options:["allkeys-lru","volatile-ttl","noeviction (writes error when memory is full)","random"],
+    correct:[2],
+    why:"Default is noeviction — once maxmemory is hit, writes fail rather than silently dropping data. You must opt into LRU/LFU for a pure cache."},
+  {id:"q1e2g", topic:"Redis", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which give Redis durability options? (select all)",
+    options:["RDB snapshots","AOF append-only log","Single-threading","MemoryDB for true durability"],
+    correct:[0,1,3],
+    why:"RDB (point-in-time snapshots) + AOF (logs every write; everysec ≈ 1s loss, always = no loss but slow). For true durability use MemoryDB. Single-threading is about execution, not durability."},
+  {id:"q196r", topic:"Redis", diff:"tricky", level:"Senior", type:"single",
+    q:"How do you make a multi-step Redis operation (e.g. a rate-limiter check-and-decrement) atomic?",
+    options:["Wrap it in a Lua script (or MULTI/EXEC)","Use a transaction across two nodes","Rely on single-threading of separate commands","Add a mutex in the client"],
+    correct:[0],
+    why:"A Lua script runs atomically on the server; MULTI/EXEC(+WATCH) also works. Separate commands aren't atomic relative to each other even though each one is."},
+  {id:"q1i5v", topic:"Redis", diff:"tricky", level:"Senior", type:"single",
+    q:"Redis Pub/Sub vs Redis Streams — the key difference?",
+    options:["Streams are faster","Pub/Sub is at-most-once (no persistence); Streams persist messages with consumer groups","Pub/Sub persists, Streams don't","They are identical"],
+    correct:[1],
+    why:"Pub/Sub = fire-and-forget, at-most-once (offline subscribers miss messages). Streams persist the log and support consumer groups + replay — closer to Kafka-lite."},
+  {id:"qqqvm", topic:"Redis", diff:"tricky", level:"Staff", type:"single",
+    q:"Redlock (distributed lock across Redis nodes) — what's the nuance a senior should mention?",
+    options:["It's perfectly safe always","Kleppmann's critique: it's unsafe under GC pauses/clock skew — use fencing tokens / a real consensus system for correctness-critical locks","It only works on one node","It requires MemoryDB"],
+    correct:[1],
+    why:"Redlock works for efficiency locks but Kleppmann showed it's not safe for correctness under pauses/clock issues. Mention fencing tokens or a consensus store (ZK/etcd) for hard locks."},
+
+  // ---------- Load balancing ----------
+  {id:"q1awb", topic:"Load balancing", diff:"tricky", level:"Senior", type:"single",
+    q:"Key difference between an L4 and an L7 load balancer?",
+    options:["L4 is slower than L7","L4 routes by IP/port (content-blind); L7 sees HTTP URL/headers/cookies → content routing, SSL termination, sticky sessions","L7 only does TCP","L4 can read cookies"],
+    correct:[1],
+    why:"L4 = transport (TCP/UDP), fast but content-blind. L7 = application layer, can route by URL/header/cookie, terminate TLS, and do sticky sessions."},
+  {id:"q1ibb", topic:"Load balancing", diff:"basic", level:"Mid", type:"multi",
+    q:"Which are valid load-balancing algorithms? (select all)",
+    options:["Round-robin","Least-connections","Consistent hashing","Two-phase commit"],
+    correct:[0,1,2],
+    why:"Round-robin, least-connections, weighted, consistent hashing are LB strategies. 2PC is a distributed-transaction protocol."},
+
+  // ---------- Kafka vs queues ----------
+  {id:"qfjwz", topic:"Kafka vs Queues", diff:"tricky", level:"Senior", type:"single",
+    q:"The defining property of Kafka vs a traditional broker queue (SQS/RabbitMQ)?",
+    options:["Kafka deletes messages after ack","Kafka is an append-only log: messages are retained & replayable; consumers track their own offset","Kafka allows only one consumer","Kafka has no ordering"],
+    correct:[1],
+    why:"Kafka = distributed append-only log. Messages are retained (replayable), consumers track offsets, multiple consumer groups read the same data independently, ordered within a partition."},
+  {id:"q96zq", topic:"Kafka vs Queues", diff:"tricky", level:"Senior", type:"single",
+    q:"In SQS/RabbitMQ, what happens to a message after a consumer acks it?",
+    options:["It's retained for replay","It's deleted from the queue","It moves to another partition","It's broadcast to all consumers"],
+    correct:[1],
+    why:"Broker queues delete on ack — typically one consumer, no replay. Good for simple background tasks and decoupling, not stream replay/analytics."},
+  {id:"q17in", topic:"Kafka vs Queues", diff:"basic", level:"Mid", type:"multi",
+    q:"Why put a message queue between services at all? (select all)",
+    options:["Decoupling producers from consumers","Load smoothing / buffering bursts","Guaranteeing strong consistency","Throttling downstream load"],
+    correct:[0,1,3],
+    why:"Queues decouple, smooth/buffer bursts, and throttle downstream. They don't provide strong consistency — they generally push you toward eventual consistency."},
+  {id:"qkc73", topic:"Kafka vs Queues", diff:"tricky", level:"Senior", type:"single",
+    q:"You need 3 independent teams to each process the same event stream their own way. Best fit?",
+    options:["SQS (one consumer deletes the message)","Kafka with separate consumer groups per team","A single RabbitMQ queue","A database table they poll and delete from"],
+    correct:[1],
+    why:"Kafka's multiple consumer groups each maintain their own offset over the same retained log — exactly the multi-consumer fan-out case."},
+
+  // ---------- Fan-out ----------
+  {id:"qymnv", topic:"Fan-out", diff:"tricky", level:"Senior", type:"single",
+    q:"Fan-out-on-write (push) for a social timeline means…",
+    options:["Build each timeline at read time","On post, write the item into every follower's precomputed timeline","Pull tweets from followees when the user opens the app","Cache the home page in a CDN"],
+    correct:[1],
+    why:"Push = on write, fan the post into every follower's feed. Fast reads, expensive writes; it breaks for celebrities with millions of followers."},
+  {id:"qsq2d", topic:"Fan-out", diff:"tricky", level:"Staff", type:"single",
+    q:"Why is pure fan-out-on-write a disaster for a celebrity with 100M followers?",
+    options:["Reads become too slow","A single post triggers 100M timeline writes","It loses ordering","It can't be cached"],
+    correct:[1],
+    why:"One celebrity post = 100M writes. That's why the standard answer is hybrid: push for normal users, pull (fan-out-on-read) for celebrities."},
+  {id:"q1mb7", topic:"Fan-out", diff:"basic", level:"Staff", type:"single",
+    q:"The standard production answer for a Twitter-style timeline is…",
+    options:["Always fan-out-on-write","Always fan-out-on-read","Hybrid: push for normal users, pull for celebrities","Store nothing, recompute every time"],
+    correct:[2],
+    why:"Hybrid balances write cost and read latency: precompute for the many, compute-on-read for the few huge accounts."},
+
+  // ---------- Rate limiting ----------
+  {id:"q1p1p", topic:"Rate limiting", diff:"basic", level:"Mid", type:"single",
+    q:"How does the token-bucket algorithm work?",
+    options:["Counts requests in fixed windows and resets","Holds N tokens, refills at a fixed rate; each request takes a token; empty → reject","Delays every request by a fixed amount","Drops every Nth request"],
+    correct:[1],
+    why:"Token bucket: bucket of N tokens, refilled at a steady rate; a request consumes a token, empty bucket rejects. Allows bursts up to bucket size."},
+  {id:"qp96x", topic:"Rate limiting", diff:"tricky", level:"Senior", type:"single",
+    q:"Where should a rate limiter usually live?",
+    options:["Inside the database","At the edge — API gateway / load balancer — per user/IP/API-key","In the client only","In the message queue"],
+    correct:[1],
+    why:"Put it at the edge (gateway/LB) so abuse is rejected before it reaches downstream services; key it per user/IP/API-key for fairness and DDoS protection."},
+  {id:"qhcyc", topic:"Rate limiting", diff:"tricky", level:"Senior", type:"single",
+    q:"Which limiter property does token bucket give that a fixed-window counter struggles with?",
+    options:["Lower memory use","Smooth handling of short bursts up to the bucket size","Perfect accuracy at window edges","No need for storage"],
+    correct:[1],
+    why:"Token bucket allows controlled bursts and avoids the fixed-window edge problem (double traffic at the boundary). Sliding-window log/counter also fixes the edge issue."},
+
+  // ---------- Idempotency ----------
+  {id:"qbbw1", topic:"Idempotency", diff:"basic", level:"Mid", type:"single",
+    q:"An idempotent operation is one where…",
+    options:["It can only run once ever","Applying it many times yields the same result as applying it once","It never fails","It runs without a network"],
+    correct:[1],
+    why:"Idempotent = repeating it has the same effect as doing it once. Crucial because retries are inevitable (a timeout means the client doesn't know if it succeeded)."},
+  {id:"qnktr", topic:"Idempotency", diff:"tricky", level:"Senior", type:"single",
+    q:"A payment API must avoid double-charging on client retries. Standard mechanism?",
+    options:["Lock the user's account","Idempotency key supplied by client; server dedupes on it","Retry only once","Disable retries"],
+    correct:[1],
+    why:"Client sends a unique idempotency key; the server records it and returns the original result on retries instead of re-charging."},
+  {id:"qqjqq", topic:"Idempotency", diff:"tricky", level:"Senior", type:"multi",
+    q:"Where is idempotency essential? (select all)",
+    options:["Payment / write APIs that clients retry","At-least-once queue consumers (must dedupe)","Pure read-only GET endpoints","Any operation behind unreliable networks"],
+    correct:[0,1,3],
+    why:"Retryable writes, at-least-once consumers, and anything over flaky networks need it. Pure GETs are already naturally idempotent."},
+
+  // ---------- Distributed transactions ----------
+  {id:"qe6oh", topic:"Distributed Txns", diff:"tricky", level:"Staff", type:"single",
+    q:"The core problem distributed transactions solve is preserving which ACID property across nodes?",
+    options:["Isolation","Durability","Atomicity (all-or-nothing across services)","Consistency only"],
+    correct:[2],
+    why:"It's primarily Atomicity across nodes — all participants commit or none do. (Common miss: saying 'A & I'.) Saga in particular drops isolation."},
+  {id:"qcz22", topic:"Distributed Txns", diff:"tricky", level:"Senior", type:"single",
+    q:"Two-phase commit (2PC) is best characterized as…",
+    options:["Optimistic, lock-free, eventually consistent","Pessimistic: prepare+commit phases, holds locks, CP, blocking with a coordinator SPOF","Asynchronous compensation","A queue pattern"],
+    correct:[1],
+    why:"2PC = pessimistic, coordinator-driven prepare/commit, holds locks, CP and blocking; the coordinator is a SPOF (mitigated but real). Used by Spanner/XA."},
+  {id:"q1ho5", topic:"Distributed Txns", diff:"tricky", level:"Staff", type:"single",
+    q:"A Saga undoes a partially-completed workflow using…",
+    options:["A rollback of the global transaction","Compensating transactions (semantic undo per step)","2PC on commit","A database savepoint"],
+    correct:[1],
+    why:"Saga = sequence of local transactions; on failure it runs compensating transactions to semantically undo prior steps. It trades isolation for availability/eventual consistency."},
+  {id:"q1l48", topic:"Distributed Txns", diff:"tricky", level:"Staff", type:"single",
+    q:"Saga CHOREOGRAPHY (vs orchestration) means…",
+    options:["A central coordinator drives every step","Services react to each other's events via pub/sub — no central coordinator","Two-phase commit between services","A single service does everything"],
+    correct:[1],
+    why:"Choreography = decentralized, event-driven, each service listens and reacts (no central brain). Orchestration = a central coordinator explicitly drives the steps. (Easy to reverse — anchor it.)"},
+  {id:"qzxr7", topic:"Distributed Txns", diff:"tricky", level:"Staff", type:"multi",
+    q:"Which are Saga isolation/robustness countermeasures a Staff candidate might name? (select all)",
+    options:["Semantic lock","Transactional outbox","Idempotent compensations","Dropping the database entirely"],
+    correct:[0,1,2],
+    why:"Semantic lock, pivot transaction, transactional outbox, idempotent compensations, TCC — these recover the isolation Saga gives up. The last option is nonsense."},
+
+  // ---------- Real-time transport ----------
+  {id:"qxw9w", topic:"Real-time transport", diff:"basic", level:"Mid", type:"single",
+    q:"Server-Sent Events (SSE) are best described as…",
+    options:["Full-duplex bidirectional channel","One-way server→client over a single long-lived HTTP connection, with auto-reconnect","Client→server only","A polling loop"],
+    correct:[1],
+    why:"SSE = one-way server→client over one persistent HTTP connection, with built-in auto-reconnect. Great for notifications/feeds; not for bidirectional chat."},
+  {id:"qjz31", topic:"Real-time transport", diff:"tricky", level:"Senior", type:"single",
+    q:"You're building a chat app needing low-latency two-way messaging. Best transport?",
+    options:["Short polling","SSE","WebSocket (full duplex)","Long polling"],
+    correct:[2],
+    why:"WebSocket = full-duplex over a single persistent connection; right for chat/games. Cost: it's stateful and harder to scale than stateless HTTP."},
+  {id:"qaenv", topic:"Real-time transport", diff:"basic", level:"Mid", type:"single",
+    q:"Order these from least to most efficient for server-push: polling, long-polling, SSE. Which is the most efficient of the three?",
+    options:["Short polling","Long polling","SSE","They're equal"],
+    correct:[2],
+    why:"Short polling wastes requests; long polling is better; SSE holds one connection and streams events — most efficient of the three for one-way push."},
+
+  // ---------- Observability ----------
+  {id:"q4nkf", topic:"Observability", diff:"basic", level:"Mid", type:"multi",
+    q:"What are the three pillars of observability? (select all)",
+    options:["Metrics","Logs","Traces","Backups"],
+    correct:[0,1,2],
+    why:"Metrics, logs, traces. Add SLO/SLI/error-budget vocabulary to signal operational maturity."},
+  {id:"qda92", topic:"Observability", diff:"tricky", level:"Senior", type:"single",
+    q:"An 'error budget' is…",
+    options:["Money set aside for incidents","The allowed amount of unreliability = 100% − SLO; once spent, slow feature launches","The number of on-call engineers","A type of circuit breaker"],
+    correct:[1],
+    why:"Error budget = 1 − SLO. It quantifies acceptable failure and governs the release/risk trade-off — a strong EM operational signal."},
+  {id:"q1525", topic:"Observability", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which protect a system under partial failure / overload? (select all)",
+    options:["Circuit breaker","Backpressure","Graceful degradation","Removing all timeouts"],
+    correct:[0,1,2],
+    why:"Circuit breakers, backpressure and graceful degradation contain cascading failure. Removing timeouts makes cascades worse."},
+
+  // ---------- SPOF ----------
+  {id:"q1gh5", topic:"SPOF / Reliability", diff:"basic", level:"Mid", type:"single",
+    q:"The cleanest mental test for a single point of failure is…",
+    options:["'Is this component slow?'","'If this component dies, does the whole system stop?'","'Is this component expensive?'","'Does this component use a cache?'"],
+    correct:[1],
+    why:"Walk every component and ask 'if it dies, does the system stop?' Eliminate via redundancy: multiple instances, replicas, multi-AZ, auto-failover, no un-backed shared resource."},
+  {id:"qmaky", topic:"SPOF / Reliability", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which genuinely remove a SPOF? (select all)",
+    options:["Multiple stateless instances behind an LB","Multi-AZ replicas with auto-failover","A single shared NFS mount everything depends on","Active-active across regions"],
+    correct:[0,1,3],
+    why:"Redundancy at every layer removes SPOFs. A single shared NFS mount everything needs IS a SPOF, not a fix."},
+
+  // ---------- Estimation ----------
+  {id:"qf68d", topic:"Estimation", diff:"tricky", level:"Senior", type:"single",
+    q:"Rough QPS for 100M daily active users each making ~10 requests/day (uniform)?",
+    options:["~115 QPS","~1,150 QPS","~11,500 QPS","~115,000 QPS"],
+    correct:[2],
+    why:"1e8 × 10 = 1e9 req/day. 1 day ≈ 86,400s ≈ 1e5. 1e9 / 1e5 ≈ 10,000 → ~11.5k QPS average. Multiply by ~2–3 for peak."},
+  {id:"qz62n", topic:"Estimation", diff:"basic", level:"Mid", type:"single",
+    q:"Roughly how many seconds are in a day (the number to memorize for QPS math)?",
+    options:["~3,600","~86,400 (~10^5)","~604,800","~1,000,000"],
+    correct:[1],
+    why:"86,400 ≈ 10^5. Memorize it: daily count ÷ 10^5 ≈ average QPS."},
+  {id:"q185g", topic:"Estimation", diff:"tricky", level:"Senior", type:"single",
+    q:"You store 500M records × 2 KB each. Approximate raw storage?",
+    options:["~1 GB","~10 GB","~1 TB","~100 TB"],
+    correct:[2],
+    why:"5e8 × 2e3 bytes = 1e12 bytes ≈ 1 TB. Then add indexes/replication overhead (×3 for RF=3)."},
+
+  // ---------- API design ----------
+  {id:"q1wgr", topic:"API design", diff:"tricky", level:"Senior", type:"single",
+    q:"For high-throughput internal service-to-service calls, what's a common reason to prefer gRPC over REST/JSON?",
+    options:["It's easier to curl","Binary protobuf + HTTP/2 multiplexing → lower latency & payloads, streaming, strong contracts","It needs no schema","Browsers support it natively everywhere"],
+    correct:[1],
+    why:"gRPC uses protobuf over HTTP/2: compact binary, multiplexing, bidirectional streaming, codegen contracts. REST/JSON wins for public, human-debuggable, browser-facing APIs."},
+  {id:"q14kw", topic:"API design", diff:"basic", level:"Mid", type:"single",
+    q:"For a list endpoint returning millions of rows, the right pattern is…",
+    options:["Return everything in one response","Pagination (cursor/keyset preferred over large offsets)","Force the client to filter client-side","Use a websocket"],
+    correct:[1],
+    why:"Paginate. Cursor/keyset pagination scales better than OFFSET, which degrades on deep pages."},
+
+  /* ============================================================
+     HELLOINTERVIEW DEEP-DIVE QUESTIONS
+     Grounded in the detailed per-topic articles:
+     Core Concepts, Patterns, Key Technologies (deep dives).
+     ============================================================ */
+
+  // ---------- Redis (deep dive) ----------
+  {id:"q1ffp", topic:"Redis", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Redis deep dive: out of the box, what does Redis do when it hits its memory limit?",
+    options:["Evicts least-recently-used keys (allkeys-lru)","REJECTS new writes — you must configure an eviction policy for a cache","Crashes the node","Spills to disk automatically"],
+    correct:[1],
+    why:"Default is noeviction: writes error once memory is full. TTL handles staleness, not memory pressure — for a cache you set allkeys-lru (which Redis approximates by sampling, not exact ordering)."},
+  {id:"ql0ep", topic:"Redis", diff:"tricky", level:"Staff", type:"single",
+    q:"HI: in Redis Cluster, what happens if a client asks the wrong node for a key?",
+    options:["The node forwards the request for you","The node replies MOVED pointing at the right node; the client refreshes its slot-to-node map","The key is created on that node","The cluster rebalances immediately"],
+    correct:[1],
+    why:"Each key hashes to one of 16384 slots; clients cache the slot→node map. Ask the wrong node and you get a MOVED reply (nodes gossip the full map but won't forward), so clients aim for the right node first."},
+  {id:"qao6s", topic:"Redis", diff:"tricky", level:"Staff", type:"single",
+    q:"HI: how do you force two related Redis keys (user:123:posts and user:123:likes) into the same slot?",
+    options:["They always land together by default","Hash tags — only the part inside {braces} is hashed, e.g. {user:123}:posts","Use the SAME command for both","Disable clustering"],
+    correct:[1],
+    why:"Only the substring inside {braces} is hashed, so {user:123}:posts and {user:123}:likes share a slot and can be used together in a MULTI transaction. Cluster multi-key ops only work within one slot."},
+  {id:"q128q", topic:"Redis", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: why is single-node Redis NOT a system of record, even with a replica?",
+    options:["It can't store enough data","Replication is asynchronous — the primary acks before the replica sees the write, so failover can drop the last acked writes","It has no persistence at all","Reads are too slow"],
+    correct:[1],
+    why:"Async replication means a promoted replica may never have seen the last acknowledged writes. Combined with the persistence loss windows (RDB/AOF), acknowledged writes can vanish — so don't make Redis the source of truth."},
+  {id:"q1451", topic:"Redis", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: a Redis fixed-window rate limiter does INCR then EXPIRE. What's the subtle bug to avoid?",
+    options:["INCR is not atomic","Calling EXPIRE on every request keeps pushing the reset forward — set the TTL only when INCR returns 1 (first request of the window)","EXPIRE must run before INCR","You must use a separate key per request"],
+    correct:[1],
+    why:"If you EXPIRE on every call, steady traffic never gets a fresh window. Set expiry only when INCR returns 1, and run INCR+EXPIRE as one Lua script so a crash between them can't leave a counter that never resets."},
+  {id:"q1u7b", topic:"Redis", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: the correct way to RELEASE a Redis lock (SET key token NX EX 30) is…",
+    options:["Just DEL the key","Check the key still holds YOUR token, then DEL — as one atomic Lua script","Let it expire only","SET the key to unlocked"],
+    correct:[1],
+    why:"Your lock may have expired and been re-acquired by someone else; a blind DEL would delete their lock. Check-token-then-DEL must run atomically (Lua) on Redis's single thread."},
+  {id:"qw5la", topic:"Redis", diff:"tricky", level:"Staff", type:"single",
+    q:"HI: the standard defense against a paused client acting after its Redis lock expired is…",
+    options:["A longer TTL","A fencing token (monotonically increasing) that the storage layer checks — Redis has nothing built in for this","Redlock alone","More replicas"],
+    correct:[1],
+    why:"Treat a Redis lock as an efficiency tool that occasionally fails. For correctness, use fencing tokens or a consensus system (ZooKeeper/etcd); often a DB row lock (SELECT ... FOR UPDATE) or conditional UPDATE ... WHERE version=X replaces the distributed lock entirely."},
+  {id:"qsa76", topic:"Redis", diff:"tricky", level:"Staff", type:"single",
+    q:"HI: the old 'Redis Pub/Sub doesn't scale in a cluster' complaint is outdated because…",
+    options:["Pub/Sub now persists messages","Since Redis 7, sharded Pub/Sub (SPUBLISH/SSUBSCRIBE) routes each channel to the shard that owns its slot, so capacity scales","Pub/Sub uses one connection per channel now","It was never true"],
+    correct:[1],
+    why:"Classic cluster Pub/Sub broadcast every message to every node (no added capacity). Sharded Pub/Sub since Redis 7 hashes each channel to a slot. Also: connections are per node, not per channel."},
+  {id:"qqwok", topic:"Redis", diff:"tricky", level:"Senior", type:"multi",
+    q:"HI: remediations for a Redis hot-key problem? (select all)",
+    options:["Client-side caching of the hottest keys (short TTL)","Key copies — store under product:123:1..10 so copies hash to different nodes","Read replicas (only if clients are configured for replica reads)","Read replicas to fix a WRITE-hot key"],
+    correct:[0,1,2],
+    why:"Client-side cache, key copies, and read replicas all spread read load. But replicas do nothing for a write-hot key — every write still lands on the one primary that owns the slot."},
+  {id:"qww1x", topic:"Redis", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: a Redis Stream work queue can process an item twice. Why, and what's the fix?",
+    options:["Bug in XADD; upgrade Redis","Redis can't tell a slow worker from a dead one, so XCLAIM may re-run a pending entry — make processing idempotent","Streams don't persist; add RDB","Use Pub/Sub instead"],
+    correct:[1],
+    why:"Consumer groups track pending entries by idle time; when a worker seems dead, another XCLAIMs the entry — but a slow worker looks the same as a dead one, so delivery is at-least-once. Make consumers idempotent."},
+
+  // ---------- Networking / API / Data Modeling / DB Indexing (deep dives) ----------
+  {id:"q8yds", topic:"Networking", diff:"basic", level:"Mid", type:"single",
+    q:"In the OSI model as framed by HI, which protocol lives at the Transport Layer (Layer 4)?",
+    options:["IP","TCP","HTTP","DNS"],
+    correct:[1],
+    why:"HI places IP at Layer 3 (Network), TCP/UDP/QUIC at Layer 4 (Transport), and HTTP/WebSockets/DNS/WebRTC at Layer 7 (Application)."},
+  {id:"q6zk8", topic:"Networking", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Networking deep dive: a New York to London round trip (~5,600 km) has a theoretical minimum latency of roughly…",
+    options:["About 1ms","About 56ms","About 200ms","About 500ms"],
+    correct:[1],
+    why:"Light in fiber travels at about 2/3 c (~200,000 km/s), so the ~5,600 km round trip floors near 56ms before any processing, versus under 1ms to a nearby server."},
+  {id:"q6pna", topic:"Networking", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: why are L4 load balancers generally preferred for WebSocket connections over L7?",
+    options:["L4 can inspect HTTP headers to route by cookie","L4 maintains a persistent TCP connection between client and server, as if they were directly connected","L4 terminates the connection and opens a new one to the backend","L4 is more CPU-intensive and therefore more reliable"],
+    correct:[1],
+    why:"L4 maintains persistent TCP connections (suits WebSockets). L7 terminates connections and inspects content, the opposite behavior."},
+  {id:"qarv8", topic:"Networking", diff:"tricky", level:"Senior", type:"multi",
+    q:"Per HI, which statements about failures and retries are accurate? (select all)",
+    options:["'Retry with exponential backoff' is the magic phrase interviewers want","Backoff should include jitter so clients don't all retry at once","Idempotent APIs make retries safe, often via an idempotency key","Circuit breakers should retry immediately and indefinitely until recovery"],
+    correct:[0,1,2],
+    why:"HI calls 'retry with exponential backoff' the magic phrase, stresses jitter, and idempotency keys for safe write retries. Circuit breakers do the OPPOSITE of retrying indefinitely — they trip open and fail fast."},
+  {id:"qw0x3", topic:"Networking", diff:"basic", level:"Mid", type:"single",
+    q:"What does HI say about QUIC for interviews?",
+    options:["It fully replaces TCP and should always be used","Treat it as a better version of TCP but without the same broad baseline of adoption","It is a Layer 3 routing protocol","It is only used for peer-to-peer video via STUN and TURN"],
+    correct:[1],
+    why:"HI: consider QUIC a better TCP but lacking TCP's broad adoption; some performance-minded interviewers like QUIC/HTTP3 knowledge, but most want your time elsewhere."},
+
+  {id:"qer9f", topic:"API design", diff:"basic", level:"Mid", type:"single",
+    q:"Per HI, which HTTP API style is your go-to default unless you have a specific reason otherwise?",
+    options:["GraphQL","REST","gRPC","WebSockets"],
+    correct:[1],
+    why:"HI: default to REST; it covers 90% of use cases. If unsure, say 'I'll use REST APIs' and move on."},
+  {id:"qhzjs", topic:"API design", diff:"tricky", level:"Senior", type:"multi",
+    q:"Per HI, which HTTP methods are idempotent? (select all)",
+    options:["GET","PUT","DELETE","POST"],
+    correct:[0,1,2],
+    why:"HI: GET, PUT, DELETE are idempotent. POST/PATCH are not guaranteed idempotent — which matters when networks fail and clients retry (you don't want duplicate bookings)."},
+  {id:"q2llq", topic:"API design", diff:"tricky", level:"Senior", type:"single",
+    q:"HI's biggest GraphQL gotcha: a client queries 100 events each with its venue. What goes wrong?",
+    options:["Over-fetching, returning 100x more data than needed","The N+1 problem: roughly 101 DB queries instead of 2","Under-fetching, forcing 100 client round trips","Schema drift causing 100 versioning conflicts"],
+    correct:[1],
+    why:"HI calls it the N+1 problem: 1 query for events + N for each venue = 101 instead of 2. Fix with batching/dataloader."},
+  {id:"q1374", topic:"API design", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: path parameter vs query parameter — when to use which?",
+    options:["Path for optional filters, query for required identifiers","Path when the value is required to identify the resource; query for optional filters","Always query params, easier to test","Path only for POST bodies"],
+    correct:[1],
+    why:"HI ties it to required vs optional: path/nested resource when required (/events/{id}/tickets), query for optional filters (/tickets?event_id=123&section=VIP)."},
+  {id:"qiuxi", topic:"API design", diff:"basic", level:"Mid", type:"single",
+    q:"HI's recommendation on API versioning in interviews?",
+    options:["Header versioning, keeps URLs clean","URL versioning (/v1/events) — widely understood and easy to explain quickly","Semantic versioning in the request body","Never mention versioning"],
+    correct:[1],
+    why:"HI recommends URL versioning as the safer interview choice; their own breakdowns omit it only because most interviewers don't care, not because it's unimportant."},
+
+  {id:"q1xeu", topic:"Data Modeling", diff:"basic", level:"Mid", type:"single",
+    q:"HI Data Modeling: default database recommendation in an interview?",
+    options:["A graph database like Neo4j for relationship-heavy data","A relational DB, specifically PostgreSQL, unless requirements clearly signal otherwise","A document DB like MongoDB for flexibility","A key-value store like Redis as source of truth"],
+    correct:[1],
+    why:"HI: resist exotic databases; most of the time the right answer is relational, and it specifically recommends PostgreSQL unless you have strong opinions."},
+  {id:"qhxhz", topic:"Data Modeling", diff:"tricky", level:"Senior", type:"single",
+    q:"HI warns graph databases are a common mistake. What point does it make?",
+    options:["Neo4j can't model many-to-many","Even Facebook models its social graph with MySQL, so SQL is good enough for your interview","Graph DBs can't enforce foreign keys","Graph DBs are slower than key-value stores for traversals"],
+    correct:[1],
+    why:"HI: even Facebook models its social graph on MySQL, and LinkedIn/Twitter use SQL for core relationship data — graph DBs usually add needless complexity."},
+  {id:"qxper", topic:"Data Modeling", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: why is time-range sharding usually an anti-pattern for write-heavy systems?",
+    options:["Time ranges can't be partition keys","All current writes hit the same shard (the latest range), creating a hot shard","It makes recent-posts queries impossible","Foreign keys break across time-based shards"],
+    correct:[1],
+    why:"HI: time-range sharding sends all current writes to the latest-range shard (hot shard). It works better for archival/analytics where writes spread out."},
+  {id:"q3eq1", topic:"Data Modeling", diff:"tricky", level:"Senior", type:"multi",
+    q:"Per HI, the three factors that drive schema design decisions? (select all)",
+    options:["Data volume","Access patterns","Consistency requirements","Backend programming language"],
+    correct:[0,1,2],
+    why:"HI: everything flows from data volume, access patterns (the most important), and consistency requirements. Backend language is not one of them."},
+  {id:"q14bk", topic:"Data Modeling", diff:"basic", level:"Mid", type:"single",
+    q:"HI advice on primary keys when defining entities?",
+    options:["Use business data like emails so keys are human-readable","Use system-generated IDs (user_id) rather than business data, since they stay stable when business rules change","Always use composite keys from multiple columns","Avoid primary keys in NoSQL designs"],
+    correct:[1],
+    why:"HI: use system-generated IDs (user_id, post_id) over business data like email, because system keys stay stable even when business rules change."},
+
+  {id:"q1gw6", topic:"Database Indexing", diff:"basic", level:"Mid", type:"single",
+    q:"HI: how is main table data typically stored on disk before any index is added?",
+    options:["A balanced B-tree","A heap file — rows in no particular order","A hash table keyed by primary key","An LSM tree sorted by timestamp"],
+    correct:[1],
+    why:"HI describes the main table as a heap file: a collection of rows in no particular order, like a notebook where you write entries as they come."},
+  {id:"q1hic", topic:"Database Indexing", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: the classic case where indexes hurt more than help?",
+    options:["Frequent reads, infrequent writes","Frequent writes, infrequent reads — like a logging table","Any table over a million rows","A table queried only by primary key"],
+    correct:[1],
+    why:"HI cites write-heavy, read-light tables (logging) where index maintenance overhead isn't justified; also tiny tables where a sequential scan beats traversing an index."},
+  {id:"qra8i", topic:"Database Indexing", diff:"tricky", level:"Senior", type:"multi",
+    q:"Per HI, which statements about B-tree indexes are correct? (select all)",
+    options:["Nodes can have hundreds of children, unlike a binary tree's two","Each node is sized to fit a single disk page (about 8KB)","Finding id=350 in Postgres might read only 2-3 pages from disk","B-trees handle only equality, not range queries"],
+    correct:[0,1,2],
+    why:"HI: B-tree nodes have hundreds of children, fit a ~8KB page, and a lookup may read only 2-3 pages (root, maybe internal, leaf). B-trees handle BOTH equality and range — last option is false."},
+  {id:"qne40", topic:"Database Indexing", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: random vs sequential access on modern SSDs?",
+    options:["They're now equally fast on SSDs","Random access is still significantly slower than sequential, even on SSDs — a common misconception","Sequential is slower on SSDs than HDDs","SSDs eliminate the need for indexes"],
+    correct:[1],
+    why:"HI flags as a misconception that SSDs equalize access; random is still much slower than sequential (far worse on HDDs), making proper indexing critical."},
+  {id:"qkfz9", topic:"Database Indexing", diff:"basic", level:"Mid", type:"single",
+    q:"HI: what cost does every index impose on writes?",
+    options:["Writes become impossible until the index is dropped","A single write may trigger several disk writes, since every index must also be updated","Indexes only cost space, never write speed","Writes get faster because the index caches the row"],
+    correct:[1],
+    why:"HI: on insert/update the DB updates the main table plus every index, so multiple indexes mean a single write triggers several disk writes, plus extra disk space."},
+
+  // ---------- Caching / Sharding / Consistent Hashing / CAP / Numbers (deep dives) ----------
+  {id:"q1on2", topic:"Caching", diff:"basic", level:"Mid", type:"single",
+    q:"Per HI, roughly what latency win does reading a profile from Redis give over Postgres?",
+    options:["About 5x (10ms to 2ms)","About 50x (50ms to 1ms)","About 2x (4ms to 2ms)","About 500x"],
+    correct:[1],
+    why:"HI: Postgres ~50ms vs Redis ~1ms, a 50x improvement, because memory sits closer to the CPU and avoids disk."},
+  {id:"q1vdu", topic:"Caching", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: the primary risk of write-behind (write-back) caching?",
+    options:["Writes get very slow (both cache and DB must confirm)","If the cache crashes before flushing, you can lose data","It pollutes the cache with never-read data","Every read needs a directory lookup"],
+    correct:[1],
+    why:"Write-behind writes only to cache and flushes to the DB asynchronously — fast writes, but data loss if the cache crashes before flushing. Suits workloads tolerant of occasional loss."},
+  {id:"q45qu", topic:"Caching", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: cache warming only prevents stampedes under which condition?",
+    options:["When using request coalescing","When you use TTL-based expiration (not invalidation on writes)","When the cache is in-process","When you replicate hot keys"],
+    correct:[1],
+    why:"HI: warming refreshes popular keys before they expire, which only helps with TTL-based expiration. If you invalidate on writes instead, warming doesn't prevent stampedes."},
+  {id:"qw18x", topic:"Caching", diff:"basic", level:"Mid", type:"single",
+    q:"HI: the single most effective way to handle a cache stampede?",
+    options:["Increase TTL to several hours","Request coalescing / single-flight — one request rebuilds while others wait","Switch to write-through","Shard the cache across more nodes"],
+    correct:[1],
+    why:"HI calls request coalescing (single-flight) the most effective fix: one request rebuilds the entry while others wait, instead of hundreds hitting the DB."},
+  {id:"qx7el", topic:"Caching", diff:"tricky", level:"Senior", type:"multi",
+    q:"Per HI, which statements about caching patterns/layers are correct? (select all)",
+    options:["Cache-aside is the interview default","Redis natively supports write-through out of the box","CDNs are a form of read-through cache","In-process caching is an optimization layer added AFTER an external cache"],
+    correct:[0,2,3],
+    why:"HI: cache-aside is the default, CDNs are read-through, in-process caching comes after external. It explicitly says Redis does NOT natively support write-through — app code/framework is needed."},
+
+  {id:"q1tmp", topic:"Sharding", diff:"basic", level:"Mid", type:"single",
+    q:"HI: even powerful cloud databases max out around a storage ceiling that forces sharding. What number does HI cite for Amazon Aurora?",
+    options:["256 GiB","2.5 TB","256 TiB","16 TB"],
+    correct:[2],
+    why:"HI: even Aurora maxes out around 256 TiB — the kind of ceiling that forces splitting data across machines."},
+  {id:"q15lp", topic:"Sharding", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: what distinguishes partitioning from sharding?",
+    options:["Partitioning spans machines; sharding stays on one","Partitioning splits data within a single DB instance; sharding splits across multiple machines","They're identical with no difference","Partitioning is NoSQL-only; sharding SQL-only"],
+    correct:[1],
+    why:"HI: partitioning usually means splitting within one instance (ranges/hash); sharding means across machines. Terms are used loosely — what matters is one machine vs many."},
+  {id:"q9zs9", topic:"Sharding", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: why is is_premium (a boolean) a bad shard key?",
+    options:["Booleans can't be hashed","Only two values means at most two shards, with uneven load","It needs a directory lookup per request","It changes on upgrade, forcing resharding"],
+    correct:[1],
+    why:"HI's canonical bad shard key: low cardinality (two values) caps you at two shards, and if most users are free, one shard is overloaded. Good keys need high cardinality + even distribution."},
+  {id:"qznlo", topic:"Sharding", diff:"basic", level:"Mid", type:"single",
+    q:"HI: which sharding strategy will interviewers assume unless you say otherwise?",
+    options:["Range-based","Hash-based","Directory-based","Vertical partitioning"],
+    correct:[1],
+    why:"HI labels hash-based sharding the default and most common; it's what your interviewer assumes unless you explicitly state otherwise."},
+  {id:"q1del", topic:"Sharding", diff:"tricky", level:"Staff", type:"multi",
+    q:"Per HI, which are valid ways to handle hot spots or cross-shard problems? (select all)",
+    options:["Isolate hot keys to a dedicated shard","Use compound shard keys like hash(user_id + date)","Default to two-phase commit for all cross-shard writes","Denormalize related data to keep it on one shard"],
+    correct:[0,1,3],
+    why:"HI recommends isolating hot keys, compound keys, and denormalizing. It warns AGAINST 2PC as the go-to (slow, fragile) — prefer sagas or avoiding cross-shard transactions."},
+
+  {id:"qu89t", topic:"Consistent Hashing", diff:"basic", level:"Mid", type:"single",
+    q:"HI: what core problem does consistent hashing solve vs simple modulo hashing?",
+    options:["It eliminates hot keys entirely","It minimizes data redistribution when adding/removing a node","It removes the need for a hash function","It guarantees strong consistency"],
+    correct:[1],
+    why:"HI: modulo hashing (%3 to %4) remaps almost every key; consistent hashing moves only a bounded fraction when membership changes."},
+  {id:"quto9", topic:"Consistent Hashing", diff:"tricky", level:"Senior", type:"single",
+    q:"HI hash-ring example: how do you find which database an event maps to?",
+    options:["hash(event_id) modulo node count","Hash the event ID to a point on the ring, then move clockwise to the next DB node","Look it up in a directory table","Assign to the lowest-load node"],
+    correct:[1],
+    why:"HI: place nodes on the ring, hash the event ID to a point, move clockwise to the next node — avoiding modulo and limiting movement on membership change."},
+  {id:"qcqpp", topic:"Consistent Hashing", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: what problem do virtual nodes specifically solve?",
+    options:["Hot keys from popular content","When a node fails, its whole load dumps on its single clockwise neighbor, overloading it","The need for replication","Making the ring larger than 2^32"],
+    correct:[1],
+    why:"HI: without virtual nodes a failed node's load shifts entirely to one neighbor (doubling it). Virtual nodes place each DB at many ring points so failure load spreads evenly."},
+  {id:"qpk9k", topic:"Consistent Hashing", diff:"tricky", level:"Staff", type:"multi",
+    q:"Per HI, which statements about consistent hashing in real systems are correct? (select all)",
+    options:["Virtual nodes fix structural imbalance; replication/key-salting fix workload imbalance","Redis Cluster uses consistent hashing with virtual nodes","Redis Cluster uses fixed hash slots — 16,384 via CRC16(key) mod 16384","DynamoDB replicates each partition across 3 AZs, so a primary failure promotes a replica with no data movement"],
+    correct:[0,2,3],
+    why:"HI: virtual nodes fix key-distribution imbalance while replication/salting fix traffic imbalance; Redis Cluster uses fixed slots (NOT consistent hashing); DynamoDB replicates partitions across 3 AZs so failover moves no data."},
+
+  {id:"q1muv", topic:"CAP / PACELC", diff:"basic", level:"Staff", type:"single",
+    q:"HI: CAP theorem practically reduces to which single choice?",
+    options:["SQL vs NoSQL","Consistency vs availability when a network partition occurs","Shard vs replicate","Strong vs eventual durability"],
+    correct:[1],
+    why:"HI: partition tolerance is non-negotiable in any distributed system, so CAP boils down to — prioritize consistency or availability when a partition occurs?"},
+  {id:"q1lty", topic:"CAP / PACELC", diff:"tricky", level:"Staff", type:"single",
+    q:"HI USA/Europe profile example during a partition: which choice and why?",
+    options:["Consistency — a stale name is unacceptable","Availability — showing the old name beats showing an error","Consistency — profiles are financial data","Reject both reads and writes until healed"],
+    correct:[1],
+    why:"HI: for the profile example the answer is clear — show the stale old name (availability) rather than an error; a stale name beats no name."},
+  {id:"q1yuh", topic:"CAP / PACELC", diff:"tricky", level:"Staff", type:"multi",
+    q:"Per HI, which should prioritize CONSISTENCY over availability? (select all)",
+    options:["Ticket/seat booking (prevent double-booking)","Viewing a Yelp restaurant's hours","E-commerce inventory (prevent overselling)","Stock trading order books"],
+    correct:[0,2,3],
+    why:"HI lists ticket booking, inventory, and financial/trading as consistency-required. Yelp showing slightly outdated hours is an availability example — brief staleness is fine."},
+  {id:"q1qg1", topic:"CAP / PACELC", diff:"tricky", level:"Staff", type:"single",
+    q:"HI: the model where users always see their own updates immediately, but others may see older versions, is…",
+    options:["Causal consistency","Strong consistency","Read-your-own-writes consistency","Eventual consistency"],
+    correct:[2],
+    why:"HI: read-your-own-writes — common in social media so users see their own profile edits right away, even if others briefly see stale data."},
+  {id:"q6wvd", topic:"CAP / PACELC", diff:"basic", level:"Staff", type:"single",
+    q:"HI: the default consistency model of most distributed databases when prioritizing availability?",
+    options:["Strong consistency","Causal consistency","Eventual consistency","Read-your-own-writes"],
+    correct:[2],
+    why:"HI: eventual consistency is the most relaxed model and the default of most distributed databases — what you implicitly choose when prioritizing availability."},
+
+  {id:"qjc2e", topic:"Numbers to Know", diff:"basic", level:"Mid", type:"single",
+    q:"HI: a common giveaway that a candidate has only book knowledge is…",
+    options:["Not knowing CAP","Doing scale math with outdated hardware numbers (2015/2020) that underestimate modern systems","Failing to mention sharding","Using Redis for caching"],
+    correct:[1],
+    why:"HI: relying on outdated hardware constraints leads to over-engineered designs — one of the biggest tells of book-only knowledge."},
+  {id:"q19qq", topic:"Numbers to Know", diff:"tricky", level:"Senior", type:"single",
+    q:"HI 2026 numbers: roughly how much RAM does a high-memory instance like AWS U-24tb1.metal provide?",
+    options:["512 GiB","4 TB","24 TB","60 TB"],
+    correct:[2],
+    why:"HI cites U-24tb1.metal at 24 TB RAM (X1e.32xlarge 4 TB, M6i.32xlarge 512 GiB) — many apps that once needed distributed systems now fit on one machine."},
+  {id:"qpzry", topic:"Numbers to Know", diff:"tricky", level:"Senior", type:"single",
+    q:"HI network latency tiers: approximate latency across availability zones within the same region?",
+    options:["Sub-1ms","1-2ms","50-150ms","250-300ms"],
+    correct:[1],
+    why:"HI: sub-1ms within a single AZ, 1-2ms across AZs in a region, 50-150ms cross-region."},
+  {id:"q1eap", topic:"Numbers to Know", diff:"basic", level:"Mid", type:"single",
+    q:"HI: how is object storage like S3 characterized as a constraint?",
+    options:["Limited to ~60 TB per bucket","Effectively unlimited — petabyte-scale is standard practice","Capped at 256 TiB like Aurora","Only for cold archival data"],
+    correct:[1],
+    why:"HI: S3 is effectively unlimited (petabyte-scale standard); the days of storage being a primary constraint are largely behind us."},
+  {id:"q8pxe", topic:"Numbers to Know", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which 2026 hardware figures does HI specifically cite? (select all)",
+    options:["i3en.24xlarge ~60 TB local SSD","D3en.12xlarge ~336 TB HDD","Within a datacenter, 25 Gbps is common","A single Postgres instance should be sharded at 100GB"],
+    correct:[0,1,2],
+    why:"HI cites i3en.24xlarge 60 TB SSD, D3en.12xlarge 336 TB HDD, 25 Gbps datacenter networking. It explicitly criticizes the textbook 'split at 100GB' as obsolete."},
+
+  // ---------- Elasticsearch / Kafka / API Gateway (deep dives) ----------
+  {id:"q1jo6", topic:"Elasticsearch", diff:"basic", level:"Mid", type:"single",
+    q:"HI: what core problem is Elasticsearch presented as solving?",
+    options:["Durable message streaming between services","Full-text search and querying over large volumes of data","Strongly consistent transactional writes","Distributed locking and coordination"],
+    correct:[1],
+    why:"HI frames Elasticsearch around search/querying over big data via inverted indexes — not a queue, lock service, or transactional store."},
+  {id:"q1qho", topic:"Elasticsearch", diff:"basic", level:"Mid", type:"single",
+    q:"HI: the relationship between an Elasticsearch index, shards, and Lucene?",
+    options:["An index is a single Lucene file shared across nodes","An index is split into shards, and each shard is a self-contained Lucene index","Shards are read replicas of one master Lucene instance","Index and shard are two names for the same thing"],
+    correct:[1],
+    why:"HI: an index is partitioned into shards for horizontal scaling, and each shard is itself a complete Lucene index that can live on a different node."},
+  {id:"qlbk2", topic:"Elasticsearch", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: why must you choose the number of primary shards carefully up front?",
+    options:["Primary shard count can't change without reindexing into a new index","Adding primary shards auto-rebalances at zero cost","Shard count only affects read latency","Elasticsearch picks it automatically, unconfigurable"],
+    correct:[0],
+    why:"HI: primary shard count is fixed at index creation; changing it requires reindexing into a new index — a common gotcha interviewers probe."},
+  {id:"qcgjh", topic:"Elasticsearch", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: the common anti-pattern with Elasticsearch is using it as…",
+    options:["A search layer alongside a primary DB","The single primary datastore / source of truth","A tool for autocomplete and fuzzy matching","A store backed by inverted indexes"],
+    correct:[1],
+    why:"HI: Elasticsearch should generally not be your source of truth — keep a separate primary DB and sync ES as a secondary search index."},
+  {id:"q1dit", topic:"Elasticsearch", diff:"tricky", level:"Senior", type:"multi",
+    q:"Per HI, valid ways to keep Elasticsearch in sync with a primary DB? (select all)",
+    options:["Change Data Capture (CDC) streaming DB changes","Application-level dual writes to both stores","A periodic full table scan as the only real-time mechanism","Clients writing directly to ES, bypassing the DB"],
+    correct:[0,1],
+    why:"HI presents CDC and dual writes as the standard sync strategies. A periodic scan isn't real-time sync, and bypassing the primary DB contradicts the source-of-truth pattern."},
+  {id:"qd3nz", topic:"Elasticsearch", diff:"basic", level:"Mid", type:"single",
+    q:"HI: which structure makes Elasticsearch efficient for full-text search?",
+    options:["A B-tree keyed on document ID","An inverted index mapping terms to the documents containing them","A consistent hash ring","A skip list of timestamps"],
+    correct:[1],
+    why:"HI: the inverted index maps each term to the documents containing it, enabling fast full-text search, unlike a B-tree keyed on IDs."},
+
+  {id:"q8gnc", topic:"Kafka vs Queues", diff:"basic", level:"Mid", type:"single",
+    q:"HI Kafka deep dive: how is a topic distinguished from a partition?",
+    options:["A topic is physical storage; a partition is a logical label","A topic is a logical grouping; a partition is the physical, ordered append-only log","They're identical concepts","A partition can span multiple topics"],
+    correct:[1],
+    why:"HI: a topic is a logical grouping of messages; a partition is the physical ordered immutable append-only log. A topic can have many partitions across brokers."},
+  {id:"q1x5l", topic:"Kafka vs Queues", diff:"basic", level:"Mid", type:"single",
+    q:"HI: how does a Kafka consumer group ensure each event is normally processed once?",
+    options:["Every consumer reads every partition and deduplicates","Each partition is assigned to exactly one consumer in the group","Kafka randomly load-balances each message","The producer decides which consumer handles each message"],
+    correct:[1],
+    why:"HI: within a consumer group each partition is assigned to exactly one consumer, so under normal operation each event goes to a single consumer."},
+  {id:"qk2e8", topic:"Kafka vs Queues", diff:"tricky", level:"Senior", type:"single",
+    q:"HI single-broker capacity estimate on good hardware?",
+    options:["~100GB data and 100K msgs/sec","~1TB data and ~1M msgs/sec","~10TB data and 10M msgs/sec","~500GB data and 50K msgs/sec"],
+    correct:[1],
+    why:"HI's hand-wavy but useful estimate: a single broker stores ~1TB and handles up to ~1M messages/sec — used to decide whether scaling is even needed."},
+  {id:"qp353", topic:"Kafka vs Queues", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: how is a Kafka message routed to a partition by default?",
+    options:["partition = hash(key) % num_partitions using murmur2","Round-robin regardless of key","By timestamp modulo partition count","By the broker with the lowest load"],
+    correct:[0],
+    why:"HI: partition = hash(key) % num_partitions with murmur2 (the default). A bad key causes hot partitions."},
+  {id:"q9zg0", topic:"Kafka vs Queues", diff:"tricky", level:"Staff", type:"multi",
+    q:"Per HI, strategies for handling a hot partition (e.g. the Nike LeBron ad)? (select all)",
+    options:["Random salting of the partition key","Compound key such as ad ID plus region","Storing the full payload blob directly in Kafka","Back pressure to slow the producer"],
+    correct:[0,1,3],
+    why:"HI lists no-key default partitioning, random salting, compound keys, and back pressure. Storing large blobs in Kafka is an anti-pattern, not a fix."},
+  {id:"q7ktc", topic:"Kafka vs Queues", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: which feature does Kafka NOT natively support that AWS SQS does?",
+    options:["Message ordering within a partition","Built-in consumer retries and dead letter queues","Durable replication across brokers","Offset tracking for consumers"],
+    correct:[1],
+    why:"HI: Kafka has no out-of-the-box consumer retry support — you build your own retry topic + DLQ. That's why the Web Crawler breakdown chose SQS, which provides them natively."},
+
+  {id:"q1owz", topic:"API Gateway", diff:"basic", level:"Mid", type:"single",
+    q:"HI: the core, primary function of an API Gateway that candidates often forget?",
+    options:["Authentication","Request routing to the appropriate backend service","Response caching","SSL termination"],
+    correct:[1],
+    why:"HI: candidates emphasize middleware but forget the core reason — request routing: deciding which backend handles each incoming request."},
+  {id:"qf2z8", topic:"API Gateway", diff:"basic", level:"Mid", type:"single",
+    q:"HI request flow: when does the gateway perform request validation?",
+    options:["After routing to the backend","Before anything else, as the first step","Only after caching the response","Never — validation is the backend's job"],
+    correct:[1],
+    why:"HI lists validation first, so malformed requests (bad JSON, missing API key) are rejected early without wasting backend resources."},
+  {id:"qjopq", topic:"API Gateway", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: the two load-balancing dimensions around an API Gateway?",
+    options:["Client-to-gateway via a dedicated LB (ELB/NGINX); gateway-to-service done by the gateway itself","The gateway always handles client-to-gateway balancing internally","Load balancing is never associated with gateways","Backend services balance themselves; the gateway never does"],
+    correct:[0],
+    why:"HI separates client-to-gateway balancing (a dedicated LB like ELB/NGINX in front) from gateway-to-service balancing (the gateway distributing across backend instances)."},
+  {id:"q19vp", topic:"API Gateway", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: what responses are appropriate to cache at the API Gateway?",
+    options:["Highly user-specific responses to personalize per user","Frequently accessed data that changes infrequently and is NOT user specific","Every response — caching is always safe","Only error responses"],
+    correct:[1],
+    why:"HI: gateway caching fits frequently accessed, infrequently changing, non-user-specific data where the same input returns the same result."},
+  {id:"qebq4", topic:"API Gateway", diff:"basic", level:"Mid", type:"single",
+    q:"HI bottom line: when to introduce an API Gateway?",
+    options:["Always, even for a simple client-server app","For microservices; skip it for a simple monolithic / single-client architecture","Only when you need a database cache","Only for systems with fewer than three services"],
+    correct:[1],
+    why:"HI: use a gateway with microservices, but it's overkill for simple monolithic or single-client systems."},
+  {id:"qbgy3", topic:"API Gateway", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: how should you handle the API Gateway when speaking in an interview?",
+    options:["Detail its full middleware pipeline","Briefly say it handles routing and basic middleware, then move on","Replace it with a message queue","Model it as the source of truth"],
+    correct:[1],
+    why:"HI stresses the gateway is thin and not the interesting part; the bigger risk is over-spending time — note routing + middleware and move on."},
+
+  // ---------- Cassandra / DynamoDB / PostgreSQL (deep dives) ----------
+  {id:"q1j4u", topic:"Cassandra", diff:"basic", level:"Mid", type:"single",
+    q:"HI: what storage structure gives Cassandra its high write throughput, replacing the B-tree?",
+    options:["A Log Structured Merge Tree (LSM tree)","A skip list","An inverted index","A hash table with chaining"],
+    correct:[0],
+    why:"HI: Cassandra uses an LSM tree instead of a B-tree, favoring write speed by treating most writes as append-only (Memtable then immutable SSTable)."},
+  {id:"q1diu", topic:"Cassandra", diff:"basic", level:"Mid", type:"single",
+    q:"HI: the purpose of a clustering key within a Cassandra primary key?",
+    options:["It picks which partition the row lives in","It determines the sorted order of rows within a partition","It enforces referential integrity across tables","It encrypts the row at rest"],
+    correct:[1],
+    why:"HI: a primary key is partition key(s) + clustering key(s). The partition key picks the partition; the clustering key sets sorted order within it (e.g. Discord ORDER BY message_id DESC)."},
+  {id:"q1t70", topic:"Cassandra", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: with replication factor 3, why does QUORUM for both reads and writes guarantee a read sees the latest write?",
+    options:["QUORUM forces all 3 replicas to respond","QUORUM needs 2 of 3 each, so read and write sets always share at least one node","QUORUM routes every request to a single leader","QUORUM disables eventual consistency cluster-wide"],
+    correct:[1],
+    why:"QUORUM = majority (n/2+1). For 3 nodes that's 2, so write touches 2 and read touches 2 of 3, guaranteeing at least one overlapping node that has seen the write."},
+  {id:"qcwkm", topic:"Cassandra", diff:"tricky", level:"Staff", type:"single",
+    q:"HI: why did Discord add a bucket (fixed 10-day window) to the partition key of their Cassandra messages table?",
+    options:["To support JOINs between channels and authors","To stop busy-channel partitions growing unbounded and hitting large-partition problems","To enable strong consistency for reads","To reduce SSTables created during compaction"],
+    correct:[1],
+    why:"HI: partitioning only by channel_id let busy channels grow monotonically into large-partition problems. The 10-day bucket caps partition size and rolls over, while recent reads still hit one partition."},
+  {id:"q7602", topic:"Cassandra", diff:"tricky", level:"Staff", type:"multi",
+    q:"HI: which are true about how Cassandra handles writes and deletes? (select all)",
+    options:["A delete is recorded as a tombstone rather than removing data in place","Writes go to the commit log, then the Memtable, then later flush to an immutable SSTable","Each write updates the existing row in place inside the SSTable on disk","Compaction consolidates SSTables and removes tombstoned rows"],
+    correct:[0,1,3],
+    why:"HI: deletes are tombstones; writes hit the commit log (WAL) then the Memtable, later flushed to an immutable SSTable. SSTables are immutable (no in-place updates); compaction merges SSTables and purges tombstones."},
+  {id:"q90lo", topic:"Cassandra", diff:"basic", level:"Staff", type:"single",
+    q:"HI: how do Cassandra nodes share cluster state (which nodes are alive, the schema)?",
+    options:["A central ZooKeeper coordinator","A peer-to-peer gossip protocol biased toward seed nodes","A primary leader broadcasting to followers","A shared SQL metadata table"],
+    correct:[1],
+    why:"HI: Cassandra uses peer-to-peer gossip with a bias toward seed nodes (guaranteed hotspots) so info reaches the whole cluster and no sub-clusters form. No single coordinator."},
+
+  {id:"qsvbq", topic:"DynamoDB", diff:"basic", level:"Mid", type:"single",
+    q:"HI: maximum size of a single DynamoDB item, including all attributes?",
+    options:["64KB","256KB","400KB","1MB"],
+    correct:[2],
+    why:"HI: each item has a primary key and can hold up to 400KB of data including all attributes."},
+  {id:"q4zal", topic:"DynamoDB", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: how do you choose eventual vs strong consistency for a DynamoDB read?",
+    options:["A table-level setting fixed at creation","Per-request via ConsistentRead=true on the read call","Automatically by item size","Globally per AWS region"],
+    correct:[1],
+    why:"HI: not table-level. Set ConsistentRead=true per GetItem/Query/Scan. Strong reads hit the leader, cost 2x the RCU (1 RCU/4KB vs 0.5), and aren't supported on GSIs."},
+  {id:"qjac3", topic:"DynamoDB", diff:"tricky", level:"Senior", type:"multi",
+    q:"HI: which correctly distinguish a GSI from an LSI in DynamoDB? (select all)",
+    options:["A GSI can use a different partition key; an LSI must share the base table partition key","GSIs support only eventually consistent reads; LSIs also support strong reads","LSIs can be added or removed any time; GSIs must be defined at table creation","An LSI is co-located on the base table's partitions; a GSI lives on separate partitions"],
+    correct:[0,1,3],
+    why:"HI: GSIs use a different partition key, live on separate partitions, eventual-only. LSIs share the partition key, are co-located, support strong reads, but must be defined at table creation (the reversed claim is wrong)."},
+  {id:"q1foo", topic:"DynamoDB", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: using ProjectionExpression to return only a few attributes primarily saves what?",
+    options:["RCU cost — only projected attributes are read from storage","Network bandwidth only; the full item is still read and full RCU charged","Storage cost — unprojected attributes aren't persisted","Nothing — it's unsupported"],
+    correct:[1],
+    why:"HI: unlike SQL column selection, ProjectionExpression only cuts network bandwidth. The full item is still read and you pay full RCU on its total size — which is why large items should be normalized."},
+  {id:"q158k", topic:"DynamoDB", diff:"basic", level:"Mid", type:"single",
+    q:"HI: roughly how many read/write capacity units does a single DynamoDB partition support?",
+    options:["~3,000 RCUs and ~1,000 WCUs","~1,000 RCUs and ~3,000 WCUs","~10,000 RCUs and ~10,000 WCUs","Unlimited — no per-partition ceiling"],
+    correct:[0],
+    why:"HI: ~3,000 RCUs and ~1,000 WCUs per partition (~12MB/s reads, ~1MB/s writes) — useful for back-of-envelope partition-count math."},
+  {id:"q9r3m", topic:"DynamoDB", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: an important caveat about DAX (DynamoDB Accelerator) and stale data?",
+    options:["DAX never caches reads, so staleness is impossible","DAX only auto-invalidates for writes that pass through DAX; direct writes to DynamoDB leave cached entries stale until TTL/eviction","DAX caches strongly consistent reads, which go stale","DAX needs no client change and is fully transparent"],
+    correct:[1],
+    why:"HI: DAX is read-through/write-through but only invalidates for writes through DAX. Direct DynamoDB writes bypass it, so entries stay stale until TTL/eviction. DAX also doesn't cache strong reads and needs the DAX client SDK."},
+
+  {id:"q1ssx", topic:"PostgreSQL", diff:"basic", level:"Mid", type:"single",
+    q:"HI: what index type does PostgreSQL create by default, including on a primary key?",
+    options:["A hash index","A B-tree index","A GIN index","An LSM tree index"],
+    correct:[1],
+    why:"HI: Postgres defaults to B-tree indexes (auto-created on the primary key), good for exact matches, range queries, and sorting when ORDER BY columns match the index order."},
+  {id:"qxq5m", topic:"PostgreSQL", diff:"basic", level:"Mid", type:"single",
+    q:"HI: why is read performance the first focus when evaluating Postgres for a social platform?",
+    options:["Writes aren't supported without extensions","In most apps reads vastly outnumber writes — users browse far more than they create","Postgres can't index write-heavy tables","Reads are billed separately"],
+    correct:[1],
+    why:"HI: reads vastly outnumber writes in most apps; users spend far more time browsing than creating, making read performance critical."},
+  {id:"qlouw", topic:"PostgreSQL", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: a common interview trap with Postgres indexes?",
+    options:["Adding an index to every column","Using B-tree indexes for range queries","Indexing the primary key","Multi-column indexes for common query patterns"],
+    correct:[0],
+    why:"HI: indexing every column is a trap — each index slows writes, consumes disk, and may not even be used if the planner prefers a sequential scan."},
+  {id:"q39sj", topic:"PostgreSQL", diff:"tricky", level:"Senior", type:"multi",
+    q:"HI social-media example: which operations have which consistency/integrity needs? (select all)",
+    options:["Creating a DM thread (thread, participants, first message) must be atomic","Like counts can be eventually consistent","Comments and follows need referential integrity","Follower counts must be strongly consistent across every replica instantly"],
+    correct:[0,1,2],
+    why:"HI: DM-thread creation must be atomic, like counts can be eventually consistent (a few seconds lag is fine), comments/follows need referential integrity. It doesn't claim follower counts need instant strong consistency."},
+  {id:"q1ryg", topic:"PostgreSQL", diff:"tricky", level:"Senior", type:"single",
+    q:"HI warns candidates against which kind of statement about Postgres?",
+    options:["That it supports B-tree indexes","Overly broad claims like 'NoSQL scales better than Postgres' without understanding the nuances","That reads usually outnumber writes","That indexes speed up reads"],
+    correct:[1],
+    why:"HI: candidates get tripped up either diving too deep (MVCC, WAL) or making broad claims like 'NoSQL scales better than Postgres' without nuance. Interviewers want informed trade-offs."},
+
+  // ---------- Flink / ZooKeeper (deep dives) ----------
+  {id:"q1o6g", topic:"Flink", diff:"basic", level:"Mid", type:"single",
+    q:"HI: what fundamentally changes when you count clicks per user over the last 5 minutes vs processing each click independently?",
+    options:["You introduce state — each message must remember previous counts","You no longer need Kafka as a source","You can switch back to a stateless DB write","You eliminate windowing"],
+    correct:[0],
+    why:"HI: the 5-minute window introduces state because each message depends on previous ones, unlike the trivial stateless transform-and-write case."},
+  {id:"q19ll", topic:"Flink", diff:"basic", level:"Mid", type:"single",
+    q:"HI: before reaching for a stream processor like Flink, what should you first ask?",
+    options:["Do I really need real-time latencies?","Can I afford more Kafka partitions?","Is my data structured or unstructured?","Should I use Spark or Hadoop for the sink?"],
+    correct:[0],
+    why:"HI stresses asking 'do I really need real-time latencies?' — many seeming stream problems reduce to batch problems (Spark/Hadoop), saving an ops headache."},
+  {id:"qhdbu", topic:"Flink", diff:"tricky", level:"Senior", type:"multi",
+    q:"HI: problems from holding 5-minute click counts as in-memory counters in your own service? (select all)",
+    options:["A crash loses all state, forcing slow re-reading of the whole Kafka topic","Scaling out requires complicated state redistribution to new instances","Out-of-order or late events can hurt count accuracy","Kafka can't deliver messages fast enough"],
+    correct:[0,1,2],
+    why:"HI enumerates crash-losing-state, state redistribution on scaling, and late/out-of-order events as the motivation for Flink. Kafka throughput is not cited."},
+  {id:"q1k4l", topic:"Flink", diff:"tricky", level:"Staff", type:"single",
+    q:"HI: the role of the Job Manager relative to Task Managers in Flink?",
+    options:["The Job Manager coordinates and schedules; Task Managers execute the actual tasks","The Job Manager stores checkpoints and Task Managers only read them","Task Managers coordinate the Job Manager, which only persists state","Both run identical roles with no coordinator"],
+    correct:[0],
+    why:"HI: the coordinating Job Manager schedules work; Task Managers run it in task slots, which is where parallelism comes from."},
+  {id:"q12zw", topic:"Flink", diff:"tricky", level:"Staff", type:"single",
+    q:"HI: the basis for Flink's exactly-once processing guarantee?",
+    options:["Periodic checkpointing of state to a state backend","Re-reading the entire Kafka topic on every failure","Disabling watermarks so nothing is late","Holding all counters in volatile memory only"],
+    correct:[0],
+    why:"HI ties exactly-once to checkpointing state into a state backend, letting Flink recover after failure rather than replaying everything from scratch."},
+  {id:"q1ym1", topic:"Flink", diff:"basic", level:"Staff", type:"single",
+    q:"HI: why do watermarks matter in a Flink job?",
+    options:["They let Flink reason about event-time progress and handle late/out-of-order events","They encrypt the stream between operators","They replace the Job Manager","They define how many task slots each Task Manager gets"],
+    correct:[0],
+    why:"HI: watermarks track event-time progress so windows correctly account for late and out-of-order events."},
+
+  {id:"q1xg9", topic:"ZooKeeper", diff:"basic", level:"Mid", type:"single",
+    q:"HI: what core problem was ZooKeeper (2008) designed to solve?",
+    options:["Coordinating distributed systems — leader election, consistent config, failure detection","Storing large media blobs efficiently","A high-throughput message queue replacing Kafka","Batch analytics over historical data"],
+    correct:[0],
+    why:"HI frames ZooKeeper as distributed coordination: electing leaders, keeping consistent config, and detecting failures in real time."},
+  {id:"q96j9", topic:"ZooKeeper", diff:"basic", level:"Mid", type:"multi",
+    q:"HI: which primitives does ZooKeeper use to solve coordination problems? (select all)",
+    options:["A hierarchical namespace","Data nodes (znodes)","Watches","A SQL query engine"],
+    correct:[0,1,2],
+    why:"HI: ZooKeeper coordinates via a hierarchical namespace, data nodes (znodes), and watches. It has no SQL query engine."},
+  {id:"q1usl", topic:"ZooKeeper", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: which universal distributed-systems problems does ZooKeeper teach you to solve?",
+    options:["Consensus, leader election, and configuration management","Image resizing, CDN routing, and compression","Garbage collection, JIT compilation, and threading","Sharding keys, hashing rings, and bloom filters"],
+    correct:[0],
+    why:"HI: learning ZooKeeper gives insight into consensus, leader election, and configuration management — the canonical coordination problems."},
+  {id:"q1bgc", topic:"ZooKeeper", diff:"tricky", level:"Staff", type:"single",
+    q:"HI chat-app example: why does a single-server deployment need no coordination?",
+    options:["Both users connect to the same server, so delivery is in-memory and low latency","ZooKeeper is embedded in the single server by default","The server uses ZAB consensus even with one node","Messages are batched and processed offline"],
+    correct:[0],
+    why:"HI: when both users are on the same server, delivery is in-memory with low latency — coordination only appears once you scale out."},
+  {id:"qy005", topic:"ZooKeeper", diff:"tricky", level:"Staff", type:"single",
+    q:"HI: which consensus protocol underlies ZooKeeper's strong consistency?",
+    options:["ZAB (ZooKeeper Atomic Broadcast)","Raft","Two-phase commit (2PC)","Gossip"],
+    correct:[0],
+    why:"HI's 'Consensus with ZAB' section indicates ZooKeeper relies on the ZAB protocol for its strong consistency guarantees."},
+  {id:"qv0vy", topic:"ZooKeeper", diff:"basic", level:"Mid", type:"single",
+    q:"HI: ZooKeeper's place in today's landscape?",
+    options:["Aged, with alternatives, but still central to the Apache ecosystem","The newest and fastest coordination service available","Fully removed from all major systems","Primarily a relational database now"],
+    correct:[0],
+    why:"HI: ZooKeeper (2008) has aged and faces alternatives, yet remains central to the Apache ecosystem in particular."},
+
+  // ---------- Patterns: Real-time / Contention / Multi-step (deep dives) ----------
+  {id:"q5vyf", topic:"Pattern: Real-time", diff:"basic", level:"Mid", type:"single",
+    q:"HI frames real-time updates as two distinct hops. What are they?",
+    options:["Client to LB, and LB to server","The first hop (server to client) and the second hop (source to server)","Browser to DNS, and DNS to origin","Read replica to cache, and cache to client"],
+    correct:[1],
+    why:"HI splits it into the first hop (server to client) and the second hop (source to server), each with different trade-offs."},
+  {id:"q11b6", topic:"Pattern: Real-time", diff:"basic", level:"Mid", type:"single",
+    q:"HI: why does standard HTTP break down for real-time systems?",
+    options:["HTTP can't transmit binary data","HTTP is request-response — client asks, server responds, connection closes — so the server can't proactively push","HTTP is always slower than UDP","HTTP requires DNS on every request"],
+    correct:[1],
+    why:"HI: standard HTTP is request-response; it works for browsing but breaks when servers need to proactively push updates."},
+  {id:"qs1pd", topic:"Pattern: Real-time", diff:"tricky", level:"Senior", type:"single",
+    q:"HI OSI layering: which protocol/layer/property pairing is correct?",
+    options:["IP at Layer 4 guarantees in-order delivery","TCP at Layer 4 is connectionless and spray-and-pray","UDP at Layer 4 is connectionless with no delivery/ordering guarantees","WebSockets at Layer 3 handle packet routing"],
+    correct:[2],
+    why:"HI: UDP is a connectionless Transport (L4) protocol with no delivery/ordering guarantees (spray-and-pray); TCP is connection-oriented; IP sits at L3."},
+  {id:"q1nj6", topic:"Pattern: Real-time", diff:"tricky", level:"Senior", type:"multi",
+    q:"HI: which client-server approaches does the first-hop section explicitly cover? (select all)",
+    options:["Long Polling","Server-Sent Events (SSE)","WebSockets","GraphQL subscriptions over gRPC"],
+    correct:[0,1,2],
+    why:"HI covers Simple Polling, Long Polling, SSE, WebSockets, and WebRTC. GraphQL subscriptions over gRPC is not one of the named protocols."},
+  {id:"qq1df", topic:"Pattern: Real-time", diff:"tricky", level:"Staff", type:"single",
+    q:"HI: for the second hop (source to the server holding the connection), which two PUSH approaches are contrasted?",
+    options:["Pushing via consistent hashes and pushing via pub/sub","Two-phase commit and gossip protocols","Write-ahead logging and change data capture","Leader election and quorum reads"],
+    correct:[0],
+    why:"HI details pushing via consistent hashes and via pub/sub (plus pulling via polling) as ways to route an update to the specific server holding a client's connection."},
+  {id:"q1wdz", topic:"Pattern: Real-time", diff:"basic", level:"Mid", type:"single",
+    q:"HI: how is SSE characterized relative to WebSockets?",
+    options:["SSE is full-duplex like WebSockets","SSE is an efficient one-way street (server to client); WebSockets are the full-duplex champion","SSE is peer-to-peer; WebSockets are server-based","SSE requires UDP; WebSockets require TCP"],
+    correct:[1],
+    why:"HI titles SSE 'The Efficient One-Way Street' (server-to-client) and WebSockets 'The Full-Duplex Champion'; WebRTC is the peer-to-peer option."},
+
+  {id:"qjtxc", topic:"Pattern: Contention", diff:"basic", level:"Mid", type:"single",
+    q:"HI: how is contention defined?",
+    options:["When a database runs out of disk space","When multiple processes compete for the same resource at the same time","When a network partition splits a cluster","When a cache and database disagree on a value"],
+    correct:[1],
+    why:"HI: contention is multiple processes competing for the same resource at once (the last concert ticket), causing race conditions, double-bookings, and inconsistent state if unhandled."},
+  {id:"qlseq", topic:"Pattern: Contention", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Alice and Bob ticket example: why does the naive read-check-decrement oversell the seat?",
+    options:["The index on concert_id was missing","Bob reads the same count Alice read before Alice writes her update back, so both pass the check and both decrement","The UPDATE had a syntax error","The seat count was cached in a stale CDN"],
+    correct:[1],
+    why:"HI: Alice reads one seat, then Bob reads the same count before Alice writes; both check what they read, both decrement, dropping the count to negative one."},
+  {id:"qkm1j", topic:"Pattern: Contention", diff:"tricky", level:"Senior", type:"multi",
+    q:"HI: which approaches to contention are covered as distinct named solutions? (select all)",
+    options:["Conditional Writes","Pessimistic Locking","Optimistic Concurrency Control","Eventual consistency via vector clocks"],
+    correct:[0,1,2],
+    why:"HI enumerates Conditional Writes, Pessimistic Locking, Optimistic Concurrency Control, Isolation Levels, and Distributed Locks. Vector-clock eventual consistency is not listed."},
+  {id:"qp10c", topic:"Pattern: Contention", diff:"tricky", level:"Senior", type:"single",
+    q:"HI deep dive: the classic gotcha with optimistic concurrency is…",
+    options:["The thundering herd problem","The ABA problem","The split-brain problem","The dining philosophers problem"],
+    correct:[1],
+    why:"HI calls out the ABA problem: a value changes from A to B and back to A between read and write, defeating a naive version check."},
+  {id:"q1nwn", topic:"Pattern: Contention", diff:"basic", level:"Mid", type:"single",
+    q:"HI: which failure mode is a deep-dive concern specific to pessimistic locking?",
+    options:["Lost updates","Deadlocks","Cache stampedes","Clock drift"],
+    correct:[1],
+    why:"HI has a dedicated deep dive on preventing deadlocks with pessimistic locking — holding locks across multiple resources can make processes wait on each other in a cycle."},
+  {id:"qrzl4", topic:"Pattern: Contention", diff:"tricky", level:"Senior", type:"single",
+    q:"HI's stance on when to reach for heavy contention machinery?",
+    options:["Always use distributed locks to be safe","It has a 'When NOT to overcomplicate' section, warning against over-engineering low-contention cases","Pessimistic locking should be the default everywhere","Contention can only be solved with a dedicated coordination service"],
+    correct:[1],
+    why:"HI's 'When NOT to overcomplicate' section signals you should match the solution to the actual level of contention rather than always reaching for distributed locks/OCC."},
+
+  {id:"q18xc", topic:"Pattern: Multi-step", diff:"basic", level:"Staff", type:"single",
+    q:"HI: which solutions does the multi-step article present?",
+    options:["Sagas, workflow systems, and durable execution","Sharding, replication, and caching","Load balancing, autoscaling, and rate limiting","Indexing, partitioning, and denormalization"],
+    correct:[0],
+    why:"HI centers multi-step processes on sagas, workflow systems, and durable execution (Single Server Orchestration, Event Sourcing, Workflows)."},
+  {id:"q1ldb", topic:"Pattern: Multi-step", diff:"tricky", level:"Staff", type:"single",
+    q:"HI: the core design problem of naive multi-step orchestration?",
+    options:["It uses too much disk for logs","It interweaves system-level concerns (crashes, retries, failures) with business-level concerns, making the system brittle","It can't scale reads across replicas","It requires synchronous HTTP for every call"],
+    correct:[1],
+    why:"HI: organically patching processes interweaves system-level concerns like crashes/retries with business logic, making the design complex and brittle."},
+  {id:"qv3cn", topic:"Pattern: Multi-step", diff:"basic", level:"Mid", type:"single",
+    q:"HI: which example workflow motivates the multi-step pattern?",
+    options:["A social media feed fan-out","E-commerce order fulfillment (charge payment, reserve inventory, create shipping label, wait for pickup, send confirmation)","A video transcoding pipeline","A real-time stock ticker"],
+    correct:[1],
+    why:"HI uses e-commerce order fulfillment: charge payment, reserve inventory, create a shipping label, wait for a human pickup, send confirmation — any step can fail or time out."},
+  {id:"q1vl8", topic:"Pattern: Multi-step", diff:"tricky", level:"Staff", type:"single",
+    q:"HI: when inventory can't be found AFTER payment is charged, what mechanism undoes prior steps?",
+    options:["A rollback segment","Compensating actions (like refunds)","A two-phase commit abort","A read repair"],
+    correct:[1],
+    why:"HI: add compensating actions (like refunds if inventory can't be found) to undo completed steps — the core idea behind the saga pattern."},
+  {id:"qlqc1", topic:"Pattern: Multi-step", diff:"tricky", level:"Staff", type:"multi",
+    q:"HI: which deep-dive challenges does it raise about running workflows in production? (select all)",
+    options:["Handling updates/versioning and migrations to a running workflow","Keeping workflow state size in check","Ensuring a given step runs exactly once","Compressing images before upload"],
+    correct:[0,1,2],
+    why:"HI's deep dives cover workflow versioning/migrations, keeping state size in check, handling external events, and exactly-once steps. Image compression is unrelated."},
+  {id:"q19uk", topic:"Pattern: Multi-step", diff:"tricky", level:"Senior", type:"single",
+    q:"HI references a talk to show how hard reliable multi-step processes are. Which?",
+    options:["'Turning the Database Inside Out' on stream processing","Jimmy Bogard's 'Six Little Lines of Fail' — even a simple sequence of steps is surprisingly hard in distributed systems","'The Twelve-Factor App' on stateless services","'Designing Data-Intensive Applications' on consistency"],
+    correct:[1],
+    why:"HI cites Jimmy Bogard's 'Six Little Lines of Fail', whose premise is that distributed systems make even a simple sequence of steps surprisingly hard to do reliably."},
+
+  // ---------- Patterns: Scaling Reads / Writes / Large Blobs / Long-Running Tasks (deep dives) ----------
+  {id:"q10i2", topic:"Pattern: Scaling Reads", diff:"basic", level:"Mid", type:"single",
+    q:"HI: the typical starting read-to-write ratio for many apps (often climbing higher for content-heavy ones)?",
+    options:["1:1","10:1","2:1","100:1 from the start"],
+    correct:[1],
+    why:"HI: the standard ratio starts at 10:1 but often reaches 100:1+ for content-heavy apps like Instagram or YouTube."},
+  {id:"qxone", topic:"Pattern: Scaling Reads", diff:"basic", level:"Mid", type:"single",
+    q:"HI frames the core read-scaling difficulty as ultimately a question of what?",
+    options:["Bad software you can debug your way out of","Physics — CPU instructions/sec, memory limits, disk I/O bounds","Choosing the wrong programming language","Insufficient logging"],
+    correct:[1],
+    why:"HI: it's usually not a software problem you can debug away; it's physics, where CPU, memory, and disk I/O hit hard constraints more code can't overcome."},
+  {id:"q19t8", topic:"Pattern: Scaling Reads", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: the natural read-scaling progression?",
+    options:["Add caching, then shard, then optimize the database","Optimize within the DB, scale the DB horizontally (replicas/sharding), then add external caching (app + CDN)","Buy a CDN first, then add replicas, then index","Shard first, denormalize, then upgrade hardware"],
+    correct:[1],
+    why:"HI: optimize within the DB (indexing, hardware, denormalization), then scale horizontally (read replicas, sharding), then add external caching layers."},
+  {id:"q10or", topic:"Pattern: Scaling Reads", diff:"tricky", level:"Senior", type:"multi",
+    q:"HI: which techniques are in the first bucket — optimizing reads WITHIN your database? (select all)",
+    options:["Indexing","Hardware upgrades","Denormalization strategies","CDN and edge caching"],
+    correct:[0,1,2],
+    why:"HI lists indexing, hardware upgrades, and denormalization under in-database optimization. CDN/edge caching is a later external layer."},
+  {id:"qj2d4", topic:"Pattern: Scaling Reads", diff:"tricky", level:"Senior", type:"single",
+    q:"HI deep dive: many requests rebuild the SAME expired cache entry at once. What's this called?",
+    options:["Replication lag on read replicas","A thundering-herd / cache stampede where many misses hit the DB at once","A hot partition key on the write path","CDN cache poisoning"],
+    correct:[1],
+    why:"HI: this is the cache stampede / thundering herd — many requests miss simultaneously and hammer the backing database to rebuild the entry."},
+
+  {id:"q1duo", topic:"Pattern: Scaling Writes", diff:"basic", level:"Mid", type:"single",
+    q:"HI: why is the write side often harder than the read side?",
+    options:["Reads never hit the database","Bursty, high-throughput writes with lots of contention are a nightmare to build around","Writes are always cached by default","Writes don't consume disk I/O"],
+    correct:[1],
+    why:"HI: read-side tools (replicas, caching) are familiar, but bursty high-throughput writes with contention are hard, and many choices make them worse."},
+  {id:"qgmxp", topic:"Pattern: Scaling Writes", diff:"tricky", level:"Senior", type:"multi",
+    q:"HI: which strategies does it combine to scale writes? (select all)",
+    options:["Vertical scaling and database choices","Sharding and partitioning","Handling bursts with queues and load shedding","Batching and hierarchical aggregation"],
+    correct:[0,1,2,3],
+    why:"HI lists exactly four: vertical scaling + DB choices, sharding + partitioning, bursts via queues + load shedding, and batching + hierarchical aggregation."},
+  {id:"qkm6m", topic:"Pattern: Scaling Writes", diff:"basic", level:"Mid", type:"single",
+    q:"HI: before throwing more hardware at writes, where should you first try to scale?",
+    options:["Across hundreds of shards immediately","Staying within a single-server, single-database architecture","On a global CDN","By adding read replicas"],
+    correct:[1],
+    why:"HI: first scale within a single-server, single-database setup (vertical scaling + write optimization) before adding hardware."},
+  {id:"q6mf8", topic:"Pattern: Scaling Writes", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: what does vertical partitioning primarily do (vs horizontal sharding)?",
+    options:["Splits rows across many machines by a partition key","Splits a table by columns/fields so different attributes live separately","Replicates the whole table to every node","Caches writes in Redis before persisting"],
+    correct:[1],
+    why:"HI separates horizontal sharding (splitting rows by key) from vertical partitioning (splitting by columns/attributes)."},
+  {id:"q1syk", topic:"Pattern: Scaling Writes", diff:"tricky", level:"Senior", type:"multi",
+    q:"HI deep dive: a hot key too popular for even a single shard. Which two approaches are named? (select all)",
+    options:["Split all keys","Split hot keys dynamically","Drop the writes silently","Disable sharding entirely"],
+    correct:[0,1],
+    why:"HI's hot-key deep dive offers Split All Keys and Split Hot Keys Dynamically. Dropping writes or disabling sharding are not the proposed remedies."},
+
+  {id:"q9oxw", topic:"Pattern: Large Blobs", diff:"basic", level:"Mid", type:"single",
+    q:"HI rule of thumb: when should data live in blob storage rather than a database?",
+    options:["Over 1KB and rarely read","Over 10MB and it doesn't need SQL queries","Any image regardless of size","Only files over 1GB"],
+    correct:[1],
+    why:"HI: if something is over 10MB and doesn't need SQL queries, it should probably be in blob storage like S3."},
+  {id:"qit8m", topic:"Pattern: Large Blobs", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: the durability figure it cites for object stores like S3?",
+    options:["99.9% (three nines)","99.99% (four nines)","99.999999999% (eleven nines)","100% guaranteed"],
+    correct:[2],
+    why:"HI: S3 offers 99.999999999% (11 nines) durability, with effectively unlimited capacity and per-object pricing."},
+  {id:"q16gk", topic:"Pattern: Large Blobs", diff:"basic", level:"Mid", type:"single",
+    q:"HI: the core anti-pattern for large-file transfers?",
+    options:["Storing metadata in a database","Routing file bytes through your application servers as a proxy","Using a CDN for downloads","Compressing files before upload"],
+    correct:[1],
+    why:"HI's 'server as a proxy' problem: routing bytes client to server to S3 and back works for small files but breaks down as files grow."},
+  {id:"qnzsp", topic:"Pattern: Large Blobs", diff:"tricky", level:"Senior", type:"multi",
+    q:"HI: which mechanisms avoid proxying bytes through your servers? (select all)",
+    options:["Presigned URLs so clients upload directly to blob storage","CDN-based downloads","Resumable uploads with parallel transfers and progress tracking","Storing the full file as a BLOB column in Postgres"],
+    correct:[0,1,2],
+    why:"HI: presigned URLs (direct-to-blob), CDN downloads, and resumable/parallel uploads. Storing the file as a DB BLOB is exactly what it warns against — it kills query, backup, and replication performance."},
+  {id:"q16af", topic:"Pattern: Large Blobs", diff:"tricky", level:"Senior", type:"single",
+    q:"HI deep dive 'What if the upload fails at 99 percent?' — which feature addresses it?",
+    options:["A bigger application server","Resumable (multipart/chunked) uploads so you don't restart from zero","Switching to a SQL database","Disabling the CDN"],
+    correct:[1],
+    why:"HI pairs the 'fails at 99%' case with resumable uploads: chunked/multipart transfers let an upload resume rather than restart."},
+
+  {id:"q1lhw", topic:"Pattern: Long-Running Tasks", diff:"basic", level:"Mid", type:"single",
+    q:"HI: the two phases the long-running-tasks pattern splits a request into?",
+    options:["Read phase and write phase","Immediate acknowledgment and background processing","Authentication and authorization","Compression and encryption"],
+    correct:[1],
+    why:"HI: immediate acknowledgment (validate, enqueue, return a job ID in ms) and background processing by separate workers."},
+  {id:"qfagc", topic:"Pattern: Long-Running Tasks", diff:"basic", level:"Mid", type:"single",
+    q:"HI: why does synchronous processing of a 45-second PDF report fail, beyond poor UX?",
+    options:["The database runs out of rows","Most web servers and load balancers enforce ~30-60s timeouts, so the request may not even complete","Browsers refuse all requests over 10 seconds","PDFs can't be generated server-side"],
+    correct:[1],
+    why:"HI: the 45s report often won't complete synchronously because servers/LBs enforce ~30-60s timeout limits, on top of the user staring at a spinner."},
+  {id:"qsm0y", topic:"Pattern: Long-Running Tasks", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: in the immediate-acknowledgment phase, what does the web server return almost instantly?",
+    options:["The fully rendered PDF","A job ID after validating and pushing the job to a queue","A read replica connection string","The raw queue offset and worker IP"],
+    correct:[1],
+    why:"HI: the web server validates, pushes a job to a queue (Redis/RabbitMQ), and returns a job ID within milliseconds, while workers do the heavy lifting and update status."},
+  {id:"qeh15", topic:"Pattern: Long-Running Tasks", diff:"tricky", level:"Senior", type:"multi",
+    q:"HI: which are listed as common deep dives in the long-running-tasks article? (select all)",
+    options:["Handling repeated failures","Preventing duplicate work","Managing queue backpressure","Choosing a CDN region"],
+    correct:[0,1,2],
+    why:"HI lists handling failures, repeated failures, preventing duplicate work, queue backpressure, mixed workloads, and job dependencies. CDN region selection belongs to the large blobs pattern."},
+  {id:"qg5sa", topic:"Pattern: Long-Running Tasks", diff:"tricky", level:"Senior", type:"single",
+    q:"HI: how is the worker side described?",
+    options:["A single thread inside the web server","Separate worker processes that continuously poll the queue, grab pending jobs, execute the work, and update job status","The client browser running the task locally","A read replica that auto-executes jobs"],
+    correct:[1],
+    why:"HI: separate worker processes continuously poll the queue, grab pending jobs, run the time-consuming work, and update job status in a database — decoupled from the web server."},
+
+  /* ============================================================
+     QUESTION BREAKDOWNS — grounded in HI problem walkthroughs
+     ============================================================ */
+
+  // ---------- Design: Bitly (URL shortener) ----------
+  {id:"q1c3k", topic:"Design: Bitly", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Bitly: preferred way to generate the short code, and why?",
+    options:["Hash the long URL and take the first 7 chars","A unique counter encoded in Base62, so codes are unique by construction","Random 7-char strings with retry on collision","Use the long URL itself, URL-encoded"],
+    correct:[1],
+    why:"HI leans to counter + Base62: uniqueness is guaranteed, no collision handling needed. Hashing/truncation works but requires a UNIQUE constraint and collision retries; keep that constraint anyway as a safety net."},
+  {id:"qyps8", topic:"Design: Bitly", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Bitly: how do you make the global counter fast and not a per-request bottleneck?",
+    options:["A SQL AUTO_INCREMENT column hit on every write","A single Redis atomic INCR, with counter batching (claim ~1000 IDs at a time per server)","A UUID generated on each app server","A timestamp in milliseconds"],
+    correct:[1],
+    why:"HI: Redis INCR is atomic and fast; batching ID ranges (grab 1000 at once) cuts network round-trips. Losing a few counter values on failover is fine — you only need uniqueness, not a gap-free sequence."},
+  {id:"q1cys", topic:"Design: Bitly", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Bitly: 301 vs 302 redirect — which does HI prefer and why?",
+    options:["301 permanent — browsers cache it, lowering load","302 temporary — keeps requests flowing through your server so you retain control and can add analytics","301 because it is better for SEO","It makes no difference"],
+    correct:[1],
+    why:"HI prefers 302: the browser keeps hitting your server, so you keep control and can later add click analytics. 301 lets the browser cache the redirect (less load, but you lose visibility)."},
+
+  // ---------- Design: Dropbox (file storage/sync) ----------
+  {id:"q1631", topic:"Design: Dropbox", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Dropbox: where should large files be chunked, and via what mechanism?",
+    options:["On the server after a single large upload","On the client, using S3 Multipart Upload (per-part presigned URLs)","Inside the database as BLOB rows","Chunking isn't needed below 50GB"],
+    correct:[1],
+    why:"HI: chunk on the CLIENT (5–10MB), then S3 Multipart Upload — CreateMultipartUpload → presigned URL per part → CompleteMultipartUpload. Server-side chunking defeats the purpose (the big file still flows through your servers)."},
+  {id:"qbucr", topic:"Design: Dropbox", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Dropbox: what should identify a file/chunk for dedup and resumable uploads?",
+    options:["The filename","The user ID + timestamp","A SHA-256 hash of the content (a fingerprint)","An auto-increment ID"],
+    correct:[2],
+    why:"HI: fingerprint = SHA-256 of content. It enables dedup (same content already stored) and resumability (which chunks are already present), neither of which a filename can do."},
+  {id:"qdaqq", topic:"Design: Dropbox", diff:"tricky", level:"Staff", type:"single",
+    q:"HI Dropbox: fixed-size chunks re-upload the whole file when you insert a byte near the start. The fix?",
+    options:["Larger fixed chunks","Content-Defined Chunking (CDC) with a rolling hash (Rabin fingerprinting)","Upload only at night","Disable chunking for edited files"],
+    correct:[1],
+    why:"HI: with fixed offsets, an early insert shifts every boundary so all chunks look changed. Content-defined chunking sets boundaries by a rolling hash of the content, so only the edited region's chunks change."},
+
+  // ---------- Design: Ticketmaster ----------
+  {id:"q1awh", topic:"Design: Ticketmaster", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Ticketmaster: how to hold a seat for ~10 min during checkout without double-booking?",
+    options:["A long-running DB transaction holding a row lock","A Redis distributed lock with a TTL that auto-expires if the user abandons","A boolean column flipped with no timeout","Optimistic retries only"],
+    correct:[1],
+    why:"HI's 'great' answer: Redis lock keyed by seat with a TTL (~10 min) so abandoned holds auto-release. A status+expiration column scanned by cron is the 'good' fallback. The final DB write with ACID is what actually guarantees no double-book."},
+  {id:"q1g7u", topic:"Design: Ticketmaster", diff:"tricky", level:"Staff", type:"single",
+    q:"HI Ticketmaster: the staff-level differentiator for a 10M-users-on-one-event on-sale is…",
+    options:["Bigger database instances","A virtual waiting queue that admits users to the booking flow in a controlled trickle","Caching the seat map harder","Sharding by seat ID"],
+    correct:[1],
+    why:"HI: a virtual waiting queue protects the booking path from a thundering herd by admitting users in controlled batches — the 'think outside the box' move that signals senior/staff."},
+  {id:"qwqgk", topic:"Design: Ticketmaster", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Ticketmaster: why not implement event search with SQL LIKE '%term%'?",
+    options:["LIKE isn't valid SQL","It forces a full table scan (no index help) — use Elasticsearch for full-text search","It returns wrong results","It only works on numbers"],
+    correct:[1],
+    why:"HI: leading-wildcard LIKE can't use a B-tree index, so it scans the whole table — too slow at scale. Elasticsearch's inverted index is the right tool; add query-result/edge caching."},
+
+  // ---------- Design: News Feed ----------
+  {id:"q1yt4", topic:"Design: News Feed", diff:"tricky", level:"Staff", type:"single",
+    q:"HI News Feed: the standard answer for mixing normal users and celebrities is…",
+    options:["Pure fan-out-on-write for everyone","Pure fan-out-on-read for everyone","Hybrid: precompute feeds for normal users, fan-out-on-read for celebrities, merge at read time","Store no feeds, recompute every request"],
+    correct:[2],
+    why:"HI's 'great' solution: precompute (push) into a per-user feed table for normal accounts, but pull celebrity posts at read time and merge — avoiding the millions-of-writes-per-celebrity-post explosion."},
+  {id:"q1sie", topic:"Design: News Feed", diff:"tricky", level:"Senior", type:"single",
+    q:"HI News Feed: a few hot posts get hammered and your DynamoDB feed cache develops a hot key. Fix?",
+    options:["Increase the TTL","Replicate the hot entry across multiple cache nodes (redundant post cache) to spread reads","Switch to a single bigger cache node","Stop caching hot posts"],
+    correct:[1],
+    why:"HI: DynamoDB (and single cache nodes) hate hot keys. Replicating the hot post across several cache nodes spreads the read load instead of concentrating it on one partition."},
+
+  // ---------- Design: WhatsApp ----------
+  {id:"qsoqs", topic:"Design: WhatsApp", diff:"tricky", level:"Senior", type:"single",
+    q:"HI WhatsApp: sender and receiver are connected to different chat servers. How do you route the message?",
+    options:["A Kafka topic per user","Redis Pub/Sub with a topic per user, so the receiver's server is subscribed and gets the message","A shared database both servers poll","Consistent hashing so both users always land on one server"],
+    correct:[1],
+    why:"HI's 'great' answer: Redis Pub/Sub, one topic per user — sidesteps consistent-hashing complexity. A Kafka topic-per-user is an anti-pattern (Kafka isn't built for hundreds of millions of topics)."},
+  {id:"qhggv", topic:"Design: WhatsApp", diff:"tricky", level:"Senior", type:"single",
+    q:"HI WhatsApp: Pub/Sub is at-most-once and stores nothing. How is delivery still guaranteed?",
+    options:["Switch to TCP only","Write to a durable Inbox table before publishing, require client acks, and use per-chat sequence numbers with gap detection","Send each message twice","Rely on the load balancer to retry"],
+    correct:[1],
+    why:"HI: persist undelivered messages in an Inbox (delete on ack), and have clients detect gaps via per-chat sequence numbers (piggybacked on heartbeats) with a polling backstop — covering Pub/Sub's dropped messages."},
+  {id:"q5imy", topic:"Design: WhatsApp", diff:"tricky", level:"Senior", type:"single",
+    q:"HI WhatsApp: how should message ordering be handled?",
+    options:["A global total order across all chats","Strict per-chat ordering enforced with locks","NTP-synced server-receipt timestamps; the client sorts by them (accept occasional pop-in)","Order by client device clock"],
+    correct:[2],
+    why:"HI: don't pay for strict ordering. Stamp messages with NTP-synced server receipt time and let clients sort; users tolerate rare reordering/pop-in. Client clocks can't be trusted."},
+  {id:"q1pnf", topic:"Design: WhatsApp", diff:"tricky", level:"Senior", type:"single",
+    q:"HI WhatsApp: how do you detect a silently-dead WebSocket connection?",
+    options:["Wait for the next user message","Application-level heartbeats (TCP keepalive is too slow)","Ping the database","Close all connections every minute"],
+    correct:[1],
+    why:"HI: TCP keepalive intervals are too coarse; use application-level heartbeats to spot dead connections quickly (and derive 'last seen' from active connections rather than DB writes per heartbeat)."},
+
+  // ---------- Design: Uber ----------
+  {id:"qmlp8", topic:"Design: Uber", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Uber: 10M drivers pinging location every few seconds (~2M writes/sec). Where do you store it?",
+    options:["DynamoDB with on-demand capacity","An in-memory geospatial store like Redis (geohashing / quadtree)","A Postgres table with a B-tree on (lat, long)","S3 objects per driver"],
+    correct:[1],
+    why:"HI: that write rate in DynamoDB would cost a fortune (>$200k/day), and a B-tree can't do 2D proximity. Redis with geohashing handles high-frequency writes and radius queries in memory; add adaptive update intervals client-side."},
+  {id:"qvwjg", topic:"Design: Uber", diff:"tricky", level:"Staff", type:"single",
+    q:"HI Uber: a driver doesn't respond to a ride offer. What's the robust way to handle the multi-step timeout/retry flow?",
+    options:["A simple delay queue","Durable execution (e.g. Temporal/Cadence) to drive the offer→timeout→reoffer workflow reliably","A cron job scanning rides","Client-side timers"],
+    correct:[1],
+    why:"HI: this is the multi-step-process pattern. Durable execution (Uber authored Cadence) survives crashes and reliably advances offer → 10s timeout → next driver, which a fragile delay queue can't guarantee."},
+  {id:"q1hws", topic:"Design: Uber", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Uber: which values must NOT be trusted from the client?",
+    options:["Only the user's name","userId, timestamps, and the fare estimate — derive them from the session/server/DB","Nothing; the client is authenticated","Only the payment token"],
+    correct:[1],
+    why:"HI repeatedly warns: never trust client-supplied identity or money fields. Pull userId from the session/JWT, set timestamps server-side, and re-read the fare from the DB by fareId."},
+
+  // ---------- Design: Ad Click Aggregator ----------
+  {id:"q1ez7", topic:"Design: Ad Click Aggregator", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Ad Click Aggregator: the recommended real-time processing pipeline is…",
+    options:["Write clicks to Postgres and run GROUP BY on query","Stream (Kafka/Kinesis) → Flink → an OLAP store (e.g. ClickHouse/Druid/BigQuery)","Cron job aggregating a CSV","Client-side counting"],
+    correct:[1],
+    why:"HI: ingest into a stream, aggregate in Flink, write to an OLAP DB optimized for analytical queries. Using one transactional DB for both ingest and analytics is the anti-pattern."},
+  {id:"q19yd", topic:"Design: Ad Click Aggregator", diff:"tricky", level:"Staff", type:"single",
+    q:"HI Ad Click Aggregator: a viral ad creates a hot partition. The standard fix?",
+    options:["Stop tracking that ad","Append a random suffix to the partition key (AdId:0..N); the aggregator strips it and SUMs the parts","Use a bigger Kafka broker","Switch to fan-out-on-read"],
+    correct:[1],
+    why:"HI: salt the key with a random suffix so the hot ad's events spread across partitions; the aggregator removes the suffix and sums per AdId. Classic hot-shard remediation."},
+  {id:"qupqu", topic:"Design: Ad Click Aggregator", diff:"tricky", level:"Staff", type:"single",
+    q:"HI Ad Click Aggregator: how do you guarantee correctness against the fast-but-lossy stream path?",
+    options:["Trust the stream; it never loses data","Lambda architecture: also dump raw events to S3 and run a nightly Spark batch as the source of truth, reconciling against the stream","Re-run the stream twice","Cache the results longer"],
+    correct:[1],
+    why:"HI: speed layer (Flink) for near-real-time + batch layer (Spark over an S3 data lake) as the authoritative recompute. Reconciling the two catches drift/loss in the streaming path."},
+  {id:"qgxya", topic:"Design: Ad Click Aggregator", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Ad Click Aggregator: how do you make click tracking idempotent (dedupe retries)?",
+    options:["Use the userId as the dedup key","Generate a unique impression ID per ad impression and dedupe on it","Count only the first click per minute","Ignore duplicates; they're rare"],
+    correct:[1],
+    why:"HI: mint a unique impression ID when the ad is served and carry it on the click event, so retried/duplicate clicks collapse to one. userId is too coarse."},
+
+  // ---------- Design: Web Crawler ----------
+  {id:"qz8nm", topic:"Design: Web Crawler", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Web Crawler: which queue does HI pick for the frontier, and what goes in it?",
+    options:["Kafka, storing the raw HTML","SQS, storing only the URL (visibility timeout gives easy backoff + DLQ)","Redis list storing full pages","A SQL table of HTML blobs"],
+    correct:[1],
+    why:"HI picks SQS: its visibility timeout makes retries/exponential backoff and dead-letter queues easy. Store a URL pointer, not raw HTML (HTML goes to S3) — keep the message small and the URL in-flight until the HTML is confirmed stored."},
+  {id:"q15fr", topic:"Design: Web Crawler", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Web Crawler: a surprising bottleneck when crawling billions of pages is…",
+    options:["CPU for parsing","DNS resolution (cited as up to ~70% of per-thread time) — fix with DNS caching and multiple providers","Disk I/O on the queue","JSON serialization"],
+    correct:[1],
+    why:"HI (citing the Mercator paper): DNS can dominate thread time. Cache DNS results and round-robin multiple DNS providers. Crawling is I/O-bound, so a handful of network-optimized machines suffices for the 5-day target."},
+  {id:"q1bh1", topic:"Design: Web Crawler", diff:"tricky", level:"Senior", type:"multi",
+    q:"HI Web Crawler: which are part of being a 'polite' crawler? (select all)",
+    options:["Parse and respect robots.txt (Disallow + Crawl-delay)","Rate-limit ~1 request/sec per domain (per-domain Redis SET NX lock)","Add jitter to avoid synchronized retries","Ignore robots.txt for faster coverage"],
+    correct:[0,1,2],
+    why:"HI: respect robots.txt including Crawl-delay, throttle per domain (~1 rps via a per-domain lock), and add jitter. Ignoring robots.txt is the opposite of polite."},
+  {id:"qyykt", topic:"Design: Web Crawler", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Web Crawler: how do you avoid re-storing the same content and getting stuck in crawler traps?",
+    options:["Crawl each URL only once ever","Dedupe by content hash (not just URL) and cap crawl depth (~15–20 hops from seed)","Limit total pages to 1M","Disable following links"],
+    correct:[1],
+    why:"HI: URL-level dedup misses mirror content, so also hash page content. Cap depth (hops from the seed, not path segments) to escape infinite trap pages."},
+
+  // ---------- Design: Top K ----------
+  {id:"q156k", topic:"Design: Top K", diff:"tricky", level:"Staff", type:"single",
+    q:"HI Top-K: the headline data structure when exact counts can be relaxed to approximate is…",
+    options:["A B-tree","A Count-Min Sketch (plus a heap for the top-K)","A bloom filter","A sorted set per video"],
+    correct:[1],
+    why:"HI: a Count-Min Sketch estimates per-item counts in megabytes instead of a hundreds-of-GB exact hash table; feed estimates into a heap to keep the top-K. Only valid when 'precise' is relaxed."},
+  {id:"qoz3n", topic:"Design: Top K", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Top-K: 70B views/day (~700k TPS) far exceeds one DB. How do you keep results exact?",
+    options:["Sample 1% of views","Ingest via Kafka, shard the counts across many DBs, compute each shard's top-K and merge","Round counts to the nearest thousand","Only count logged-in users"],
+    correct:[1],
+    why:"HI: buffer with Kafka and shard counters; each shard's local top-K, merged, is mathematically guaranteed to contain the global top-K — exact, without a single hot DB."},
+  {id:"qpc0m", topic:"Design: Top K", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Top-K: why does HI restrict the problem to tumbling (non-overlapping) windows?",
+    options:["Tumbling windows are less accurate, which is fine","Sliding windows are substantially harder to maintain; tumbling keeps aggregation tractable","Tumbling windows need no storage","Users only ask for sliding windows"],
+    correct:[1],
+    why:"HI: sliding windows require continuously re-aggregating overlapping ranges; tumbling windows let you keep simple per-window aggregates (precomputed/cached per minute)."},
+
+  // ---------- Design: Rate Limiter ----------
+  {id:"q16wy", topic:"Design: Rate Limiter", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Rate Limiter: why does a per-gateway in-memory counter fail?",
+    options:["Memory is too expensive","The load balancer spreads a client's requests across gateways, so each sees only a fraction of the count — use a centralized Redis","In-memory counters aren't atomic","It only works for IP-based limits"],
+    correct:[1],
+    why:"HI: with traffic spread across gateway instances, no single instance has the true count. Centralize the counter in Redis (sharded by client key) so the limit is enforced globally."},
+  {id:"q124l", topic:"Design: Rate Limiter", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Rate Limiter: how do you make the read-modify-write of a token bucket race-free in Redis?",
+    options:["Hope requests don't collide","Run the check/refill/decrement as one atomic unit (MULTI/EXEC or a Lua script), plus EXPIRE to avoid leaks","Use two separate Redis calls","Lock the whole Redis instance"],
+    correct:[1],
+    why:"HI: bundle the HGET tokens / refill / HSET into an atomic transaction (or Lua) so concurrent requests can't both spend the last token; set EXPIRE so idle buckets don't leak memory."},
+  {id:"qymk2", topic:"Design: Rate Limiter", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Rate Limiter: if the Redis backing the limiter goes down, does HI fail open or fail closed (for a social API)?",
+    options:["Fail open — never block legitimate users","Fail closed — reject requests, because outages often coincide with spikes and failing open can collapse the backend","It doesn't matter","Shut down the whole service"],
+    correct:[1],
+    why:"HI calls both defensible but picks fail-closed for social media: limiter failures tend to coincide with traffic surges, so failing open could let a flood cascade into a backend collapse."},
+
+  // ---------- Design: Google Docs ----------
+  {id:"q1vxf", topic:"Design: Google Docs", diff:"tricky", level:"Staff", type:"single",
+    q:"HI Google Docs: which concurrency-control approach does HI choose, and what's the alternative?",
+    options:["Locks per paragraph; alternative is no locking","Operational Transformation (OT, what Google uses); CRDTs are the alternative for P2P/larger collaborator counts (e.g. Figma)","Two-phase commit; alternative is sagas","Last-write-wins; alternative is first-write-wins"],
+    correct:[1],
+    why:"HI: OT transforms concurrent INSERT/DELETE ops against each other on a central server so all clients converge — low memory, great for text. CRDTs suit peer-to-peer or very large collaboration but cost more memory."},
+  {id:"q1igd", topic:"Design: Google Docs", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Google Docs: what should clients send over the WebSocket?",
+    options:["The entire document on every keystroke","Edits as operations (e.g. INSERT/DELETE at a position)","A screenshot of the page","Only the final document on save"],
+    correct:[1],
+    why:"HI: transmit compact operations (insert/delete at offsets), not the whole doc — that's what OT transforms and what Cassandra stores append-only, partitioned by documentId."},
+  {id:"qinys", topic:"Design: Google Docs", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Google Docs: how do you ensure all editors of one document hit the same WebSocket server at scale?",
+    options:["Random load balancing","Consistent hashing by documentId, with ZooKeeper maintaining the hash ring; client connects via HTTP then upgrades to WS on the right server","Sticky sessions by user IP","A single global server"],
+    correct:[1],
+    why:"HI: route by documentId via consistent hashing so collaborators converge on one stateful server; ZooKeeper keeps the ring consistent as servers join/leave. Snapshot/compact operations to bound storage/transfer."},
+
+  // ---------- Design: Payment System ----------
+  {id:"qddm0", topic:"Design: Payment System", diff:"tricky", level:"Staff", type:"single",
+    q:"HI Payment System: a request times out after charging. How do you avoid double-charging on retry?",
+    options:["Assume the timeout means it failed and retry blindly","Idempotency keys, plus reconciliation against the payment network — never assume a timeout equals failure","Charge again and refund later","Block all retries"],
+    correct:[1],
+    why:"HI: a timeout is ambiguous (it may have succeeded). An idempotency key makes the retry a no-op if it already went through, and reconciliation against the network catches mismatches."},
+  {id:"q1tjr", topic:"Design: Payment System", diff:"tricky", level:"Staff", type:"single",
+    q:"HI Payment System: what storage approach gives the durability/audit trail payments require?",
+    options:["Store only current state in a single table","Event sourcing: an append-only immutable event log (via CDC), not just current state","Daily CSV exports","Cache everything in Redis"],
+    correct:[1],
+    why:"HI: append-only event log is the foundation for audits, chargebacks, reconciliation and fraud detection — current-state-only loses the history regulators and disputes require."},
+  {id:"q1e8a", topic:"Design: Payment System", diff:"tricky", level:"Senior", type:"single",
+    q:"HI Payment System: how is raw card data handled for PCI compliance?",
+    options:["Encrypt it in your primary DB","Tokenization — the card is exchanged for a token so your backend never stores/handles the raw card number","Hash it with SHA-256","Store it only in logs"],
+    correct:[1],
+    why:"HI: tokenize card data (e.g. via the provider's client-side SDK) so raw card numbers never reach your servers, keeping you out of PCI scope. Pair with API keys + request signing for security."},
+
+  /* ============================================================
+     ARCHITECTURE & DECOMPOSITION — "which subsystems are required"
+     Each carries a detailed explanation (more) + a HelloInterview source (src).
+     ============================================================ */
+
+  // ---------- generic architecture / method ----------
+  {id:"q1a3d", topic:"Architecture", diff:"basic", level:"Mid", type:"multi",
+    q:"For a typical read-heavy product (social app, marketplace), which components belong in the baseline high-level design? (select all)",
+    options:["API gateway / load balancer as the entry point","A primary database for core entities","A cache (e.g. Redis) in front of hot reads","A CDN for static assets (images, JS, video)","A graph database — always, for any app"],
+    correct:[0,1,2,3],
+    why:"The standard product-design skeleton is: clients → API gateway/LB → stateless services → primary DB, with a cache for hot reads and a CDN for static media.",
+    more:"A graph database is NOT a default — HI explicitly warns it's a common over-engineering mistake (even Facebook models its social graph on MySQL). Reach for specialized stores (graph, search, OLAP) only when a requirement demands it.",
+    src:"https://www.hellointerview.com/learn/system-design/in-a-hurry/key-technologies"},
+  {id:"q1yv1", topic:"Architecture", diff:"basic", level:"Mid", type:"single",
+    q:"What is HI's delivery-framework order for driving a design?",
+    options:["Jump straight to the database schema","Requirements (functional + non-functional) → core entities → API → high-level design → deep dives","Draw the whole architecture first, then justify it","Estimate capacity, then stop"],
+    correct:[1],
+    why:"HI's framework: nail requirements (functional + non-functional), define core entities, sketch the API, build the high-level design, then go deep on the hard parts and trade-offs.",
+    more:"Estimation isn't an opening ritual — do back-of-envelope math when a decision needs it (e.g. 'do we need to shard?'). Skipping requirements is the #1 way candidates burn time on the wrong problem.",
+    src:"https://www.hellointerview.com/learn/system-design/in-a-hurry/delivery"},
+  {id:"q1dt5", topic:"Architecture", diff:"basic", level:"Mid", type:"multi",
+    q:"Which non-functional requirements should you pin down early in almost any design? (select all)",
+    options:["Availability vs consistency priority","Latency targets","Expected scale / throughput (reads & writes)","Durability needs","Which programming language the team uses"],
+    correct:[0,1,2,3],
+    why:"Non-functional requirements (the '-ilities') shape every later decision: availability-vs-consistency, latency, throughput/scale, and durability.",
+    more:"Programming language is almost never relevant in a system-design interview — naming it signals you're focused on the wrong layer. Frame NFRs as measurable targets ('p99 < 200ms', '10k writes/sec').",
+    src:"https://www.hellointerview.com/learn/system-design/in-a-hurry/delivery"},
+  {id:"q150a", topic:"Architecture", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which cross-cutting concerns should a senior+ candidate proactively address in any distributed design? (select all)",
+    options:["Observability (metrics, logs, traces)","Fault tolerance / eliminating single points of failure","Security & authentication","Horizontal scalability of each tier","The choice of IDE"],
+    correct:[0,1,2,3],
+    why:"Beyond the happy path, name observability, fault tolerance/SPOF removal, security, and how each tier scales horizontally — these are the operational signals interviewers look for at senior+.",
+    more:"A clean test for SPOFs: walk every component and ask 'if this dies, does the system stop?' Eliminate via redundancy (multiple instances, replicas, multi-AZ, auto-failover).",
+    src:"https://www.hellointerview.com/learn/system-design/in-a-hurry/key-technologies"},
+  {id:"qev8x", topic:"Architecture", diff:"basic", level:"Mid", type:"single",
+    q:"A requirement says 'users worldwide need fast loading of images and video'. Which component directly addresses it?",
+    options:["A bigger primary database","A CDN caching static assets at edge locations","A message queue","A distributed lock"],
+    correct:[1],
+    why:"A CDN caches static content at edge locations close to users, cutting latency and offloading the origin — the standard answer for global static delivery.",
+    more:"CDNs commonly sit in front of blob storage (S3): upload to S3 as origin, serve via CDN with signed URLs. They can also cache cacheable dynamic content/API responses.",
+    src:"https://www.hellointerview.com/learn/system-design/in-a-hurry/key-technologies"},
+  {id:"q1ri0", topic:"Architecture", diff:"basic", level:"Mid", type:"single",
+    q:"A requirement says 'video encoding takes minutes and must not block the upload request'. Which pattern fits?",
+    options:["Do it synchronously in the request","Ack immediately + push a job to a queue; a worker pool processes it in the background","Run it on the client","Cache the result"],
+    correct:[1],
+    why:"This is the Managing Long-Running Tasks pattern: validate + enqueue + return a job ID in milliseconds, while separate workers do the heavy processing.",
+    more:"Don't queue SHORT jobs — synchronous responses give clearer back-pressure and simpler UX. Add job-status tracking, retries, and a dead-letter queue for poison messages.",
+    src:"https://www.hellointerview.com/learn/system-design/patterns/long-running-tasks"},
+  {id:"qrgx5", topic:"Architecture", diff:"tricky", level:"Senior", type:"single",
+    q:"You need full-text search over millions of posts. Which component, and why not just the primary DB?",
+    options:["Use SQL LIKE '%term%' on Postgres","Add Elasticsearch — an inverted index makes full-text search fast; LIKE forces a full table scan","Cache every query in Redis","Shard the primary DB harder"],
+    correct:[1],
+    why:"Full-text search needs an inverted index (term → documents). Elasticsearch is the go-to; a leading-wildcard LIKE can't use a B-tree index and scans the whole table.",
+    more:"Keep your primary DB as the source of truth and sync ES as a secondary index via CDC — the search index lags slightly, which is fine for search. Postgres GIN can do lighter full-text in-DB.",
+    src:"https://www.hellointerview.com/learn/system-design/deep-dives/elasticsearch"},
+
+  // ---------- required subsystems per breakdown ----------
+  {id:"q1dkn", topic:"Design: Bitly", diff:"basic", level:"Mid", type:"multi",
+    q:"Which subsystems are essential for a URL shortener? (select all)",
+    options:["A write/create service that generates the short code","A read/redirect service","A key-value store mapping short code → long URL","A cache (reads dominate ~1000:1)","A video transcoding pipeline"],
+    correct:[0,1,2,3],
+    why:"Bitly decomposes into a write path (generate unique code, store mapping), a read/redirect path, a KV store for the mapping, and a cache because reads vastly outnumber writes.",
+    more:"Because write volume is tiny (~1/sec) and reads huge, the interesting work is fast redirects (cache/CDN) and unique code generation (counter + Base62), not the database choice — any DB works.",
+    src:"https://www.hellointerview.com/learn/system-design/problem-breakdowns/bitly"},
+  {id:"q2d9z", topic:"Design: Dropbox", diff:"basic", level:"Mid", type:"multi",
+    q:"Which subsystems are essential for a file storage/sync service like Dropbox? (select all)",
+    options:["Blob storage (S3) for file contents","A metadata database (files, versions, ownership)","A presigned-URL service for direct client upload/download","A sync/notification service to propagate changes","A full-text search cluster over file contents"],
+    correct:[0,1,2,3],
+    why:"Core pieces: blob storage for bytes, a metadata DB for file/version/share info, presigned URLs so clients transfer directly to S3, and a sync/notification path to keep devices consistent.",
+    more:"Full-text search over contents isn't a core requirement of file sync — adding it would be scope creep unless asked. The hard parts are chunking (client-side), fingerprinting (SHA-256), and delta sync (content-defined chunking).",
+    src:"https://www.hellointerview.com/learn/system-design/problem-breakdowns/dropbox"},
+  {id:"q1bet", topic:"Design: Ticketmaster", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which subsystems are essential for Ticketmaster? (select all)",
+    options:["An event + search service (Elasticsearch) for browsing/finding events","A booking service backed by an ACID database (no double-booking)","A seat-reservation mechanism (distributed lock with TTL)","A payment integration","A real-time ML recommendation training pipeline"],
+    correct:[0,1,2,3],
+    why:"Ticketmaster needs search (ES), a transactional booking service (ACID prevents double-booking), a reservation hold (Redis lock w/ TTL), and payment integration.",
+    more:"The ACID final write is what truly guarantees no double-book; the distributed lock is for UX (holding a seat ~10 min). For huge on-sales, add a virtual waiting queue — the staff-level move.",
+    src:"https://www.hellointerview.com/learn/system-design/problem-breakdowns/ticketmaster"},
+  {id:"q755g", topic:"Design: News Feed", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which subsystems are essential for a social news feed? (select all)",
+    options:["A post service + post store","A follow/social-graph store (table + GSI for reverse lookups)","A feed-generation path (fan-out workers / precomputed feed)","A feed cache for hot reads","A distributed lock service"],
+    correct:[0,1,2,3],
+    why:"Feed systems need posts, the follow graph (with a reverse index), feed generation (fan-out on write/read or hybrid), and a feed cache.",
+    more:"The signature decision is fan-out: precompute per-user feeds for normal accounts, pull at read time for celebrities, and merge (hybrid). A distributed lock isn't part of a feed.",
+    src:"https://www.hellointerview.com/learn/system-design/problem-breakdowns/fb-news-feed"},
+  {id:"q1glx", topic:"Design: WhatsApp", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which subsystems are essential for a chat app like WhatsApp? (select all)",
+    options:["Stateful WebSocket chat servers (persistent connections)","A pub/sub routing layer to reach the right server (e.g. Redis Pub/Sub per user)","An inbox/message store for offline delivery","A presence/last-seen mechanism","An OLAP data warehouse for the core chat path"],
+    correct:[0,1,2,3],
+    why:"Chat needs persistent WebSocket servers, a routing layer so a message reaches whichever server holds the recipient's connection, durable inboxes for offline users, and presence.",
+    more:"Redis Pub/Sub (topic per user) is HI's 'great' routing answer — it sidesteps consistent-hashing complexity. Pub/Sub is at-most-once, so durability comes from the inbox + acks + per-chat sequence numbers.",
+    src:"https://www.hellointerview.com/learn/system-design/problem-breakdowns/whatsapp"},
+  {id:"q27t0", topic:"Design: Uber", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which subsystems are essential for a ride-sharing service like Uber? (select all)",
+    options:["A location service with a geospatial index (Redis geohashing)","A ride-matching service (with a lock to avoid double-dispatch)","A maps/ETA/fare integration","A push-notification service (APNs/FCM)","A full-text search cluster"],
+    correct:[0,1,2,3],
+    why:"Uber needs high-frequency location ingestion + proximity search (geospatial index), matching (with a lock so one driver isn't double-assigned), maps/fare, and notifications.",
+    more:"Driver location at ~2M writes/sec rules out a disk DB — use an in-memory geospatial store (Redis geohashing). For the unresponsive-driver flow, durable execution (Temporal/Cadence) beats a fragile delay queue.",
+    src:"https://www.hellointerview.com/learn/system-design/problem-breakdowns/uber"},
+  {id:"q4vbu", topic:"Design: Ad Click Aggregator", diff:"tricky", level:"Staff", type:"multi",
+    q:"Which subsystems are essential for a near-real-time ad click aggregator? (select all)",
+    options:["A streaming ingestion layer (Kafka/Kinesis)","A stream processor for windowed aggregation (Flink)","An OLAP store for advertiser analytics queries","A data lake (S3) + batch (Spark) for reconciliation","A transactional RDBMS as the primary aggregation store"],
+    correct:[0,1,2,3],
+    why:"The pipeline is stream ingestion → Flink aggregation → OLAP for queries, plus a Lambda-architecture batch layer (S3 + Spark) to reconcile and serve as source of truth.",
+    more:"Using one transactional DB for both ingest and analytics is the anti-pattern. The batch layer catches any loss/drift in the fast streaming path — a strong correctness signal.",
+    src:"https://www.hellointerview.com/learn/system-design/problem-breakdowns/ad-click-aggregator"},
+  {id:"q16u8", topic:"Design: Web Crawler", diff:"tricky", level:"Senior", type:"multi",
+    q:"Which subsystems are essential for a large-scale web crawler? (select all)",
+    options:["A frontier queue of URLs to fetch (SQS)","Fetcher workers + an extraction stage","Blob storage (S3) for raw HTML / extracted text","A metadata DB for dedup and crawl state","A DNS resolver with caching","A WebSocket server for clients"],
+    correct:[0,1,2,3,4],
+    why:"A crawler needs a frontier queue, fetch + extract workers, blob storage for content, a metadata DB (URL/content dedup + state), and DNS resolution (a real bottleneck).",
+    more:"HI picks SQS (visibility timeout → easy backoff + DLQ) and keeps only the URL pointer in the queue, not raw HTML. DNS can be ~70% of per-thread time, so cache it and use multiple providers. A WebSocket server has no role here.",
+    src:"https://www.hellointerview.com/learn/system-design/problem-breakdowns/web-crawler"},
+  {id:"qe2tk", topic:"Design: Google Docs", diff:"tricky", level:"Staff", type:"multi",
+    q:"Which subsystems are essential for a collaborative document editor? (select all)",
+    options:["Stateful WebSocket document servers","A concurrency-control engine (Operational Transformation)","An append-only operations store (Cassandra)","Coordination for routing editors of one doc to one server (ZooKeeper-maintained hash ring)","A CDN to serve the live document"],
+    correct:[0,1,2,3],
+    why:"Real-time editing needs WebSocket servers, an OT engine to converge concurrent edits, an append-only ops store, and coordination (consistent hashing by docId via ZooKeeper) so collaborators share a server.",
+    more:"Send edits as operations (insert/delete at position), not the whole doc. Periodically snapshot/compact operations to bound storage and join cost. A CDN serves static assets, not a live collaborative doc.",
+    src:"https://www.hellointerview.com/learn/system-design/problem-breakdowns/google-docs"},
+  {id:"qhome", topic:"Design: Payment System", diff:"tricky", level:"Staff", type:"multi",
+    q:"Which subsystems are essential for a payment system like Stripe? (select all)",
+    options:["An API gateway (auth, request signing)","A payment/intent service + database","A transaction service that talks to payment networks","An append-only event log (event sourcing) for audit + reconciliation","A full-text search cluster"],
+    correct:[0,1,2,3],
+    why:"Payments need a secure gateway, a payment-intent service + DB, a transaction service to external networks, and an immutable event log enabling audit, reconciliation, and chargebacks.",
+    more:"Idempotency keys + reconciliation against the network are mandatory because async networks make a timeout ambiguous (never assume timeout = failure). Tokenize card data so raw PANs never hit your servers.",
+    src:"https://www.hellointerview.com/learn/system-design/problem-breakdowns/payment-system"},
+
+  // ---------- requirement → component mapping ----------
+  {id:"q10sx", topic:"Architecture", diff:"basic", level:"Mid", type:"single",
+    q:"Requirement: 'prevent abuse / DDoS before traffic reaches our services'. Which component and where?",
+    options:["A cache in front of the DB","A rate limiter at the edge (API gateway), keyed per user/IP/API key","A read replica","A bigger load balancer"],
+    correct:[1],
+    why:"Put a rate limiter at the edge (API gateway/LB) so abusive traffic is rejected before it loads downstream services; key it per user/IP/API key for fairness.",
+    more:"Token bucket is the usual algorithm (allows bursts up to bucket size). At scale the counter must be centralized (Redis), since per-instance counters each see only a fraction of a client's traffic.",
+    src:"https://www.hellointerview.com/learn/system-design/problem-breakdowns/distributed-rate-limiter"},
+  {id:"q11de", topic:"Architecture", diff:"tricky", level:"Senior", type:"single",
+    q:"Requirement: 'hold a limited resource (seat, inventory) for a few minutes during checkout'. Which mechanism?",
+    options:["A long-running DB transaction","A distributed lock with a TTL (e.g. Redis), auto-releasing on abandon","A read replica","A CDN"],
+    correct:[1],
+    why:"A distributed lock with a TTL holds the resource for a bounded time and auto-releases if the user abandons — the standard reservation pattern (Ticketmaster, Uber dispatch).",
+    more:"Treat the lock as efficiency, not correctness: the authoritative no-oversell guarantee should come from an ACID write or a conditional UPDATE. For hard correctness use fencing tokens or a consensus store.",
+    src:"https://www.hellointerview.com/learn/system-design/patterns/dealing-with-contention"},
+  {id:"qltp4", topic:"Architecture", diff:"basic", level:"Mid", type:"single",
+    q:"Requirement: 'low-latency two-way realtime messaging'. Which transport?",
+    options:["Short polling","Server-Sent Events (SSE)","WebSocket (full duplex)","A CDN"],
+    correct:[2],
+    why:"WebSocket gives full-duplex, low-latency bidirectional messaging over one persistent connection — right for chat/collaboration.",
+    more:"SSE is one-way (server→client) and simpler — good for notifications/feeds. HI advises starting with HTTP polling and only moving to SSE/WebSocket when needed; WebSockets are stateful and need L4 LBs.",
+    src:"https://www.hellointerview.com/learn/system-design/patterns/realtime-updates"},
+  {id:"q1wrk", topic:"Architecture", diff:"tricky", level:"Senior", type:"single",
+    q:"Requirement: 'store user-uploaded videos and serve them globally'. Which storage layout?",
+    options:["Store video bytes as BLOBs in the primary DB","Store videos in blob storage (S3) + a CDN, keep only the URL/reference in the DB","Base64-encode videos into JSON rows","Keep videos only in Redis"],
+    correct:[1],
+    why:"Large binaries go in blob storage (S3) fronted by a CDN; the DB stores just the URL/reference. Binaries in the DB wreck index/cache efficiency and cost far more.",
+    more:"Use presigned URLs for direct client upload/download (multipart for big files), and event notifications to sync DB metadata with the upload's completion.",
+    src:"https://www.hellointerview.com/learn/system-design/patterns/large-blobs"},
+  {id:"q1sjo", topic:"Architecture", diff:"tricky", level:"Senior", type:"single",
+    q:"Requirement: 'advertisers run analytical queries (sums/group-bys) over billions of events with sub-second latency'. Which store?",
+    options:["The transactional row store that ingests the events","An OLAP / columnar store (ClickHouse, Druid, BigQuery)","A key-value cache","Blob storage"],
+    correct:[1],
+    why:"Analytical aggregation over huge event volumes belongs in an OLAP/columnar store optimized for scans and group-bys — separate from the transactional ingest path.",
+    more:"Pair it with pre-aggregated rollup tables (daily/weekly) to keep dashboard queries fast. Mixing OLTP ingest and OLAP queries in one store is the anti-pattern HI flags.",
+    src:"https://www.hellointerview.com/learn/system-design/problem-breakdowns/ad-click-aggregator"},
+  {id:"qbefs", topic:"Architecture", diff:"tricky", level:"Senior", type:"single",
+    q:"Requirement: 'three independent teams must each process the same event stream their own way'. Which technology/feature?",
+    options:["SQS, where the message is deleted after one consumer acks","Kafka with a separate consumer group per team (each tracks its own offset)","A single shared database table they poll and delete from","A distributed lock"],
+    correct:[1],
+    why:"Kafka retains the log and lets multiple consumer groups read it independently, each with its own offset — exactly the multi-consumer case.",
+    more:"A broker queue (SQS/RabbitMQ) deletes on ack and suits single-consumer background work; it can't replay or fan a stream to independent consumers.",
+    src:"https://www.hellointerview.com/learn/system-design/deep-dives/kafka"},
+  {id:"q80ww", topic:"Architecture", diff:"tricky", level:"Senior", type:"single",
+    q:"Requirement: 'find drivers/restaurants within N km, fast, over millions of entities'. Which component?",
+    options:["A B-tree index on (lat, long)","A geospatial index (Redis geo, PostGIS, or ES geo-queries)","A full-text search","A CDN"],
+    correct:[1],
+    why:"Proximity search needs a geospatial index (geohash/quadtree-based) — a B-tree can't efficiently answer 2D radius queries.",
+    more:"Geospatial indexes pay off at hundreds of thousands+ entities; for ~1,000 items a scan beats the index overhead. Queries are usually local to the user, not global.",
+    src:"https://www.hellointerview.com/learn/system-design/patterns/realtime-updates"},
+  {id:"q1a18", topic:"Architecture", diff:"tricky", level:"Senior", type:"single",
+    q:"Requirement: 'coordinate which server is the leader / keep a consistent shared config across a cluster'. Which component?",
+    options:["A relational database","A coordination service like ZooKeeper (leader election, config, failure detection)","A CDN","A message queue"],
+    correct:[1],
+    why:"Distributed coordination — leader election, consistent configuration, failure detection — is ZooKeeper's job, using a hierarchical znode namespace + watches with strong consistency (ZAB).",
+    more:"Ephemeral znodes give automatic failure detection (they vanish when a session dies), and ephemeral-sequential nodes implement leader election (lowest sequence wins). etcd is a common modern alternative.",
+    src:"https://www.hellointerview.com/learn/system-design/deep-dives/zookeeper"},
+];
+
+/* ============================================================
+   SOURCES — fallback HelloInterview page per topic.
+   A question's own `src` wins; otherwise we use the topic's page.
+   ============================================================ */
+const B = "https://www.hellointerview.com/learn/system-design/";
+const SOURCES = {
+  "SQL vs NoSQL":B+"core-concepts/data-modeling",
+  "Data Modeling":B+"core-concepts/data-modeling",
+  "Database Indexing":B+"core-concepts/db-indexing",
+  "Caching":B+"core-concepts/caching",
+  "Sharding":B+"core-concepts/sharding",
+  "Consistent Hashing":B+"core-concepts/consistent-hashing",
+  "CAP / PACELC":B+"core-concepts/cap-theorem",
+  "Networking":B+"core-concepts/networking-essentials",
+  "API design":B+"core-concepts/api-design",
+  "Numbers to Know":B+"core-concepts/numbers-to-know",
+  "Estimation":B+"core-concepts/numbers-to-know",
+  "Replication":B+"patterns/scaling-reads",
+  "Load balancing":B+"core-concepts/networking-essentials",
+  "Real-time transport":B+"patterns/realtime-updates",
+  "Idempotency":B+"core-concepts/networking-essentials",
+  "Rate limiting":B+"problem-breakdowns/distributed-rate-limiter",
+  "Fan-out":B+"problem-breakdowns/fb-news-feed",
+  "Distributed Txns":B+"patterns/multi-step-processes",
+  "Kafka vs Queues":B+"deep-dives/kafka",
+  "CDN / Blob":B+"in-a-hurry/key-technologies",
+  "Observability":B+"in-a-hurry/core-concepts",
+  "SPOF / Reliability":B+"in-a-hurry/key-technologies",
+  "Architecture":B+"in-a-hurry/key-technologies",
+  // key technologies
+  "Redis":B+"deep-dives/redis","Elasticsearch":B+"deep-dives/elasticsearch",
+  "Cassandra":B+"deep-dives/cassandra","DynamoDB":B+"deep-dives/dynamodb",
+  "PostgreSQL":B+"deep-dives/postgres","Flink":B+"deep-dives/flink",
+  "ZooKeeper":B+"deep-dives/zookeeper","API Gateway":B+"deep-dives/api-gateway",
+  // patterns
+  "Pattern: Real-time":B+"patterns/realtime-updates",
+  "Pattern: Contention":B+"patterns/dealing-with-contention",
+  "Pattern: Multi-step":B+"patterns/multi-step-processes",
+  "Pattern: Scaling Reads":B+"patterns/scaling-reads",
+  "Pattern: Scaling Writes":B+"patterns/scaling-writes",
+  "Pattern: Large Blobs":B+"patterns/large-blobs",
+  "Pattern: Long-Running Tasks":B+"patterns/long-running-tasks",
+  // breakdowns
+  "Design: Bitly":B+"problem-breakdowns/bitly",
+  "Design: Dropbox":B+"problem-breakdowns/dropbox",
+  "Design: Ticketmaster":B+"problem-breakdowns/ticketmaster",
+  "Design: News Feed":B+"problem-breakdowns/fb-news-feed",
+  "Design: WhatsApp":B+"problem-breakdowns/whatsapp",
+  "Design: Uber":B+"problem-breakdowns/uber",
+  "Design: Ad Click Aggregator":B+"problem-breakdowns/ad-click-aggregator",
+  "Design: Web Crawler":B+"problem-breakdowns/web-crawler",
+  "Design: Top K":B+"problem-breakdowns/top-k",
+  "Design: Rate Limiter":B+"problem-breakdowns/distributed-rate-limiter",
+  "Design: Google Docs":B+"problem-breakdowns/google-docs",
+  "Design: Payment System":B+"problem-breakdowns/payment-system",
+};
+function sourceFor(q){ return q.src || SOURCES[q.topic] || B+"in-a-hurry/introduction"; }
+function sourceLabel(url){
+  const seg = url.split("/learn/system-design/")[1] || "";
+  const parts = seg.split("/");
+  const sec = {"core-concepts":"Core Concept","deep-dives":"Key Technology","patterns":"Pattern","problem-breakdowns":"Breakdown","in-a-hurry":"Overview"}[parts[0]] || "HelloInterview";
+  const name = (parts[1]||"").replace(/-/g," ").replace(/\b\w/g,c=>c.toUpperCase());
+  return name ? `HelloInterview · ${sec}: ${name}` : "HelloInterview";
+}
+
+/* ============================================================
+   STORAGE
+   ============================================================ */
+const LS_KEY = "sdq_history_v1";
+function loadStore(){
+  try{ return JSON.parse(localStorage.getItem(LS_KEY)) || defaultStore(); }
+  catch(e){ return defaultStore(); }
+}
+function defaultStore(){ return {topics:{}, sessions:[]}; }
+function saveStore(s){ try{ localStorage.setItem(LS_KEY, JSON.stringify(s)); }catch(e){} }
+let STORE = loadStore();
+
+function topicStat(t){
+  if(!STORE.topics[t]) STORE.topics[t] = {correct:0, total:0};
+  return STORE.topics[t];
+}
+function recordAnswer(topic, correct){
+  const ts = topicStat(topic);
+  ts.total++; if(correct) ts.correct++;
+}
+function isWeak(t){
+  const s = STORE.topics[t];
+  if(!s || s.total < 3) return false;
+  return (s.correct/s.total) < 0.6;
+}
+function allTopics(){
+  return [...new Set(QUESTIONS.map(q=>q.topic))].sort();
+}
+
+/* ============================================================
+   SETUP VIEW
+   ============================================================ */
+const selectedTopics = new Set(allTopics());
+const topicChipsEl = document.getElementById("topicChips");
+
+function topicCount(t){ return QUESTIONS.filter(q=>q.topic===t).length; }
+
+function renderTopicChips(){
+  topicChipsEl.innerHTML = "";
+  allTopics().forEach(t=>{
+    const c = document.createElement("div");
+    c.className = "chip" + (selectedTopics.has(t) ? " on":"");
+    const weak = isWeak(t);
+    c.innerHTML = `${weak?'⚠️ ':''}${t} <span class="ct">${topicCount(t)}</span>`;
+    if(weak) c.title = "Weak topic — accuracy below 60%";
+    c.onclick = ()=>{
+      if(selectedTopics.has(t)) selectedTopics.delete(t); else selectedTopics.add(t);
+      renderTopicChips(); updatePoolInfo();
+    };
+    topicChipsEl.appendChild(c);
+  });
+}
+document.getElementById("selAll").onclick = ()=>{ allTopics().forEach(t=>selectedTopics.add(t)); renderTopicChips(); updatePoolInfo(); };
+document.getElementById("selNone").onclick = ()=>{ selectedTopics.clear(); renderTopicChips(); updatePoolInfo(); };
+document.getElementById("selWeak").onclick = ()=>{
+  const weak = allTopics().filter(isWeak);
+  selectedTopics.clear();
+  if(weak.length){ weak.forEach(t=>selectedTopics.add(t)); }
+  else { allTopics().forEach(t=>selectedTopics.add(t)); alert("No weak topics yet (need ≥3 answers & <60%). Selected all."); }
+  renderTopicChips(); updatePoolInfo();
+};
+
+function matchingPool(){
+  const diff = document.getElementById("diffSel").value;
+  const level = document.getElementById("levelSel").value;
+  return QUESTIONS.filter(q=> selectedTopics.has(q.topic)
+    && (diff==="all"||q.diff===diff)
+    && (level==="all"||q.level===level));
+}
+function updatePoolInfo(){
+  const n = matchingPool().length;
+  document.getElementById("poolInfo").textContent = `${n} question${n!==1?'s':''} in pool`;
+  document.getElementById("startBtn").disabled = n===0;
+}
+document.getElementById("diffSel").onchange = updatePoolInfo;
+document.getElementById("levelSel").onchange = updatePoolInfo;
+
+/* ============================================================
+   QUIZ ENGINE
+   ============================================================ */
+let session = null;
+
+function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
+
+function startQuiz(pool){
+  let qs = pool.slice();
+  if(document.getElementById("shuffleChk").checked) qs = shuffle(qs);
+  const len = parseInt(document.getElementById("lenSel").value,10);
+  if(len>0) qs = qs.slice(0,len);
+  // shuffle option order per question while tracking correct indices
+  qs = qs.map(q=>{
+    const idx = q.options.map((_,i)=>i);
+    const order = document.getElementById("shuffleChk").checked ? shuffle(idx) : idx;
+    return {
+      ...q,
+      _opts: order.map(i=>q.options[i]),
+      _correct: order.map((orig,newPos)=> q.correct.includes(orig)?newPos:-1).filter(x=>x>=0),
+    };
+  });
+  session = {qs, i:0, picks:[], results:[], answered:[]};
+  show("quiz");
+  renderQ();
+}
+
+function renderQ(){
+  const s = session, q = s.qs[s.i];
+  if(!s.picks[s.i]) s.picks[s.i] = new Set();
+  const picks = s.picks[s.i];
+  const answered = s.answered[s.i];
+  document.getElementById("progFill").style.width = ((s.i)/s.qs.length*100)+"%";
+
+  const isMulti = q.type==="multi";
+  let html = `
+    <div class="qtop">
+      <div class="qmeta">
+        <span class="tag topic">${q.topic}</span>
+        <span class="tag lvl-${q.level}" title="Seniority level at which this answer is expected">${q.level}</span>
+        <span class="tag ${q.diff==='tricky'?'tricky':''}">${q.diff}</span>
+        <span class="tag">${isMulti?'multi-select':'single'}</span>
+      </div>
+      <span class="muted">Q ${s.i+1} / ${s.qs.length} · <span style="opacity:.6" title="question id (for debugging)">#${q.id}</span></span>
+    </div>
+    <div class="qtext">${q.q}</div>
+    ${isMulti?'<div class="multi-note">Select all that apply</div>':''}
+    <div id="opts">`;
+  q._opts.forEach((opt,i)=>{
+    let cls = "opt " + (isMulti?"":"radio");
+    let badge = "";
+    if(answered){
+      cls += " locked";
+      const correct = q._correct.includes(i);
+      const picked = picks.has(i);
+      if(correct){ cls+=" correct"; badge="✓"; }
+      else if(picked){ cls+=" wrong"; badge="✕"; }
+    } else if(picks.has(i)){ cls+=" sel"; badge = isMulti?"✓":"●"; }
+    html += `<div class="${cls}" data-i="${i}"><div class="box">${badge}</div><div>${opt}</div></div>`;
+  });
+  html += `</div>`;
+  // feedback
+  const srcUrl = sourceFor(q);
+  html += `<div class="feedback ${answered?(answered.correct?'good show':'bad show'):''}" id="fb">
+    <b>${answered? (answered.correct?'✅ Correct':'❌ Not quite') : ''}</b>
+    <span class="why">${answered? q.why : ''}</span>
+    ${answered && q.more ? `<div class="more">${q.more}</div>` : ''}
+    ${answered ? `<div class="src">📖 Source: <a href="${srcUrl}" target="_blank" rel="noopener">${sourceLabel(srcUrl)}</a></div>` : ''}
+  </div>`;
+  document.getElementById("qCard").innerHTML = html;
+
+  // option clicks
+  if(!answered){
+    document.querySelectorAll("#opts .opt").forEach(el=>{
+      el.onclick = ()=>{
+        const i = parseInt(el.dataset.i,10);
+        if(isMulti){ picks.has(i)?picks.delete(i):picks.add(i); }
+        else { picks.clear(); picks.add(i); }
+        renderQ();
+      };
+    });
+  }
+
+  // buttons
+  document.getElementById("checkBtn").classList.toggle("hide", !!answered);
+  document.getElementById("checkBtn").disabled = picks.size===0;
+  document.getElementById("nextBtn").disabled = !answered;
+  document.getElementById("nextBtn").textContent = (s.i===s.qs.length-1)?"Finish ✓":"Next →";
+}
+
+document.getElementById("checkBtn").onclick = ()=>{
+  const s = session, q = s.qs[s.i], picks = s.picks[s.i];
+  if(picks.size===0) return;
+  const correctSet = new Set(q._correct);
+  const isCorrect = picks.size===correctSet.size && [...picks].every(p=>correctSet.has(p));
+  s.answered[s.i] = {correct:isCorrect};
+  s.results[s.i] = {topic:q.topic, correct:isCorrect};
+  recordAnswer(q.topic, isCorrect);
+  saveStore(STORE);
+  renderQ();
+};
+
+document.getElementById("nextBtn").onclick = ()=>{
+  const s = session;
+  if(s.i < s.qs.length-1){ s.i++; renderQ(); }
+  else finishQuiz();
+};
+document.getElementById("quitBtn").onclick = ()=>{ if(confirm("Quit this session? Answered questions are already saved.")) backToSetup(); };
+
+function finishQuiz(){
+  const s = session;
+  const answered = s.results.filter(Boolean);
+  const correct = answered.filter(r=>r.correct).length;
+  const total = answered.length;
+  // per-topic this session
+  const byTopic = {};
+  answered.forEach(r=>{ (byTopic[r.topic]=byTopic[r.topic]||{c:0,t:0}); byTopic[r.topic].t++; if(r.correct)byTopic[r.topic].c++; });
+  // save session summary
+  STORE.sessions.unshift({date:Date.now(), correct, total, topics:Object.keys(byTopic)});
+  STORE.sessions = STORE.sessions.slice(0,50);
+  saveStore(STORE);
+
+  document.getElementById("progFill").style.width = "100%";
+  const pct = total? Math.round(correct/total*100):0;
+  document.getElementById("resStats").innerHTML = `
+    <div class="stat"><div class="n">${correct}/${total}</div><div class="l">Correct</div></div>
+    <div class="stat"><div class="n" style="color:${pct>=80?'var(--ok)':pct>=60?'var(--warn)':'var(--bad)'}">${pct}%</div><div class="l">Accuracy</div></div>
+    <div class="stat"><div class="n">${Object.keys(byTopic).length}</div><div class="l">Topics</div></div>`;
+  let tHtml = "";
+  Object.entries(byTopic).sort((a,b)=> (a[1].c/a[1].t)-(b[1].c/b[1].t)).forEach(([t,o])=>{
+    const p = Math.round(o.c/o.t*100);
+    const col = p>=80?'var(--ok)':p>=60?'var(--warn)':'var(--bad)';
+    tHtml += `<div class="bar-row"><div class="name">${t}</div>
+      <div class="track"><div class="fill" style="width:${p}%;background:${col}"></div></div>
+      <div class="pct">${o.c}/${o.t} · ${p}%</div></div>`;
+  });
+  document.getElementById("resTopics").innerHTML = tHtml || '<span class="muted">No answers recorded.</span>';
+  show("result");
+}
+
+document.getElementById("againBtn").onclick = backToSetup;
+document.getElementById("retryWeakBtn").onclick = ()=>{
+  backToSetup();
+  document.getElementById("selWeak").click();
+};
+
+/* ============================================================
+   STATS VIEW
+   ============================================================ */
+function renderStats(){
+  let tot=0, cor=0;
+  Object.values(STORE.topics).forEach(s=>{ tot+=s.total; cor+=s.correct; });
+  const weakCount = allTopics().filter(isWeak).length;
+  const pct = tot? Math.round(cor/tot*100):0;
+  document.getElementById("allStats").innerHTML = `
+    <div class="stat"><div class="n">${tot}</div><div class="l">Answered</div></div>
+    <div class="stat"><div class="n" style="color:${pct>=80?'var(--ok)':pct>=60?'var(--warn)':'var(--bad)'}">${pct}%</div><div class="l">Accuracy</div></div>
+    <div class="stat"><div class="n">${STORE.sessions.length}</div><div class="l">Sessions</div></div>
+    <div class="stat"><div class="n" style="color:${weakCount?'var(--bad)':'var(--ok)'}">${weakCount}</div><div class="l">Weak topics</div></div>`;
+
+  // topic bars (all topics, even unattempted)
+  let bars = "";
+  allTopics().map(t=>{
+    const s = STORE.topics[t] || {correct:0,total:0};
+    const p = s.total? Math.round(s.correct/s.total*100) : 0;
+    return {t, s, p, weak:isWeak(t)};
+  }).sort((a,b)=>{
+    if(a.s.total===0 && b.s.total>0) return 1;
+    if(b.s.total===0 && a.s.total>0) return -1;
+    return a.p-b.p;
+  }).forEach(({t,s,p,weak})=>{
+    const col = s.total===0?'var(--line)': p>=80?'var(--ok)':p>=60?'var(--warn)':'var(--bad)';
+    bars += `<div class="bar-row">
+      <div class="name ${weak?'weak':''}">${weak?'⚠️ ':''}${t}</div>
+      <div class="track"><div class="fill" style="width:${s.total?p:0}%;background:${col}"></div></div>
+      <div class="pct">${s.total? s.correct+'/'+s.total+' · '+p+'%' : '—'}</div></div>`;
+  });
+  document.getElementById("topicBars").innerHTML = bars;
+
+  // history
+  let h = "";
+  if(STORE.sessions.length===0) h = '<span class="muted">No sessions yet.</span>';
+  STORE.sessions.forEach(se=>{
+    const d = new Date(se.date);
+    const p = se.total? Math.round(se.correct/se.total*100):0;
+    const col = p>=80?'var(--ok)':p>=60?'var(--warn)':'var(--bad)';
+    h += `<div class="hist-item">
+      <span>${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
+        <span class="muted">· ${se.topics.length} topic${se.topics.length!==1?'s':''}</span></span>
+      <span style="color:${col};font-weight:600">${se.correct}/${se.total} · ${p}%</span></div>`;
+  });
+  document.getElementById("histList").innerHTML = h;
+}
+document.getElementById("resetBtn").onclick = ()=>{
+  if(confirm("Erase ALL history and topic stats? This can't be undone.")){
+    STORE = defaultStore(); saveStore(STORE);
+    renderStats(); renderTopicChips();
+  }
+};
+
+/* ============================================================
+   VIEW ROUTING
+   ============================================================ */
+function show(view){
+  ["setup","quiz","result","stats"].forEach(v=>{
+    document.getElementById("view-"+v).classList.toggle("hide", v!==view);
+  });
+  const onStats = view==="stats";
+  document.getElementById("tab-quiz").className = "btn " + (onStats?"ghost":"sec");
+  document.getElementById("tab-stats").className = "btn " + (onStats?"sec":"ghost");
+}
+function backToSetup(){ renderTopicChips(); updatePoolInfo(); show("setup"); }
+
+document.getElementById("tab-quiz").onclick = backToSetup;
+document.getElementById("tab-stats").onclick = ()=>{ renderStats(); show("stats"); };
+document.getElementById("startBtn").onclick = ()=>{
+  const pool = matchingPool();
+  if(pool.length===0){ alert("No questions match — pick more topics or change difficulty."); return; }
+  startQuiz(pool);
+};
+
+/* init */
+renderTopicChips();
+updatePoolInfo();
+show("setup");
+</script>
+</body>
+</html>

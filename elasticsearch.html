@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Elasticsearch — Interactive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🔎 Elasticsearch — inverted index &amp; search</h1>
+      <div class="sub">Watch documents get <i>tokenized</i> into an <b>inverted index</b> (term → list of doc IDs), then see why a search hits only the relevant terms — while a SQL <code>LIKE '%term%'</code> has to scan every row.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">inverted index</span>
+      <span class="tag">tokenize + stem</span>
+      <span class="tag">fuzzy / edit-distance</span>
+      <span class="tag">built on Lucene</span>
+      <span class="tag">sharded</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">When you index a document, Elasticsearch <b>analyzes</b> the text: lowercases it, splits on non-letters into <b>tokens</b>, drops stopwords (the, a, of…), and <b>stems</b> words (running → run). Each resulting <b>term</b> points to a <b>posting list</b> of the docs that contain it. A search analyzes the query the same way, looks up just those terms, and intersects their posting lists — no scan of the corpus.</p>
+    <div class="note info"><b>Sharding:</b> an index is split into <b>primary shards</b>, and each shard is a <b>complete, self-contained Lucene index</b> with its own inverted index. A query fans out to every shard and the results are merged. (Fuzzy matching uses edit-distance on terms to catch typos like <code>concrt → concert</code>.)</div>
+    <div class="note gotcha"><b>The gotcha:</b> Elasticsearch is <b>not your source of truth</b> — keep a primary database and sync ES via <b>CDC</b> (change-data-capture). Also, the <b>primary shard count is fixed at index creation</b>; changing it requires a full <b>reindex</b> into a new index.</div>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Index a document</h3>
+    <div class="row">
+      <label class="fld">document text
+        <input type="text" id="docText" value="Buy tickets to the rock concert" size="34">
+      </label>
+      <button class="btn" id="indexBtn">＋ Index</button>
+    </div>
+    <h3 style="margin-top:16px">Search</h3>
+    <div class="row">
+      <label class="fld">query
+        <input type="text" id="queryText" value="concert tickets" size="22">
+      </label>
+      <button class="btn" id="searchBtn">🔎 Search (inverted index)</button>
+      <button class="btn warn" id="scanBtn">🐢 SQL LIKE scan</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="nodes" id="nodes" style="align-items:stretch">
+        <div class="node" id="docsPanel" style="min-width:300px;flex:1">
+          <div class="title">📄 Documents <span class="badge">corpus</span></div>
+          <div id="docsList"></div>
+        </div>
+        <div class="node replica" id="indexPanel" style="min-width:300px;flex:1">
+          <div class="title">🗂️ Inverted index <span class="badge">term → docs</span></div>
+          <div id="indexList"></div>
+        </div>
+      </div>
+    </div>
+    <div class="explain" id="explain">Type a query and hit <b>Search</b> to look terms up in the inverted index, or <b>SQL LIKE scan</b> to watch a full-table scan check every document one by one.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Command log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>Index</b>: text is <b>tokenized</b> (lowercase, split, drop stopwords, stem).</li>
+        <li>Each <b>term</b> is merged into the inverted index → its <b>posting list</b> gains this doc ID.</li>
+        <li><b>Search</b>: the query is tokenized the same way.</li>
+        <li>For each term we read <b>only its posting list</b>, then <b>intersect</b> them (AND).</li>
+        <li>Matching docs return near-instantly — the corpus was never scanned.</li>
+        <li><b>LIKE scan</b> instead touches <span style="color:var(--warn)">all N docs</span> and substring-matches each: O(N).</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+const STOPWORDS = new Set(['the','a','an','of','to','in','is']);
+let docs = [];          // [{id, text}]
+let index = new Map();  // term -> Set(docId)
+let nextId = 1;
+let busy = false;
+
+// ---------- analyzer: tokenize + stopwords + tiny stemmer ----------
+function stem(w){
+  if(w.length>4 && w.endsWith('ing')) return w.slice(0,-3);
+  if(w.length>4 && w.endsWith('ed'))  return w.slice(0,-2);
+  if(w.length>3 && w.endsWith('s'))   return w.slice(0,-1);
+  return w;
+}
+function analyze(text){
+  return text.toLowerCase()
+    .split(/[^a-z]+/)
+    .filter(w => w.length>0 && !STOPWORDS.has(w))
+    .map(stem);
+}
+
+// ---------- helpers ----------
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// fly a packet across the stage (token extraction animation)
+function fly(fromSel, toSel, label, cls){
+  return new Promise(res=>{
+    const stage = document.getElementById('stage');
+    const sr = stage.getBoundingClientRect();
+    const aEl = typeof fromSel==='string'?document.querySelector(fromSel):fromSel;
+    const bEl = typeof toSel==='string'?document.querySelector(toSel):toSel;
+    if(!aEl || !bEl){ res(); return; }
+    const a = aEl.getBoundingClientRect();
+    const b = bEl.getBoundingClientRect();
+    const p = document.createElement('div');
+    p.className = 'packet '+(cls||'');
+    p.textContent = label;
+    p.style.left = (a.left - sr.left + a.width/2 - 20)+'px';
+    p.style.top  = (a.top  - sr.top  + a.height/2 - 10)+'px';
+    stage.appendChild(p);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      p.style.left = (b.left - sr.left + b.width/2 - 20)+'px';
+      p.style.top  = (b.top  - sr.top  + b.height/2 - 10)+'px';
+    }));
+    setTimeout(()=>{ p.style.opacity=0; setTimeout(()=>{p.remove();res();},250); }, 620);
+  });
+}
+
+// ---------- rendering ----------
+function renderDocs(opts){
+  opts = opts || {};
+  const hi = opts.highlight || new Set();   // matched doc ids
+  const scan = opts.scanning;               // doc id currently being scanned
+  const list = document.getElementById('docsList');
+  if(!docs.length){ list.innerHTML = '<div class="small muted" style="padding:4px 0">(no documents yet)</div>'; return; }
+  list.innerHTML = docs.map(d=>{
+    let cls = 'kv';
+    if(hi.has(d.id)) cls += ' new';
+    let style = 'display:block;text-align:left';
+    if(scan===d.id) style += ';outline:2px solid var(--warn);background:var(--warnbg)';
+    if(hi.has(d.id)) style += ';outline:2px solid var(--ok);background:var(--okbg)';
+    return `<div class="${cls}" id="doc${d.id}" style="${style}"><span class="k">doc#${d.id}</span> <span>${esc(d.text)}</span></div>`;
+  }).join('');
+}
+
+function renderIndex(opts){
+  opts = opts || {};
+  const hiTerms = opts.terms || new Set();  // terms consulted by a search
+  const list = document.getElementById('indexList');
+  const terms = [...index.keys()].sort();
+  if(!terms.length){ list.innerHTML = '<div class="small muted" style="padding:4px 0">(empty index)</div>'; return; }
+  list.innerHTML = terms.map(t=>{
+    const posting = [...index.get(t)].sort((a,b)=>a-b).map(id=>'#'+id).join(', ');
+    let style = 'display:block;text-align:left';
+    let cls = 'kv';
+    if(hiTerms.has(t)){ cls += ' new'; style += ';outline:2px solid var(--accent)'; }
+    return `<div class="${cls}" id="term-${t}" style="${style}"><span class="k">${esc(t)}</span> <span>[ ${posting} ]</span></div>`;
+  }).join('');
+}
+
+function render(opts){ renderDocs(opts); renderIndex(opts); }
+
+// ---------- operations ----------
+async function doIndex(text){
+  if(busy) return;
+  text = (text||'').trim();
+  if(!text){ logLine('err','empty document — nothing to index'); return; }
+  busy = true;
+  const id = nextId++;
+  docs.push({id, text});
+  logLine('cmd', `> INDEX doc#${id}: "${text}"`);
+  renderDocs({highlight:new Set([id])});
+  await sleep(250);
+
+  const terms = analyze(text);
+  if(!terms.length){
+    logLine('warn',`doc#${id} produced no terms after analysis (all stopwords?)`);
+    explain(`<b>doc#${id}</b> had nothing left after dropping stopwords.`);
+    render(); busy=false; return;
+  }
+  logLine('info', `analyze → tokens: [ ${terms.join(', ')} ]  (lowercased, stopwords dropped, stemmed)`);
+  explain(`Analyzing <b>doc#${id}</b>: the text became terms <code>${esc(terms.join(' '))}</code>. Each term now points at this doc in the inverted index.`);
+
+  for(const term of terms){
+    await fly('#doc'+id, '#indexPanel', term, 'repl');
+    if(!index.has(term)) index.set(term, new Set());
+    index.get(term).add(id);
+    renderIndex({terms:new Set([term])});
+    await sleep(120);
+  }
+  logLine('ok', `inverted index updated: ${terms.length} term→doc#${id} postings merged`);
+  render();
+  busy = false;
+}
+
+async function doSearch(query){
+  if(busy) return;
+  query = (query||'').trim();
+  if(!query){ logLine('err','empty query'); return; }
+  busy = true;
+  logLine('cmd', `> SEARCH "${query}"`);
+  const terms = analyze(query);
+  logLine('info', `analyze query → terms: [ ${terms.join(', ')} ]`);
+
+  // look up each posting list
+  const consulted = new Set();
+  let result = null;     // running intersection
+  let missing = false;
+  for(const term of terms){
+    consulted.add(term);
+    await fly('#queryText', '#term-'+CSS.escape(term), term, 'read').catch(()=>{});
+    const posting = index.get(term);
+    if(!posting){
+      logLine('warn', `term "${term}" not in index → empty posting list (AND ⇒ no results)`);
+      missing = true;
+      result = new Set();
+      continue;
+    }
+    const ids = [...posting].sort((a,b)=>a-b);
+    logLine('info', `lookup "${term}" → posting list [ ${ids.map(i=>'#'+i).join(', ')} ]`);
+    renderIndex({terms:new Set(consulted)});
+    if(result===null) result = new Set(posting);
+    else result = new Set([...result].filter(x=>posting.has(x)));  // intersect (AND)
+    await sleep(220);
+  }
+  if(result===null) result = new Set();
+
+  const ids = [...result].sort((a,b)=>a-b);
+  render({terms:consulted, highlight:result});
+  logLine('ok', `matched ${ids.length} doc(s): [ ${ids.map(i=>'#'+i).join(', ')||'—'} ]  — consulted ${consulted.size} index term(s), scanned 0 documents`);
+  if(ids.length){
+    explain(`Search read <b>only the posting lists</b> for ${[...consulted].map(t=>'<code>'+esc(t)+'</code>').join(', ')}, intersected them (AND), and returned <b>${ids.length}</b> doc(s) — without touching the other ${docs.length-ids.length} document(s). That's the whole point of an inverted index.`);
+  } else {
+    explain(missing
+      ? `One term wasn't in the index, so the AND-intersection is empty. ${docs.length} docs exist but <b>none</b> contain all the query terms.`
+      : `No document contained all query terms. The index was consulted, not scanned.`);
+  }
+  busy = false;
+}
+
+async function doScan(query){
+  if(busy) return;
+  query = (query||'').trim();
+  if(!query){ logLine('err','empty query'); return; }
+  busy = true;
+  // emulate SQL: LIKE '%first-raw-word%' substring match over raw text, per doc
+  const needle = query.toLowerCase().split(/\s+/)[0];
+  logLine('cmd', `> SQL:  SELECT * FROM docs WHERE text LIKE '%${needle}%'`);
+  logLine('warn', `no index available → FULL TABLE SCAN of ${docs.length} rows`);
+  explain(`A SQL <code>LIKE '%${esc(needle)}%'</code> can't use a B-tree (leading wildcard), so it must read <b>every row</b> and substring-match. Watch each doc light up one by one.`);
+  const matches = new Set();
+  let touched = 0;
+  for(const d of docs){
+    touched++;
+    renderDocs({scanning:d.id});
+    await sleep(380);
+    const hit = d.text.toLowerCase().includes(needle);
+    if(hit){ matches.add(d.id); logLine('info', `  row doc#${d.id}: MATCH "${needle}"`); }
+    else { logLine('l', `  row doc#${d.id}: checked, no match`); }
+  }
+  const ids = [...matches].sort((a,b)=>a-b);
+  renderDocs({highlight:matches});
+  logLine('err', `scan finished: touched ALL ${touched} row(s) to find ${ids.length} match(es) — O(N) full scan`);
+  explain(`The LIKE scan <b>touched all ${touched} documents</b> to answer one query. With millions of rows this is the cost an inverted index eliminates: it would have read only the posting list for <code>${esc(needle)}</code>.`);
+  busy = false;
+}
+
+// ---------- reset ----------
+function reset(){
+  busy = false;
+  docs = [];
+  index = new Map();
+  nextId = 1;
+  document.getElementById('log').innerHTML = '';
+  const seed = [
+    'Buy tickets to the rock concert downtown',
+    'Concert tickets selling fast for the festival',
+    'The jazz festival announced its lineup',
+    'Refund policy for cancelled event tickets'
+  ];
+  for(const text of seed){
+    const id = nextId++;
+    docs.push({id, text});
+    for(const term of analyze(text)){
+      if(!index.has(term)) index.set(term, new Set());
+      index.get(term).add(id);
+    }
+  }
+  render();
+  logLine('info', `Loaded ${docs.length} documents and built the inverted index (${index.size} unique terms).`);
+  explain('Ready. <b>Search</b> the seeded docs (try <code>concert tickets</code>), <b>Index</b> a new doc, or run the <b>SQL LIKE scan</b> to compare.');
+}
+
+// ---------- wire up ----------
+document.getElementById('indexBtn').onclick = ()=>doIndex(document.getElementById('docText').value);
+document.getElementById('searchBtn').onclick = ()=>doSearch(document.getElementById('queryText').value);
+document.getElementById('scanBtn').onclick = ()=>doScan(document.getElementById('queryText').value);
+document.getElementById('resetBtn').onclick = reset;
+document.getElementById('docText').addEventListener('keydown', e=>{ if(e.key==='Enter') doIndex(e.target.value); });
+document.getElementById('queryText').addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(e.target.value); });
+reset();
+</script>
+</body>
+</html>

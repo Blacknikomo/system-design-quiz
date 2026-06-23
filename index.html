@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interactive System Design — Key Technologies</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <h1>Interactive Key Technologies</h1>
+      <div class="sub">Step through the typical operations of each technology and watch the internal mechanics — replication, partitioning, consensus, indexing. Built for FAANG EM system-design prep.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <p class="small muted" style="margin-top:0">Each page lets you run CRUD-style operations and see <b style="color:var(--txt)">what happens inside</b>: how data is written, synchronized, and queried. Click a technology to start. Pairs with the <code>hi-knowledge/</code> notes and the <code>system-design-quiz.html</code> self-test.</p>
+  </div>
+
+  <h2>Key Technologies</h2>
+  <div class="hub-grid">
+    <a class="hub-card" href="redis.html">
+      <div class="ic">🟥</div><div class="nm">Redis</div>
+      <div class="ds">Primary→replica async replication, SET/GET/DEL, stale replica reads, failover dropping unacked writes.</div>
+    </a>
+    <a class="hub-card" href="kafka.html">
+      <div class="ic">🟧</div><div class="nm">Kafka</div>
+      <div class="ds">Produce by key → partition (murmur2), append-only log + offsets, consumer groups, replay.</div>
+    </a>
+    <a class="hub-card" href="elasticsearch.html">
+      <div class="ic">🔎</div><div class="nm">Elasticsearch</div>
+      <div class="ds">Index a document → tokenize → inverted index; full-text search vs the SQL LIKE scan.</div>
+    </a>
+    <a class="hub-card" href="cassandra.html">
+      <div class="ic">🟦</div><div class="nm">Cassandra</div>
+      <div class="ds">Write path: commit log + memtable → SSTable; partition ring; QUORUM reads/writes; tombstones.</div>
+    </a>
+    <a class="hub-card" href="dynamodb.html">
+      <div class="ic">⚡</div><div class="nm">DynamoDB</div>
+      <div class="ds">Partition key → partition; PutItem/GetItem; eventual vs strong (ConsistentRead); GSI.</div>
+    </a>
+    <a class="hub-card" href="postgres.html">
+      <div class="ic">🐘</div><div class="nm">PostgreSQL</div>
+      <div class="ds">B-tree index lookup vs full scan; transactions (BEGIN/COMMIT/ROLLBACK); MVCC on update.</div>
+    </a>
+    <a class="hub-card" href="flink.html">
+      <div class="ic">🌊</div><div class="nm">Flink</div>
+      <div class="ds">Event stream → tumbling window aggregation with managed state; watermarks for late events.</div>
+    </a>
+    <a class="hub-card" href="zookeeper.html">
+      <div class="ic">🦓</div><div class="nm">ZooKeeper</div>
+      <div class="ds">Znode tree, ephemeral nodes, leader election, watches firing on change.</div>
+    </a>
+    <a class="hub-card" href="api-gateway.html">
+      <div class="ic">🚪</div><div class="nm">API Gateway</div>
+      <div class="ds">Request → auth → rate limit → route to a backend service → response, with logging.</div>
+    </a>
+    <a class="hub-card" href="system-design-quiz.html" style="border-color:var(--accent2)">
+      <div class="ic">📝</div><div class="nm">Quiz</div>
+      <div class="ds">237 questions across all topics — track weak areas. Win a $400k salary! 🎯</div>
+    </a>
+  </div>
+
+  <p class="small muted" style="margin-top:24px">Tip: these run entirely in your browser — no install, no network. Open any file directly.</p>
+</div>
+</body>
+</html>

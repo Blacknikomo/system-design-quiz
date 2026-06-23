@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Redis — Interactive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🟥 Redis — replication & reads</h1>
+      <div class="sub">In-memory key-value store. Watch a write hit the primary, replicate <i>asynchronously</i> to replicas, and see why a replica read can be stale — and how failover can drop acknowledged writes.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">single-threaded</span>
+      <span class="tag">async replication</span>
+      <span class="tag">consistent, not durable</span>
+      <span class="tag">noeviction default</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">Redis runs commands on a <b>single thread</b>, so each command is atomic. The primary takes writes and <b>acknowledges the client before replicas have the data</b> (async replication). Replicas serve reads to scale read traffic — but they may lag.</p>
+    <div class="note gotcha"><b>The gotcha:</b> because the primary acks before replicating, a failover can promote a replica that never saw the last acked writes → those writes vanish. That's why single-node/replicated Redis is <b>not a system of record</b>.</div>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Run a command</h3>
+    <div class="row">
+      <label class="fld">key<input type="text" id="k" value="user:1" size="10"></label>
+      <label class="fld">value<input type="text" id="v" value="Alice" size="10"></label>
+      <button class="btn" id="setBtn">SET</button>
+      <button class="btn sec" id="delBtn">DEL</button>
+      <span style="width:14px"></span>
+      <label class="fld">read from
+        <select id="readTarget"><option value="0">primary</option><option value="1">replica-1</option><option value="2">replica-2</option></select>
+      </label>
+      <button class="btn sec" id="getBtn">GET</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn ghost" id="pauseBtn">⏸ Pause replication (simulate lag/partition)</button>
+      <button class="btn warn" id="failBtn">💥 Fail over primary</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="nodes" id="nodes"></div>
+    </div>
+    <div class="explain" id="explain">Run <b>SET</b> to write a key. It goes to the primary, which acks immediately, then streams to the replicas. Try pausing replication, writing, then failing over.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Command log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li>Client sends <code>SET</code> → goes to the <b>primary</b> only.</li>
+        <li>Primary applies it and <b>acks the client right away</b>.</li>
+        <li>Primary asynchronously ships the write to each <b>replica</b> (purple).</li>
+        <li><code>GET</code> from a replica reflects only what it has applied — possibly <span style="color:var(--warn)">stale</span> or missing.</li>
+        <li>On <b>failover</b>, the most up-to-date replica is promoted; writes it never received are <span style="color:var(--bad)">lost</span>.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+let log = [];           // [{seq, op:'set'|'del', k, v}]
+let nodes;              // rebuilt each reset
+let paused = false;
+let busy = false;
+
+function freshNodes(){
+  return [
+    {id:0, role:'primary', alive:true, applied:0, store:new Map()},
+    {id:1, role:'replica', alive:true, applied:0, store:new Map()},
+    {id:2, role:'replica', alive:true, applied:0, store:new Map()},
+  ];
+}
+
+function reset(){
+  log = []; paused = false; busy=false;
+  nodes = freshNodes();
+  document.getElementById('pauseBtn').textContent = '⏸ Pause replication (simulate lag/partition)';
+  document.getElementById('log').innerHTML='';
+  logLine('info','Cluster ready: 1 primary, 2 replicas. All empty.');
+  render();
+  explain('Run <b>SET</b> to write a key.');
+}
+
+// apply log entries up to current length onto a node's store
+function applyTo(node){
+  while(node.applied < log.length){
+    const e = log[node.applied];
+    if(e.op==='set') node.store.set(e.k, e.v);
+    else if(e.op==='del') node.store.delete(e.k);
+    node.applied++;
+  }
+}
+
+// ---------- rendering ----------
+function nodeEl(n){
+  const lagging = n.applied < log.length && n.alive;
+  let entries='';
+  // show union of keys known to primary log for stable layout
+  const keys = new Set();
+  nodes.forEach(x=>x.store.forEach((_,k)=>keys.add(k)));
+  [...keys].sort().forEach(k=>{
+    if(n.store.has(k)){
+      // stale if a newer value exists on primary
+      const prim = nodes.find(x=>x.role==='primary'&&x.alive) || nodes[0];
+      const stale = prim.store.get(k)!==n.store.get(k) && n.role==='replica';
+      entries += `<div class="kv ${stale?'stale':''}"><span class="k">${k}</span><span>${n.store.get(k)}</span></div>`;
+    }
+  });
+  if(!entries) entries = '<div class="small muted" style="padding:4px 0">(empty)</div>';
+  const badge = n.role==='primary' ? 'PRIMARY' : 'replica';
+  const lag = lagging ? `<span class="badge" style="color:var(--warn);border-color:var(--warn)">lag ${log.length-n.applied}</span>` : '';
+  return `<div class="node ${n.role} ${n.alive?'':'dead'}" id="node${n.id}" data-id="${n.id}">
+      <div class="title">${n.role==='primary'?'🟥':'🟪'} ${n.alive?('node-'+n.id):('node-'+n.id+' (down)')}
+        <span class="badge">${badge}</span>${lag}</div>
+      ${entries}
+    </div>`;
+}
+function render(){
+  document.getElementById('nodes').innerHTML = nodes.map(nodeEl).join('');
+}
+
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  log.length; // noop
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+
+// fly a packet from one node element to another
+function fly(fromSel, toSel, label, cls){
+  return new Promise(res=>{
+    const stage = document.getElementById('stage');
+    const sr = stage.getBoundingClientRect();
+    const a = (typeof fromSel==='string'?document.querySelector(fromSel):fromSel).getBoundingClientRect();
+    const b = (typeof toSel==='string'?document.querySelector(toSel):toSel).getBoundingClientRect();
+    const p = document.createElement('div');
+    p.className = 'packet '+(cls||'');
+    p.textContent = label;
+    p.style.left = (a.left - sr.left + a.width/2 - 20)+'px';
+    p.style.top  = (a.top  - sr.top  + a.height/2 - 10)+'px';
+    stage.appendChild(p);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      p.style.left = (b.left - sr.left + b.width/2 - 20)+'px';
+      p.style.top  = (b.top  - sr.top  + b.height/2 - 10)+'px';
+    }));
+    setTimeout(()=>{ p.style.opacity=0; setTimeout(()=>{p.remove();res();},250); }, 720);
+  });
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function flash(id,cls){const e=document.getElementById('node'+id);if(e){e.classList.add(cls);setTimeout(()=>e.classList.remove(cls),600);}}
+
+// ---------- operations ----------
+async function doWrite(op){
+  if(busy) return;
+  const prim = nodes.find(n=>n.role==='primary'&&n.alive);
+  if(!prim){ logLine('err','No primary alive — promote one via failover first? (reset to recover)'); return; }
+  const k = document.getElementById('k').value.trim(); if(!k) return;
+  const v = op==='set' ? document.getElementById('v').value.trim() : '';
+  busy=true;
+  const cmd = op==='set'? `SET ${k} "${v}"` : `DEL ${k}`;
+  logLine('cmd', '> '+cmd);
+  // 1. client -> primary
+  await fly('#node'+prim.id, '#node'+prim.id, op.toUpperCase()+' '+k, '');
+  log.push({seq:log.length, op, k, v});
+  applyTo(prim); render(); flash(prim.id,'flash-ok');
+  logLine('ok', `primary node-${prim.id} applied + ACKed client (offset ${log.length})`);
+  explain(`<b>Primary acked immediately</b> after applying <code>${cmd}</code> — the client is done now, before replicas have it. This is async replication.`);
+  await sleep(350);
+  // 2. replicate
+  if(paused){
+    logLine('warn','replication PAUSED — replicas now lag behind the primary');
+    explain('Replication is paused: the primary holds newer data than the replicas. A replica read will be <span style="color:var(--warn)">stale</span>, and a failover now would <span style="color:var(--bad)">lose</span> these writes.');
+  } else {
+    for(const r of nodes.filter(n=>n.role==='replica'&&n.alive)){
+      await fly('#node'+prim.id, '#node'+r.id, 'repl '+k, 'repl');
+      applyTo(r); render(); flash(r.id,'flash-ok');
+    }
+    logLine('info','replicas caught up via async stream');
+  }
+  busy=false;
+}
+
+async function doRead(){
+  if(busy) return;
+  const id = parseInt(document.getElementById('readTarget').value,10);
+  const n = nodes[id];
+  const k = document.getElementById('k').value.trim(); if(!k) return;
+  if(!n.alive){ logLine('err',`node-${id} is down — pick another`); return; }
+  busy=true;
+  logLine('cmd', `> GET ${k}  (from ${n.role} node-${id})`);
+  await fly('#node'+id, '#node'+id, 'GET '+k, 'read');
+  const val = n.store.has(k) ? `"${n.store.get(k)}"` : '(nil)';
+  // determine staleness vs primary truth
+  const prim = nodes.find(x=>x.role==='primary'&&x.alive);
+  let stale = false;
+  if(prim){ const truth = prim.store.has(k)?prim.store.get(k):null; const got = n.store.has(k)?n.store.get(k):null; stale = truth!==got; }
+  flash(id, stale?'flash-bad':'flash-ok');
+  if(stale && n.role==='replica'){
+    logLine('warn', `GET ${k} → ${val}  ⚠ STALE (replica hasn't applied the latest write)`);
+    explain(`Replica node-${id} returned <b>${val}</b>, but the primary has a newer value. Reading from a replica trades freshness for read scalability.`);
+  } else {
+    logLine('ok', `GET ${k} → ${val}`);
+    explain(`node-${id} returned <b>${val}</b>.`);
+  }
+  busy=false;
+}
+
+function togglePause(){
+  paused = !paused;
+  const b=document.getElementById('pauseBtn');
+  b.textContent = paused ? '▶ Resume replication' : '⏸ Pause replication (simulate lag/partition)';
+  if(!paused){
+    // resume: stream pending to replicas
+    logLine('info','replication RESUMED — streaming backlog to replicas');
+    (async()=>{
+      const prim=nodes.find(n=>n.role==='primary'&&n.alive);
+      for(const r of nodes.filter(n=>n.role==='replica'&&n.alive)){
+        if(r.applied<log.length){ await fly('#node'+prim.id,'#node'+r.id,'catch-up','repl'); applyTo(r); render(); flash(r.id,'flash-ok'); }
+      }
+      logLine('ok','replicas caught up');
+    })();
+  } else {
+    logLine('warn','replication PAUSED');
+  }
+}
+
+async function failover(){
+  if(busy) return;
+  const prim = nodes.find(n=>n.role==='primary'&&n.alive);
+  if(!prim){ logLine('err','no live primary to fail'); return; }
+  busy=true;
+  logLine('err',`💥 primary node-${prim.id} crashed`);
+  prim.alive=false; render(); await sleep(400);
+  // choose most up-to-date live replica
+  const cands = nodes.filter(n=>n.role==='replica'&&n.alive).sort((a,b)=>b.applied-a.applied);
+  if(!cands.length){ logLine('err','no replica to promote — cluster down'); busy=false; return; }
+  const winner = cands[0];
+  const lost = log.length - winner.applied;
+  // promote
+  winner.role='primary';
+  logLine('info',`election: promoting node-${winner.id} (most up-to-date, applied ${winner.applied}/${log.length})`);
+  await fly('#node'+winner.id,'#node'+winner.id,'PROMOTE','read');
+  // truncate the log to the winner's state — unreplicated writes are gone
+  const lostEntries = log.slice(winner.applied);
+  log = log.slice(0, winner.applied);
+  nodes.forEach(n=>{ if(n.alive){ n.store=new Map(); n.applied=0; applyTo(n);} });
+  render(); flash(winner.id,'flash-ok');
+  if(lost>0){
+    logLine('err',`⚠ ${lost} acknowledged write(s) LOST on failover: ${lostEntries.map(e=>e.op.toUpperCase()+' '+e.k).join(', ')}`);
+    explain(`Failover promoted node-${winner.id}, but it never received <b>${lost}</b> write(s) the old primary had already acked. Those writes are <span style="color:var(--bad)">gone</span> — the canonical Redis durability gap.`);
+  } else {
+    logLine('ok','failover clean: promoted replica was fully caught up, no data lost');
+    explain(`Failover was clean because the promoted replica had applied every write. Pause replication, write, then fail over to see writes get lost.`);
+  }
+  busy=false;
+}
+
+// ---------- wire up ----------
+document.getElementById('setBtn').onclick=()=>doWrite('set');
+document.getElementById('delBtn').onclick=()=>doWrite('del');
+document.getElementById('getBtn').onclick=doRead;
+document.getElementById('pauseBtn').onclick=togglePause;
+document.getElementById('failBtn').onclick=failover;
+document.getElementById('resetBtn').onclick=reset;
+reset();
+</script>
+</body>
+</html>

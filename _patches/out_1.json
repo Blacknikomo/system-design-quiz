@@ -1,0 +1,491 @@
+[
+ {
+  "id": "q150s",
+  "options": [
+   "Lower latency on every query regardless of access pattern",
+   "Very high write throughput when access is by a known primary key",
+   "Richer multi-table JOINs and ad-hoc query support",
+   "Stronger out-of-the-box consistency than a single-node SQL DB"
+  ],
+  "correct": [1],
+  "why": "The real differentiator is the access pattern plus write profile, not ACID. NoSQL shines for huge write throughput and queries by a known key; SQL wins for complex ad-hoc queries, joins, and transactions.",
+  "more": "Cassandra and DynamoDB are tuned for partition-key access; ask the wrong question (joins, ranges across keys) and they get awkward or slow."
+ },
+ {
+  "id": "q132o",
+  "options": [
+   "NoSQL, because horizontal write scaling outweighs other concerns",
+   "SQL, because multi-row transactions, integrity, and ad-hoc queries matter even at the cost of scale",
+   "NoSQL, modeling balances as a key-value map with atomic counters",
+   "SQL or NoSQL, since at sufficient scale the trade-offs even out"
+  ],
+  "correct": [1],
+  "why": "Finance and billing are the classic 'SQL despite scale' case: transactions, joins, and auditability matter more than raw write throughput. NoSQL fits activity feeds, telemetry, and chat, not ledgers.",
+  "more": "You can scale SQL for ledgers via partitioning and read replicas; you cannot easily bolt multi-row ACID transactions onto an eventually-consistent store."
+ },
+ {
+  "id": "q1l7t",
+  "options": [
+   "Activity / news feed",
+   "Double-entry accounting ledger",
+   "Device telemetry and time-series data",
+   "Chat message history"
+  ],
+  "correct": [0, 2, 3],
+  "why": "Feeds, telemetry, and chat are high-volume, key-accessed, and tolerant of eventual consistency. Double-entry accounting needs multi-row transactions, so it belongs in SQL."
+ },
+ {
+  "id": "q14ds",
+  "options": [
+   "Making cross-node reads strongly consistent by default",
+   "Horizontal scaling of data and load beyond one node's capacity",
+   "Removing the need for replication and failover",
+   "Automatically detecting and rebalancing hot keys"
+  ],
+  "correct": [1],
+  "why": "Sharding is horizontal partitioning to scale past a single node. It does not remove the need for replication, and a bad shard key can create hotspots rather than eliminate them."
+ },
+ {
+  "id": "q10dm",
+  "options": [
+   "Hot shards from a celebrity or otherwise skewed key",
+   "Cross-shard queries and distributed transactions",
+   "The operational cost of resharding and rebalancing",
+   "Losing the ability to build indexes on the data"
+  ],
+  "correct": [0, 1, 2],
+  "why": "The three big pains are hotspots, cross-shard joins and transactions, and the cost of resharding. Indexes still exist; they are just maintained per shard rather than globally."
+ },
+ {
+  "id": "qh29l",
+  "options": [
+   "Convert the entire dataset to range sharding instead of hashing",
+   "Isolate or split the hot key with sub-sharding, dedicated handling, or a cache",
+   "Raise the replication factor across every shard in the cluster",
+   "Drop sharding and consolidate back onto a single large node"
+  ],
+  "correct": [1],
+  "why": "Hotspots are handled by isolating or splitting the hot key (dedicated shard, key-splitting, caching the celebrity), not by re-architecting the whole scheme."
+ },
+ {
+  "id": "qx9pl",
+  "options": [
+   "A standby replica is promoted to accept writes only after failover",
+   "Multiple nodes accept writes simultaneously, often one per data center",
+   "One node exclusively serves reads while another exclusively serves writes",
+   "Clients send each write to a quorum of replicas with no fixed leader"
+  ],
+  "correct": [1],
+  "why": "Multi-leader means several nodes accept writes at once, common across data centers; its core pain is write-conflict resolution. A standby promoted on failover describes single-leader."
+ },
+ {
+  "id": "q1tvi",
+  "options": [
+   "By electing a dedicated leader for each partition",
+   "By tuning quorums so that writes plus reads exceed replicas (W + R > N)",
+   "By coordinating writes through two-phase commit",
+   "By reading from a single replica to avoid conflicts"
+  ],
+  "correct": [1],
+  "why": "Leaderless systems have clients write and read multiple replicas; you get strong-ish consistency when the write quorum plus the read quorum exceed the replica count (W + R > N)."
+ },
+ {
+  "id": "qvqce",
+  "options": [
+   "The system blocks reads until a write has fully replicated everywhere",
+   "A user is guaranteed to see their own just-completed write",
+   "All users observe a given write at the same instant",
+   "Every read is routed to the leader to avoid stale data"
+  ],
+  "correct": [1],
+  "why": "Read-your-writes means a user sees their own just-made write even if other replicas lag. It does not imply global synchronization or that everyone sees the write instantly."
+ },
+ {
+  "id": "q1jab",
+  "options": [
+   "By resolving write conflicts between the competing leaders",
+   "By promoting a replica to leader through failover and election",
+   "By satisfying reads from a quorum until a leader returns",
+   "By resharding the data across the surviving nodes"
+  ],
+  "correct": [1],
+  "why": "In single-leader replication all writes go to one node; on a crash a replica is promoted to leader via failover and leader election."
+ },
+ {
+  "id": "q1tib",
+  "options": [
+   "Cache, Availability, Performance",
+   "Consistency, Availability, Partition tolerance",
+   "Consistency, Atomicity, Persistence",
+   "Concurrency, Availability, Parallelism"
+  ],
+  "correct": [1],
+  "why": "CAP stands for Consistency, Availability, and Partition tolerance. It is easy to blank on the A and the P under pressure, so anchor them."
+ },
+ {
+  "id": "q1vto",
+  "options": [
+   "Consistency versus Partition tolerance in steady state",
+   "Availability versus Partition tolerance during normal operation",
+   "Consistency versus Availability while a partition is happening",
+   "Read latency versus Consistency in the common case"
+  ],
+  "correct": [2],
+  "why": "Partitions are inevitable, so you cannot trade away P. The actual decision is C versus A when a partition occurs: a CP system refuses to answer, an AP system answers but may be stale.",
+  "accept": "Option 3 (latency vs consistency) is the real everyday trade-off, but that is the PACELC 'Else' case, not the CAP question being asked here."
+ },
+ {
+  "id": "qv7zr",
+  "options": [
+   "A third consistency tier between strong and eventual",
+   "That even with no partition you still trade Latency versus Consistency",
+   "A mechanism to prevent network partitions from occurring",
+   "A standard protocol for detecting partitions quickly"
+  ],
+  "correct": [1],
+  "why": "PACELC says if there is a Partition choose A or C, Else (normal operation) choose Latency or Consistency. It captures the everyday latency cost of strong consistency that CAP ignores."
+ },
+ {
+  "id": "qxb1q",
+  "options": [
+   "The database pushes the value into the cache after the query",
+   "The application code populates the cache after reading from the DB",
+   "The cache fetches and loads the value from the DB itself",
+   "A background warming job is the only thing that fills it"
+  ],
+  "correct": [1],
+  "why": "In cache-aside (lazy loading) the app checks the cache, and on a miss it reads the DB and then populates the cache. Write-through writes cache and DB synchronously; write-back defers the DB write."
+ },
+ {
+  "id": "q17el",
+  "options": [
+   "Cache stampede, also called the thundering herd",
+   "Cache-aside lazy loading working as designed",
+   "A hot shard caused by a skewed partition key",
+   "Write amplification from repeated cache updates"
+  ],
+  "correct": [0],
+  "why": "This is a cache stampede or thundering herd. Mitigate it with a lock or single-flight so only one request rebuilds, TTL jitter, or refresh-ahead."
+ },
+ {
+  "id": "q111r",
+  "options": [
+   "A lock or single-flight so only one request rebuilds the key",
+   "TTL jitter so popular keys do not all expire at the same moment",
+   "Refresh-ahead that rebuilds the value just before it expires",
+   "Bypassing the cache entirely while the system is under load"
+  ],
+  "correct": [0, 1, 2],
+  "why": "A lock or single-flight, TTL jitter, and refresh-ahead all either spread out or collapse the rebuild. Bypassing the cache just sends every request straight to the DB."
+ },
+ {
+  "id": "q14pg",
+  "options": [
+   "Choosing an efficient value compression scheme",
+   "Cache stampede, the thundering herd on rebuild",
+   "Picking a fast serialization format for entries",
+   "Designing a consistent key-naming convention"
+  ],
+  "correct": [1],
+  "why": "Beyond eviction, invalidation/staleness and cache stampede are the two cache problems that bite hardest in interviews."
+ },
+ {
+  "id": "q1qfn",
+  "options": [
+   "The raw file bytes stored in a binary BLOB column",
+   "Only the object-store key or URL referencing the file",
+   "A base64-encoded copy of the file contents",
+   "A thumbnail plus the inline binary for fast access"
+  ],
+  "correct": [1],
+  "why": "Keep binaries in object storage like S3 or GCS and store only the URL or reference in the DB. Stuffing binaries into rows wrecks index and cache efficiency."
+ },
+ {
+  "id": "q1t2q",
+  "options": [
+   "Run your application's business logic close to the user",
+   "Geo-cache static content near users to cut latency and offload origin",
+   "Act as the primary datastore for dynamic application data",
+   "Encrypt all traffic between the client and the origin server"
+  ],
+  "correct": [1],
+  "why": "A CDN is a geographically distributed edge cache for static assets that reduces latency and origin load. It often sits in front of blob storage.",
+  "accept": "Edge compute (option 1) does run logic at the edge, but that is an add-on; geo-caching static content is the CDN's defining job."
+ },
+ {
+  "id": "q1prk",
+  "options": [
+   "Multi-threaded execution with one lock acquired per key",
+   "Single-threaded command execution, so a heavy command blocks the whole instance",
+   "A separate OS process forked for each client connection",
+   "Lock-free parallel execution spread across all CPU cores"
+  ],
+  "correct": [1],
+  "why": "Redis executes commands single-threaded, which gives atomicity for free, but an expensive command such as KEYS or a big SORT stalls everything else.",
+  "more": "Networking I/O can be threaded in modern Redis, but the command-execution model itself is single-threaded."
+ },
+ {
+  "id": "q1f9d",
+  "options": [
+   "Consistent but not durable by default",
+   "Durable on disk but not internally consistent",
+   "Both strongly consistent and durable out of the box",
+   "Neither consistent nor durable in practice"
+  ],
+  "correct": [0],
+  "why": "A single node is consistent (one copy, atomic ops) but not durable by default since it is in-memory. The common miss is saying it sacrifices consistency, when it actually sacrifices durability."
+ },
+ {
+  "id": "qbp3s",
+  "options": [
+   "A consistent-hashing ring with virtual nodes",
+   "16384 fixed hash slots, slot equals CRC16(key) mod 16384",
+   "Range partitioning based on the key prefix",
+   "Random slot assignment rebalanced periodically"
+  ],
+  "correct": [1],
+  "why": "Redis Cluster uses 16384 fixed hash slots (CRC16 mod 16384), not a consistent-hashing ring. Slots move between nodes on rebalance, and clients follow MOVED and ASK redirects."
+ },
+ {
+  "id": "q12db",
+  "options": [
+   "allkeys-lru, evicting the least recently used key",
+   "volatile-ttl, evicting the key with the nearest expiry",
+   "noeviction, so writes return an error once memory is full",
+   "allkeys-random, evicting an arbitrary key"
+  ],
+  "correct": [2],
+  "why": "The default is noeviction: once maxmemory is hit, writes fail rather than silently dropping data. You must opt into an LRU or LFU policy to use Redis as a pure cache."
+ },
+ {
+  "id": "q1e2g",
+  "options": [
+   "RDB point-in-time snapshots",
+   "AOF append-only command log",
+   "Single-threaded command execution",
+   "MemoryDB for true multi-AZ durability"
+  ],
+  "correct": [0, 1, 3],
+  "why": "RDB snapshots and the AOF log both add durability (AOF everysec loses about a second, AOF always loses nothing but is slower), and MemoryDB provides true durability. Single-threading is about execution, not durability."
+ },
+ {
+  "id": "q196r",
+  "options": [
+   "Wrap the steps in a server-side Lua script or a MULTI/EXEC block",
+   "Run a two-phase commit transaction across the cluster nodes",
+   "Rely on each separate command already running single-threaded",
+   "Hold a client-side mutex around the sequence of calls"
+  ],
+  "correct": [0],
+  "why": "A Lua script runs atomically on the server, and MULTI/EXEC with WATCH also works. Separate commands are not atomic relative to each other even though each individual command is."
+ },
+ {
+  "id": "q1i5v",
+  "options": [
+   "Streams deliver messages with lower latency than Pub/Sub",
+   "Pub/Sub is at-most-once with no persistence; Streams persist messages and add consumer groups",
+   "Pub/Sub persists messages while Streams are fire-and-forget",
+   "They are functionally equivalent with different command names"
+  ],
+  "correct": [1],
+  "why": "Pub/Sub is fire-and-forget and at-most-once, so offline subscribers miss messages. Streams persist the log and support consumer groups and replay, making them a Kafka-lite."
+ },
+ {
+  "id": "qqqvm",
+  "options": [
+   "It provides safe mutual exclusion under all failure conditions",
+   "Kleppmann showed it is unsafe under GC pauses and clock skew, so use fencing tokens or a consensus system for correctness-critical locks",
+   "It only ever functions correctly when run on a single node",
+   "It depends on MemoryDB to provide its locking guarantees"
+  ],
+  "correct": [1],
+  "why": "Redlock works for efficiency locks, but Kleppmann showed it is not safe for correctness under pauses or clock issues. Mention fencing tokens or a consensus store like ZooKeeper or etcd for hard locks."
+ },
+ {
+  "id": "q1awb",
+  "options": [
+   "L4 adds latency overhead that makes it slower than L7",
+   "L4 routes by IP and port and is content-blind; L7 reads URL, headers, and cookies for content routing, TLS termination, and stickiness",
+   "L7 operates purely at the TCP transport layer like L4",
+   "L4 can inspect cookies to make sticky-session decisions"
+  ],
+  "correct": [1],
+  "why": "L4 is transport-layer (TCP/UDP), fast but content-blind. L7 is application-layer and can route by URL, header, or cookie, terminate TLS, and do sticky sessions."
+ },
+ {
+  "id": "q1ibb",
+  "options": [
+   "Round-robin across the backend pool",
+   "Least-connections to the busiest-aware backend",
+   "Consistent hashing keyed on the client or request",
+   "Two-phase commit across the backends"
+  ],
+  "correct": [0, 1, 2],
+  "why": "Round-robin, least-connections, weighted, and consistent hashing are all load-balancing strategies. Two-phase commit is a distributed-transaction protocol, not a routing algorithm."
+ },
+ {
+  "id": "qfjwz",
+  "options": [
+   "Messages are deleted as soon as a consumer acknowledges them",
+   "It is an append-only log: messages are retained and replayable while consumers track their own offset",
+   "Only a single consumer can ever read from a given topic",
+   "Messages arrive in no guaranteed order within a topic"
+  ],
+  "correct": [1],
+  "why": "Kafka is a distributed append-only log: messages are retained and replayable, consumers track offsets, multiple consumer groups read the same data independently, and order is preserved within a partition."
+ },
+ {
+  "id": "q96zq",
+  "options": [
+   "It is retained on the queue for later replay by others",
+   "It is deleted from the queue and not redelivered",
+   "It is moved to a different partition for archival",
+   "It is broadcast to every other registered consumer"
+  ],
+  "correct": [1],
+  "why": "Broker queues delete a message on ack, typically with one consumer and no replay. They are good for simple background tasks and decoupling, not stream replay or analytics."
+ },
+ {
+  "id": "q17in",
+  "options": [
+   "Decoupling producers from consumers in time and deployment",
+   "Smoothing load by buffering bursts of incoming work",
+   "Providing strong cross-service transactional consistency",
+   "Throttling and protecting slower downstream consumers"
+  ],
+  "correct": [0, 1, 3],
+  "why": "Queues decouple services, smooth and buffer bursts, and throttle downstream load. They do not provide strong consistency and generally push you toward eventual consistency."
+ },
+ {
+  "id": "qkc73",
+  "options": [
+   "SQS, where each message is deleted once one consumer processes it",
+   "Kafka with a separate consumer group for each team",
+   "A single shared RabbitMQ queue all three teams drain",
+   "A database table that each team polls and deletes rows from"
+  ],
+  "correct": [1],
+  "why": "Kafka's multiple consumer groups each keep their own offset over the same retained log, which is exactly the multi-consumer fan-out case."
+ },
+ {
+  "id": "qymnv",
+  "options": [
+   "Assemble each user's timeline on demand at read time",
+   "On each post, write the item into every follower's precomputed timeline",
+   "Pull a user's followees' posts when they open the app",
+   "Cache the rendered home page at the CDN edge"
+  ],
+  "correct": [1],
+  "why": "Fan-out-on-write (push) fans each post into every follower's feed on write. Reads are fast but writes are expensive, and it breaks down for celebrities with millions of followers."
+ },
+ {
+  "id": "qsq2d",
+  "options": [
+   "Per-follower read latency becomes unacceptably slow",
+   "A single post triggers 100 million timeline writes",
+   "Post ordering across followers can no longer be preserved",
+   "The resulting timelines become impossible to cache"
+  ],
+  "correct": [1],
+  "why": "One celebrity post means 100 million writes. That is why the standard answer is a hybrid: push for normal users and pull (fan-out-on-read) for celebrities."
+ },
+ {
+  "id": "q1mb7",
+  "options": [
+   "Always fan-out-on-write into every follower's feed",
+   "Always fan-out-on-read by assembling feeds on request",
+   "Hybrid: push for normal users and pull for celebrities",
+   "Recompute every timeline from scratch on each request"
+  ],
+  "correct": [2],
+  "why": "The hybrid balances write cost and read latency: precompute feeds for the many normal users and compute on read for the few huge accounts."
+ },
+ {
+  "id": "q1p1p",
+  "options": [
+   "It counts requests per fixed window and resets the counter each window",
+   "It holds N tokens refilled at a steady rate; each request takes one, and an empty bucket rejects",
+   "It delays every request by a fixed interval to pace traffic",
+   "It admits requests but drops every Nth one to shed load"
+  ],
+  "correct": [1],
+  "why": "Token bucket keeps a bucket of N tokens refilled at a steady rate; a request consumes a token and an empty bucket rejects. It allows bursts up to the bucket size."
+ },
+ {
+  "id": "qp96x",
+  "options": [
+   "Inside the database, enforced per query",
+   "At the edge in the API gateway or load balancer, keyed per user, IP, or API key",
+   "In the client application before requests are sent",
+   "In the message queue between the services"
+  ],
+  "correct": [1],
+  "why": "Put the limiter at the edge (gateway or load balancer) so abuse is rejected before reaching downstream services, keyed per user, IP, or API key for fairness and DDoS protection."
+ },
+ {
+  "id": "qhcyc",
+  "options": [
+   "Lower memory footprint than a simple counter",
+   "Smooth handling of short bursts up to the bucket size",
+   "Perfect counting accuracy right at the window boundary",
+   "Operation without any persistent state at all"
+  ],
+  "correct": [1],
+  "why": "Token bucket allows controlled bursts and avoids the fixed-window edge problem of double traffic at the boundary. A sliding-window log or counter also fixes that edge issue."
+ },
+ {
+  "id": "qbbw1",
+  "options": [
+   "It is guaranteed to execute exactly one time, ever",
+   "Applying it many times yields the same result as applying it once",
+   "It is designed so that it can never return an error",
+   "It completes successfully without any network round trip"
+  ],
+  "correct": [1],
+  "why": "Idempotent means repeating an operation has the same effect as doing it once. This matters because retries are inevitable: a timeout leaves the client unsure whether the call succeeded."
+ },
+ {
+  "id": "qnktr",
+  "options": [
+   "Acquire an exclusive lock on the user's account during the charge",
+   "Have the client send an idempotency key the server dedupes on",
+   "Permit the client to retry the request at most one time",
+   "Disable client retries so a charge is only ever sent once"
+  ],
+  "correct": [1],
+  "why": "The client sends a unique idempotency key; the server records it and returns the original result on retries instead of charging again."
+ },
+ {
+  "id": "qqjqq",
+  "options": [
+   "Payment and other write APIs that clients may retry",
+   "At-least-once queue consumers that must dedupe redeliveries",
+   "Pure read-only GET endpoints with no side effects",
+   "Any operation traveling over an unreliable network"
+  ],
+  "correct": [0, 1, 3],
+  "why": "Retryable writes, at-least-once consumers, and anything over flaky networks all need idempotency. Pure GETs are already naturally idempotent and need nothing extra."
+ },
+ {
+  "id": "qe6oh",
+  "options": [
+   "Isolation, preventing concurrent transactions from interfering",
+   "Durability, ensuring committed data survives a crash",
+   "Atomicity, so all participants commit or none do across services",
+   "Consistency, keeping invariants valid after each transaction"
+  ],
+  "correct": [2],
+  "why": "It is primarily Atomicity across nodes: all participants commit or none do. A common miss is saying A and I, but Saga in particular deliberately drops isolation."
+ },
+ {
+  "id": "qcz22",
+  "options": [
+   "Optimistic and lock-free, settling to eventual consistency",
+   "Pessimistic prepare-and-commit phases holding locks, CP and blocking, with a coordinator SPOF",
+   "Asynchronous compensation that undoes steps after the fact",
+   "A messaging pattern built on a durable broker queue"
+  ],
+  "correct": [1],
+  "why": "Two-phase commit is pessimistic and coordinator-driven with prepare and commit phases, holds locks, and is CP and blocking; the coordinator is a single point of failure (mitigated but real). It underpins Spanner and XA."
+ }
+]

@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kafka — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* tiny layout tweaks only — partition columns + group cursors */
+  .plog{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+  .cell{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:6px;padding:4px 8px;display:flex;align-items:center;gap:8px}
+  .cell .off{color:var(--muted);min-width:18px;text-align:right}
+  .cell .key{color:var(--accent);min-width:46px}
+  .cell .val{color:var(--txt)}
+  .cell.read-an{box-shadow:inset 3px 0 0 var(--ok)}
+  .cell.read-bi{box-shadow:inset 6px 0 0 var(--accent2)}
+  .cell.read-an.read-bi{box-shadow:inset 3px 0 0 var(--ok),inset 6px 0 0 var(--accent2)}
+  .cursors{display:flex;flex-direction:column;gap:2px;margin-top:8px;font-size:11px}
+  .cursors .cur{display:flex;align-items:center;gap:6px;font-family:ui-monospace,Menlo,monospace}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .dot.an{background:var(--ok)} .dot.bi{background:var(--accent2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🟧 Kafka — partitions, offsets &amp; consumer groups</h1>
+      <div class="sub">A topic is a partitioned, append-only log. Produce a record, watch it get <i>hashed</i> to a partition, then see two consumer groups read the same retained data <i>independently</i> — and replay it from the start.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">append-only log</span>
+      <span class="tag">partitioned</span>
+      <span class="tag">ordered within a partition</span>
+      <span class="tag">retained &amp; replayable</span>
+      <span class="tag">offset per group</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A topic is split into <b>partitions</b>; each is an ordered, immutable, append-only log. A record's <b>key</b> is hashed (<code>partition = murmur2(key) % numPartitions</code>) so the <b>same key always lands in the same partition</b> — that's how Kafka guarantees per-key ordering. Records are <b>retained</b> (not deleted on read), and each <b>consumer group</b> tracks its own committed offset per partition, so groups read the same data independently.</p>
+    <div class="note gotcha"><b>The gotcha:</b> a low-cardinality or single "hot" key sends most traffic to one partition → a <b>hot partition</b>. Since consumer parallelism within a group is capped at the partition count (<b>one consumer per partition per group</b>), one skewed key bottlenecks the whole group no matter how many consumers you add.</div>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Run a command</h3>
+    <div class="row">
+      <label class="fld">key (blank = round-robin)<input type="text" id="k" value="user:1" size="12"></label>
+      <label class="fld">value<input type="text" id="v" value="click" size="12"></label>
+      <button class="btn" id="prodBtn">PRODUCE</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label class="fld">consumer group
+        <select id="grp"><option value="an">analytics</option><option value="bi">billing</option></select>
+      </label>
+      <button class="btn sec" id="consBtn">CONSUME next</button>
+      <button class="btn ghost" id="replayBtn">↺ Replay group from offset 0</button>
+      <span style="width:14px"></span>
+      <button class="btn ghost" id="resetBtn">↺ Reset all</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="nodes" id="nodes"></div>
+    </div>
+    <div class="explain" id="explain">Click <b>PRODUCE</b> to append a record. With a key it's hashed to one of 3 partitions; leave the key blank to round-robin. Then pick a group and <b>CONSUME</b> to read the next record on each partition.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Command log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li>Client <code>PRODUCE(key,value)</code> → broker hashes the key.</li>
+        <li><code>partition = hash(key) % 3</code> picks the target column (same key → same partition, ordered).</li>
+        <li>Record is <b>appended</b> at the partition's next <b>offset</b> — never overwritten or deleted on read.</li>
+        <li>Each <b>consumer group</b> consumes the next record per partition and advances <b>its own</b> committed offset — both groups see all data <span style="color:var(--ok)">independently</span>.</li>
+        <li><b>Replay</b> resets a group's offsets to 0 so it re-reads everything — possible because Kafka <span style="color:var(--accent)">retains</span> records (unlike a queue that deletes on ack).</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+const NP = 3;                                  // number of partitions
+const GROUPS = {an:'analytics', bi:'billing'}; // consumer groups
+let partitions;   // [[{off,key,val,readBy:Set}], ...]
+let offsets;      // {an:[o0,o1,o2], bi:[...]}  committed offset per partition per group
+let rr = 0;       // round-robin counter for empty keys
+let busy = false;
+
+// deterministic string hash standing in for murmur2
+function hashKey(s){
+  let h = 0;
+  for(let i=0;i<s.length;i++){ h = (h*31 + s.charCodeAt(i)) | 0; }
+  return Math.abs(h);
+}
+
+function reset(){
+  busy = false; rr = 0;
+  partitions = [[],[],[]];
+  offsets = {an:[0,0,0], bi:[0,0,0]};
+  document.getElementById('log').innerHTML = '';
+  logLine('info', 'Topic "events" created: 3 partitions, empty. Groups: analytics, billing (both at offset 0).');
+  render();
+  explain('Click <b>PRODUCE</b> to append a record. With a key it is hashed to one of 3 partitions; leave the key blank to round-robin.');
+}
+
+// ---------- rendering ----------
+function cellEl(rec){
+  const an = rec.readBy.has('an'), bi = rec.readBy.has('bi');
+  const cls = (an?' read-an':'') + (bi?' read-bi':'');
+  return `<div class="cell${cls}"><span class="off">${rec.off}</span>`+
+         `<span class="key">${rec.key===null?'∅':rec.key}</span>`+
+         `<span class="val">${rec.val}</span></div>`;
+}
+function partEl(p, i){
+  const cells = partitions[i].map(cellEl).join('') ||
+    '<div class="small muted" style="padding:4px 0">(empty)</div>';
+  const aOff = offsets.an[i], bOff = offsets.bi[i], len = partitions[i].length;
+  const aLbl = aOff>=len ? 'caught up' : 'next '+aOff;
+  const bLbl = bOff>=len ? 'caught up' : 'next '+bOff;
+  return `<div class="node primary" id="part${i}" data-id="${i}">
+      <div class="title">🟧 partition-${i} <span class="badge">log</span></div>
+      <div class="plog">${cells}</div>
+      <div class="cursors">
+        <div class="cur"><span class="dot an"></span>analytics → ${aLbl}</div>
+        <div class="cur"><span class="dot bi"></span>billing → ${bLbl}</div>
+      </div>
+    </div>`;
+}
+function render(){
+  document.getElementById('nodes').innerHTML = partitions.map(partEl).join('');
+}
+
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+
+const sleep = ms => new Promise(r=>setTimeout(r, ms));
+function flash(id, cls){
+  const e = document.getElementById('part'+id);
+  if(e){ e.classList.add(cls); setTimeout(()=>e.classList.remove(cls), 600); }
+}
+
+// fly a packet from one element to another inside the stage
+function fly(fromEl, toEl, label, cls){
+  return new Promise(res=>{
+    const stage = document.getElementById('stage');
+    const sr = stage.getBoundingClientRect();
+    const a = (typeof fromEl==='string'?document.querySelector(fromEl):fromEl).getBoundingClientRect();
+    const b = (typeof toEl==='string'?document.querySelector(toEl):toEl).getBoundingClientRect();
+    const p = document.createElement('div');
+    p.className = 'packet ' + (cls||'');
+    p.textContent = label;
+    p.style.left = (a.left - sr.left + a.width/2 - 20) + 'px';
+    p.style.top  = (a.top  - sr.top  + 6) + 'px';
+    stage.appendChild(p);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      p.style.left = (b.left - sr.left + b.width/2 - 20) + 'px';
+      p.style.top  = (b.top  - sr.top  + b.height/2 - 10) + 'px';
+    }));
+    setTimeout(()=>{ p.style.opacity=0; setTimeout(()=>{ p.remove(); res(); }, 250); }, 720);
+  });
+}
+
+// ---------- operations ----------
+async function produce(){
+  if(busy) return;
+  const keyRaw = document.getElementById('k').value.trim();
+  const val = document.getElementById('v').value.trim() || '∅';
+  busy = true;
+  let part, key, how;
+  if(keyRaw === ''){
+    part = rr % NP; rr++; key = null;
+    how = `no key → round-robin to partition-${part}`;
+  } else {
+    const h = hashKey(keyRaw);
+    part = h % NP; key = keyRaw;
+    how = `hash("${keyRaw}")=${h} % ${NP} = partition-${part}`;
+  }
+  const off = partitions[part].length;
+  logLine('cmd', `> PRODUCE key=${key===null?'∅':key} value="${val}"`);
+  logLine('info', how);
+  await fly('#stage', '#part'+part, key===null?'∅:'+val : key+':'+val, '');
+  partitions[part].push({off, key, val, readBy:new Set()});
+  render(); flash(part, 'flash-ok');
+  logLine('ok', `appended to partition-${part} at offset ${off}`);
+  if(key!==null){
+    explain(`<b>${how}</b>. Record stored at <b>partition-${part}, offset ${off}</b>. Every record with key <code>${key}</code> hashes to the same partition, so its order is preserved. Note: ordering holds <i>within</i> a partition only — there is no global order across partitions.`);
+  } else {
+    explain(`No key, so the producer <b>round-robins</b> for even spread → <b>partition-${part}, offset ${off}</b>. Without a key you get balance but <b>no per-key ordering guarantee</b>.`);
+  }
+  busy = false;
+}
+
+async function consume(){
+  if(busy) return;
+  const g = document.getElementById('grp').value;
+  const gName = GROUPS[g];
+  busy = true;
+  logLine('cmd', `> CONSUME group=${gName}`);
+  let delivered = 0;
+  for(let i=0;i<NP;i++){
+    const o = offsets[g][i];
+    if(o < partitions[i].length){
+      const rec = partitions[i][o];
+      await fly('#part'+i, '#stage', `${gName} rd ${i}:${o}`, 'read');
+      rec.readBy.add(g);
+      offsets[g][i] = o + 1;
+      delivered++;
+      logLine('ok', `${gName} read partition-${i} offset ${o}  (key=${rec.key===null?'∅':rec.key} value="${rec.val}") → commit ${o+1}`);
+      render(); flash(i, 'flash-ok');
+    }
+  }
+  if(delivered === 0){
+    logLine('warn', `${gName} is caught up — nothing new to read`);
+    explain(`Group <b>${gName}</b> has consumed all records on every partition. New produces will be available to read next.`);
+  } else {
+    explain(`Group <b>${gName}</b> read <b>${delivered}</b> record(s) (one per partition with new data) and advanced <b>its own</b> committed offsets. The records are still retained — the <i>other</i> group's offsets are untouched, so it can read the exact same data independently. Consuming is not deleting.`);
+  }
+  busy = false;
+}
+
+async function replay(){
+  if(busy) return;
+  const g = document.getElementById('grp').value;
+  const gName = GROUPS[g];
+  busy = true;
+  offsets[g] = [0,0,0];
+  partitions.forEach(p=>p.forEach(rec=>rec.readBy.delete(g)));
+  logLine('warn', `${gName} offsets reset to 0 on all partitions — replaying from the start`);
+  render();
+  for(let i=0;i<NP;i++) flash(i, 'flash-ok');
+  explain(`<b>Replay:</b> ${gName}'s committed offsets are reset to <b>0</b>, so it will re-read every retained record from the beginning. This is only possible because Kafka <b>retains</b> records after consumption — contrast a traditional queue, which <b>deletes a message once it's acked</b> and could never replay it.`);
+  await sleep(200);
+  busy = false;
+}
+
+// ---------- wire up ----------
+document.getElementById('prodBtn').onclick = produce;
+document.getElementById('consBtn').onclick = consume;
+document.getElementById('replayBtn').onclick = replay;
+document.getElementById('resetBtn').onclick = reset;
+reset();
+</script>
+</body>
+</html>

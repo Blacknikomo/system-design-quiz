@@ -1,0 +1,730 @@
+[
+ {
+  "id": "qgxya",
+  "topic": "Design: Ad Click Aggregator",
+  "type": "single",
+  "q": "HI Ad Click Aggregator: how do you make click tracking idempotent (dedupe retries)?",
+  "options": [
+   "Use the userId as the dedup key",
+   "Generate a unique impression ID per ad impression and dedupe on it",
+   "Count only the first click per minute",
+   "Ignore duplicates; they're rare"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: mint a unique impression ID when the ad is served and carry it on the click event, so retried/duplicate clicks collapse to one. userId is too coarse."
+ },
+ {
+  "id": "qz8nm",
+  "topic": "Design: Web Crawler",
+  "type": "single",
+  "q": "HI Web Crawler: which queue does HI pick for the frontier, and what goes in it?",
+  "options": [
+   "Kafka, storing the raw HTML",
+   "SQS, storing only the URL (visibility timeout gives easy backoff + DLQ)",
+   "Redis list storing full pages",
+   "A SQL table of HTML blobs"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI picks SQS: its visibility timeout makes retries/exponential backoff and dead-letter queues easy. Store a URL pointer, not raw HTML (HTML goes to S3) — keep the message small and the URL in-flight until the HTML is confirmed stored."
+ },
+ {
+  "id": "q15fr",
+  "topic": "Design: Web Crawler",
+  "type": "single",
+  "q": "HI Web Crawler: a surprising bottleneck when crawling billions of pages is…",
+  "options": [
+   "CPU for parsing",
+   "DNS resolution (cited as up to ~70% of per-thread time) — fix with DNS caching and multiple providers",
+   "Disk I/O on the queue",
+   "JSON serialization"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI (citing the Mercator paper): DNS can dominate thread time. Cache DNS results and round-robin multiple DNS providers. Crawling is I/O-bound, so a handful of network-optimized machines suffices for the 5-day target."
+ },
+ {
+  "id": "q1bh1",
+  "topic": "Design: Web Crawler",
+  "type": "multi",
+  "q": "HI Web Crawler: which are part of being a 'polite' crawler? (select all)",
+  "options": [
+   "Parse and respect robots.txt (Disallow + Crawl-delay)",
+   "Rate-limit ~1 request/sec per domain (per-domain Redis SET NX lock)",
+   "Add jitter to avoid synchronized retries",
+   "Ignore robots.txt for faster coverage"
+  ],
+  "correct": [
+   0,
+   1,
+   2
+  ],
+  "why": "HI: respect robots.txt including Crawl-delay, throttle per domain (~1 rps via a per-domain lock), and add jitter. Ignoring robots.txt is the opposite of polite."
+ },
+ {
+  "id": "qyykt",
+  "topic": "Design: Web Crawler",
+  "type": "single",
+  "q": "HI Web Crawler: how do you avoid re-storing the same content and getting stuck in crawler traps?",
+  "options": [
+   "Crawl each URL only once ever",
+   "Dedupe by content hash (not just URL) and cap crawl depth (~15–20 hops from seed)",
+   "Limit total pages to 1M",
+   "Disable following links"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: URL-level dedup misses mirror content, so also hash page content. Cap depth (hops from the seed, not path segments) to escape infinite trap pages."
+ },
+ {
+  "id": "q156k",
+  "topic": "Design: Top K",
+  "type": "single",
+  "q": "HI Top-K: the headline data structure when exact counts can be relaxed to approximate is…",
+  "options": [
+   "A B-tree",
+   "A Count-Min Sketch (plus a heap for the top-K)",
+   "A bloom filter",
+   "A sorted set per video"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: a Count-Min Sketch estimates per-item counts in megabytes instead of a hundreds-of-GB exact hash table; feed estimates into a heap to keep the top-K. Only valid when 'precise' is relaxed."
+ },
+ {
+  "id": "qoz3n",
+  "topic": "Design: Top K",
+  "type": "single",
+  "q": "HI Top-K: 70B views/day (~700k TPS) far exceeds one DB. How do you keep results exact?",
+  "options": [
+   "Sample 1% of views",
+   "Ingest via Kafka, shard the counts across many DBs, compute each shard's top-K and merge",
+   "Round counts to the nearest thousand",
+   "Only count logged-in users"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: buffer with Kafka and shard counters; each shard's local top-K, merged, is mathematically guaranteed to contain the global top-K — exact, without a single hot DB."
+ },
+ {
+  "id": "qpc0m",
+  "topic": "Design: Top K",
+  "type": "single",
+  "q": "HI Top-K: why does HI restrict the problem to tumbling (non-overlapping) windows?",
+  "options": [
+   "Tumbling windows are less accurate, which is fine",
+   "Sliding windows are substantially harder to maintain; tumbling keeps aggregation tractable",
+   "Tumbling windows need no storage",
+   "Users only ask for sliding windows"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: sliding windows require continuously re-aggregating overlapping ranges; tumbling windows let you keep simple per-window aggregates (precomputed/cached per minute)."
+ },
+ {
+  "id": "q16wy",
+  "topic": "Design: Rate Limiter",
+  "type": "single",
+  "q": "HI Rate Limiter: why does a per-gateway in-memory counter fail?",
+  "options": [
+   "Memory is too expensive",
+   "The load balancer spreads a client's requests across gateways, so each sees only a fraction of the count — use a centralized Redis",
+   "In-memory counters aren't atomic",
+   "It only works for IP-based limits"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: with traffic spread across gateway instances, no single instance has the true count. Centralize the counter in Redis (sharded by client key) so the limit is enforced globally."
+ },
+ {
+  "id": "q124l",
+  "topic": "Design: Rate Limiter",
+  "type": "single",
+  "q": "HI Rate Limiter: how do you make the read-modify-write of a token bucket race-free in Redis?",
+  "options": [
+   "Hope requests don't collide",
+   "Run the check/refill/decrement as one atomic unit (MULTI/EXEC or a Lua script), plus EXPIRE to avoid leaks",
+   "Use two separate Redis calls",
+   "Lock the whole Redis instance"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: bundle the HGET tokens / refill / HSET into an atomic transaction (or Lua) so concurrent requests can't both spend the last token; set EXPIRE so idle buckets don't leak memory."
+ },
+ {
+  "id": "qymk2",
+  "topic": "Design: Rate Limiter",
+  "type": "single",
+  "q": "HI Rate Limiter: if the Redis backing the limiter goes down, does HI fail open or fail closed (for a social API)?",
+  "options": [
+   "Fail open — never block legitimate users",
+   "Fail closed — reject requests, because outages often coincide with spikes and failing open can collapse the backend",
+   "It doesn't matter",
+   "Shut down the whole service"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI calls both defensible but picks fail-closed for social media: limiter failures tend to coincide with traffic surges, so failing open could let a flood cascade into a backend collapse."
+ },
+ {
+  "id": "q1vxf",
+  "topic": "Design: Google Docs",
+  "type": "single",
+  "q": "HI Google Docs: which concurrency-control approach does HI choose, and what's the alternative?",
+  "options": [
+   "Locks per paragraph; alternative is no locking",
+   "Operational Transformation (OT, what Google uses); CRDTs are the alternative for P2P/larger collaborator counts (e.g. Figma)",
+   "Two-phase commit; alternative is sagas",
+   "Last-write-wins; alternative is first-write-wins"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: OT transforms concurrent INSERT/DELETE ops against each other on a central server so all clients converge — low memory, great for text. CRDTs suit peer-to-peer or very large collaboration but cost more memory."
+ },
+ {
+  "id": "q1igd",
+  "topic": "Design: Google Docs",
+  "type": "single",
+  "q": "HI Google Docs: what should clients send over the WebSocket?",
+  "options": [
+   "The entire document on every keystroke",
+   "Edits as operations (e.g. INSERT/DELETE at a position)",
+   "A screenshot of the page",
+   "Only the final document on save"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: transmit compact operations (insert/delete at offsets), not the whole doc — that's what OT transforms and what Cassandra stores append-only, partitioned by documentId."
+ },
+ {
+  "id": "qinys",
+  "topic": "Design: Google Docs",
+  "type": "single",
+  "q": "HI Google Docs: how do you ensure all editors of one document hit the same WebSocket server at scale?",
+  "options": [
+   "Random load balancing",
+   "Consistent hashing by documentId, with ZooKeeper maintaining the hash ring; client connects via HTTP then upgrades to WS on the right server",
+   "Sticky sessions by user IP",
+   "A single global server"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: route by documentId via consistent hashing so collaborators converge on one stateful server; ZooKeeper keeps the ring consistent as servers join/leave. Snapshot/compact operations to bound storage/transfer."
+ },
+ {
+  "id": "qddm0",
+  "topic": "Design: Payment System",
+  "type": "single",
+  "q": "HI Payment System: a request times out after charging. How do you avoid double-charging on retry?",
+  "options": [
+   "Assume the timeout means it failed and retry blindly",
+   "Idempotency keys, plus reconciliation against the payment network — never assume a timeout equals failure",
+   "Charge again and refund later",
+   "Block all retries"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: a timeout is ambiguous (it may have succeeded). An idempotency key makes the retry a no-op if it already went through, and reconciliation against the network catches mismatches."
+ },
+ {
+  "id": "q1tjr",
+  "topic": "Design: Payment System",
+  "type": "single",
+  "q": "HI Payment System: what storage approach gives the durability/audit trail payments require?",
+  "options": [
+   "Store only current state in a single table",
+   "Event sourcing: an append-only immutable event log (via CDC), not just current state",
+   "Daily CSV exports",
+   "Cache everything in Redis"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: append-only event log is the foundation for audits, chargebacks, reconciliation and fraud detection — current-state-only loses the history regulators and disputes require."
+ },
+ {
+  "id": "q1e8a",
+  "topic": "Design: Payment System",
+  "type": "single",
+  "q": "HI Payment System: how is raw card data handled for PCI compliance?",
+  "options": [
+   "Encrypt it in your primary DB",
+   "Tokenization — the card is exchanged for a token so your backend never stores/handles the raw card number",
+   "Hash it with SHA-256",
+   "Store it only in logs"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: tokenize card data (e.g. via the provider's client-side SDK) so raw card numbers never reach your servers, keeping you out of PCI scope. Pair with API keys + request signing for security."
+ },
+ {
+  "id": "q1a3d",
+  "topic": "Architecture",
+  "type": "multi",
+  "q": "For a typical read-heavy product (social app, marketplace), which components belong in the baseline high-level design? (select all)",
+  "options": [
+   "API gateway / load balancer as the entry point",
+   "A primary database for core entities",
+   "A cache (e.g. Redis) in front of hot reads",
+   "A CDN for static assets (images, JS, video)",
+   "A graph database — always, for any app"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "The standard product-design skeleton is: clients → API gateway/LB → stateless services → primary DB, with a cache for hot reads and a CDN for static media."
+ },
+ {
+  "id": "q1yv1",
+  "topic": "Architecture",
+  "type": "single",
+  "q": "What is HI's delivery-framework order for driving a design?",
+  "options": [
+   "Jump straight to the database schema",
+   "Requirements (functional + non-functional) → core entities → API → high-level design → deep dives",
+   "Draw the whole architecture first, then justify it",
+   "Estimate capacity, then stop"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI's framework: nail requirements (functional + non-functional), define core entities, sketch the API, build the high-level design, then go deep on the hard parts and trade-offs."
+ },
+ {
+  "id": "q1dt5",
+  "topic": "Architecture",
+  "type": "multi",
+  "q": "Which non-functional requirements should you pin down early in almost any design? (select all)",
+  "options": [
+   "Availability vs consistency priority",
+   "Latency targets",
+   "Expected scale / throughput (reads & writes)",
+   "Durability needs",
+   "Which programming language the team uses"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "Non-functional requirements (the '-ilities') shape every later decision: availability-vs-consistency, latency, throughput/scale, and durability."
+ },
+ {
+  "id": "q150a",
+  "topic": "Architecture",
+  "type": "multi",
+  "q": "Which cross-cutting concerns should a senior+ candidate proactively address in any distributed design? (select all)",
+  "options": [
+   "Observability (metrics, logs, traces)",
+   "Fault tolerance / eliminating single points of failure",
+   "Security & authentication",
+   "Horizontal scalability of each tier",
+   "The choice of IDE"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "Beyond the happy path, name observability, fault tolerance/SPOF removal, security, and how each tier scales horizontally — these are the operational signals interviewers look for at senior+."
+ },
+ {
+  "id": "qev8x",
+  "topic": "Architecture",
+  "type": "single",
+  "q": "A requirement says 'users worldwide need fast loading of images and video'. Which component directly addresses it?",
+  "options": [
+   "A bigger primary database",
+   "A CDN caching static assets at edge locations",
+   "A message queue",
+   "A distributed lock"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "A CDN caches static content at edge locations close to users, cutting latency and offloading the origin — the standard answer for global static delivery."
+ },
+ {
+  "id": "q1ri0",
+  "topic": "Architecture",
+  "type": "single",
+  "q": "A requirement says 'video encoding takes minutes and must not block the upload request'. Which pattern fits?",
+  "options": [
+   "Do it synchronously in the request",
+   "Ack immediately + push a job to a queue; a worker pool processes it in the background",
+   "Run it on the client",
+   "Cache the result"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "This is the Managing Long-Running Tasks pattern: validate + enqueue + return a job ID in milliseconds, while separate workers do the heavy processing."
+ },
+ {
+  "id": "qrgx5",
+  "topic": "Architecture",
+  "type": "single",
+  "q": "You need full-text search over millions of posts. Which component, and why not just the primary DB?",
+  "options": [
+   "Use SQL LIKE '%term%' on Postgres",
+   "Add Elasticsearch — an inverted index makes full-text search fast; LIKE forces a full table scan",
+   "Cache every query in Redis",
+   "Shard the primary DB harder"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "Full-text search needs an inverted index (term → documents). Elasticsearch is the go-to; a leading-wildcard LIKE can't use a B-tree index and scans the whole table."
+ },
+ {
+  "id": "q1dkn",
+  "topic": "Design: Bitly",
+  "type": "multi",
+  "q": "Which subsystems are essential for a URL shortener? (select all)",
+  "options": [
+   "A write/create service that generates the short code",
+   "A read/redirect service",
+   "A key-value store mapping short code → long URL",
+   "A cache (reads dominate ~1000:1)",
+   "A video transcoding pipeline"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "Bitly decomposes into a write path (generate unique code, store mapping), a read/redirect path, a KV store for the mapping, and a cache because reads vastly outnumber writes."
+ },
+ {
+  "id": "q2d9z",
+  "topic": "Design: Dropbox",
+  "type": "multi",
+  "q": "Which subsystems are essential for a file storage/sync service like Dropbox? (select all)",
+  "options": [
+   "Blob storage (S3) for file contents",
+   "A metadata database (files, versions, ownership)",
+   "A presigned-URL service for direct client upload/download",
+   "A sync/notification service to propagate changes",
+   "A full-text search cluster over file contents"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "Core pieces: blob storage for bytes, a metadata DB for file/version/share info, presigned URLs so clients transfer directly to S3, and a sync/notification path to keep devices consistent."
+ },
+ {
+  "id": "q1bet",
+  "topic": "Design: Ticketmaster",
+  "type": "multi",
+  "q": "Which subsystems are essential for Ticketmaster? (select all)",
+  "options": [
+   "An event + search service (Elasticsearch) for browsing/finding events",
+   "A booking service backed by an ACID database (no double-booking)",
+   "A seat-reservation mechanism (distributed lock with TTL)",
+   "A payment integration",
+   "A real-time ML recommendation training pipeline"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "Ticketmaster needs search (ES), a transactional booking service (ACID prevents double-booking), a reservation hold (Redis lock w/ TTL), and payment integration."
+ },
+ {
+  "id": "q755g",
+  "topic": "Design: News Feed",
+  "type": "multi",
+  "q": "Which subsystems are essential for a social news feed? (select all)",
+  "options": [
+   "A post service + post store",
+   "A follow/social-graph store (table + GSI for reverse lookups)",
+   "A feed-generation path (fan-out workers / precomputed feed)",
+   "A feed cache for hot reads",
+   "A distributed lock service"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "Feed systems need posts, the follow graph (with a reverse index), feed generation (fan-out on write/read or hybrid), and a feed cache."
+ },
+ {
+  "id": "q1glx",
+  "topic": "Design: WhatsApp",
+  "type": "multi",
+  "q": "Which subsystems are essential for a chat app like WhatsApp? (select all)",
+  "options": [
+   "Stateful WebSocket chat servers (persistent connections)",
+   "A pub/sub routing layer to reach the right server (e.g. Redis Pub/Sub per user)",
+   "An inbox/message store for offline delivery",
+   "A presence/last-seen mechanism",
+   "An OLAP data warehouse for the core chat path"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "Chat needs persistent WebSocket servers, a routing layer so a message reaches whichever server holds the recipient's connection, durable inboxes for offline users, and presence."
+ },
+ {
+  "id": "q27t0",
+  "topic": "Design: Uber",
+  "type": "multi",
+  "q": "Which subsystems are essential for a ride-sharing service like Uber? (select all)",
+  "options": [
+   "A location service with a geospatial index (Redis geohashing)",
+   "A ride-matching service (with a lock to avoid double-dispatch)",
+   "A maps/ETA/fare integration",
+   "A push-notification service (APNs/FCM)",
+   "A full-text search cluster"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "Uber needs high-frequency location ingestion + proximity search (geospatial index), matching (with a lock so one driver isn't double-assigned), maps/fare, and notifications."
+ },
+ {
+  "id": "q4vbu",
+  "topic": "Design: Ad Click Aggregator",
+  "type": "multi",
+  "q": "Which subsystems are essential for a near-real-time ad click aggregator? (select all)",
+  "options": [
+   "A streaming ingestion layer (Kafka/Kinesis)",
+   "A stream processor for windowed aggregation (Flink)",
+   "An OLAP store for advertiser analytics queries",
+   "A data lake (S3) + batch (Spark) for reconciliation",
+   "A transactional RDBMS as the primary aggregation store"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "The pipeline is stream ingestion → Flink aggregation → OLAP for queries, plus a Lambda-architecture batch layer (S3 + Spark) to reconcile and serve as source of truth."
+ },
+ {
+  "id": "q16u8",
+  "topic": "Design: Web Crawler",
+  "type": "multi",
+  "q": "Which subsystems are essential for a large-scale web crawler? (select all)",
+  "options": [
+   "A frontier queue of URLs to fetch (SQS)",
+   "Fetcher workers + an extraction stage",
+   "Blob storage (S3) for raw HTML / extracted text",
+   "A metadata DB for dedup and crawl state",
+   "A DNS resolver with caching",
+   "A WebSocket server for clients"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3,
+   4
+  ],
+  "why": "A crawler needs a frontier queue, fetch + extract workers, blob storage for content, a metadata DB (URL/content dedup + state), and DNS resolution (a real bottleneck)."
+ },
+ {
+  "id": "qe2tk",
+  "topic": "Design: Google Docs",
+  "type": "multi",
+  "q": "Which subsystems are essential for a collaborative document editor? (select all)",
+  "options": [
+   "Stateful WebSocket document servers",
+   "A concurrency-control engine (Operational Transformation)",
+   "An append-only operations store (Cassandra)",
+   "Coordination for routing editors of one doc to one server (ZooKeeper-maintained hash ring)",
+   "A CDN to serve the live document"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "Real-time editing needs WebSocket servers, an OT engine to converge concurrent edits, an append-only ops store, and coordination (consistent hashing by docId via ZooKeeper) so collaborators share a server."
+ },
+ {
+  "id": "qhome",
+  "topic": "Design: Payment System",
+  "type": "multi",
+  "q": "Which subsystems are essential for a payment system like Stripe? (select all)",
+  "options": [
+   "An API gateway (auth, request signing)",
+   "A payment/intent service + database",
+   "A transaction service that talks to payment networks",
+   "An append-only event log (event sourcing) for audit + reconciliation",
+   "A full-text search cluster"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "Payments need a secure gateway, a payment-intent service + DB, a transaction service to external networks, and an immutable event log enabling audit, reconciliation, and chargebacks."
+ },
+ {
+  "id": "q10sx",
+  "topic": "Architecture",
+  "type": "single",
+  "q": "Requirement: 'prevent abuse / DDoS before traffic reaches our services'. Which component and where?",
+  "options": [
+   "A cache in front of the DB",
+   "A rate limiter at the edge (API gateway), keyed per user/IP/API key",
+   "A read replica",
+   "A bigger load balancer"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "Put a rate limiter at the edge (API gateway/LB) so abusive traffic is rejected before it loads downstream services; key it per user/IP/API key for fairness."
+ },
+ {
+  "id": "q11de",
+  "topic": "Architecture",
+  "type": "single",
+  "q": "Requirement: 'hold a limited resource (seat, inventory) for a few minutes during checkout'. Which mechanism?",
+  "options": [
+   "A long-running DB transaction",
+   "A distributed lock with a TTL (e.g. Redis), auto-releasing on abandon",
+   "A read replica",
+   "A CDN"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "A distributed lock with a TTL holds the resource for a bounded time and auto-releases if the user abandons — the standard reservation pattern (Ticketmaster, Uber dispatch)."
+ },
+ {
+  "id": "qltp4",
+  "topic": "Architecture",
+  "type": "single",
+  "q": "Requirement: 'low-latency two-way realtime messaging'. Which transport?",
+  "options": [
+   "Short polling",
+   "Server-Sent Events (SSE)",
+   "WebSocket (full duplex)",
+   "A CDN"
+  ],
+  "correct": [
+   2
+  ],
+  "why": "WebSocket gives full-duplex, low-latency bidirectional messaging over one persistent connection — right for chat/collaboration."
+ },
+ {
+  "id": "q1wrk",
+  "topic": "Architecture",
+  "type": "single",
+  "q": "Requirement: 'store user-uploaded videos and serve them globally'. Which storage layout?",
+  "options": [
+   "Store video bytes as BLOBs in the primary DB",
+   "Store videos in blob storage (S3) + a CDN, keep only the URL/reference in the DB",
+   "Base64-encode videos into JSON rows",
+   "Keep videos only in Redis"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "Large binaries go in blob storage (S3) fronted by a CDN; the DB stores just the URL/reference. Binaries in the DB wreck index/cache efficiency and cost far more."
+ },
+ {
+  "id": "q1sjo",
+  "topic": "Architecture",
+  "type": "single",
+  "q": "Requirement: 'advertisers run analytical queries (sums/group-bys) over billions of events with sub-second latency'. Which store?",
+  "options": [
+   "The transactional row store that ingests the events",
+   "An OLAP / columnar store (ClickHouse, Druid, BigQuery)",
+   "A key-value cache",
+   "Blob storage"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "Analytical aggregation over huge event volumes belongs in an OLAP/columnar store optimized for scans and group-bys — separate from the transactional ingest path."
+ },
+ {
+  "id": "qbefs",
+  "topic": "Architecture",
+  "type": "single",
+  "q": "Requirement: 'three independent teams must each process the same event stream their own way'. Which technology/feature?",
+  "options": [
+   "SQS, where the message is deleted after one consumer acks",
+   "Kafka with a separate consumer group per team (each tracks its own offset)",
+   "A single shared database table they poll and delete from",
+   "A distributed lock"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "Kafka retains the log and lets multiple consumer groups read it independently, each with its own offset — exactly the multi-consumer case."
+ },
+ {
+  "id": "q80ww",
+  "topic": "Architecture",
+  "type": "single",
+  "q": "Requirement: 'find drivers/restaurants within N km, fast, over millions of entities'. Which component?",
+  "options": [
+   "A B-tree index on (lat, long)",
+   "A geospatial index (Redis geo, PostGIS, or ES geo-queries)",
+   "A full-text search",
+   "A CDN"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "Proximity search needs a geospatial index (geohash/quadtree-based) — a B-tree can't efficiently answer 2D radius queries."
+ },
+ {
+  "id": "q1a18",
+  "topic": "Architecture",
+  "type": "single",
+  "q": "Requirement: 'coordinate which server is the leader / keep a consistent shared config across a cluster'. Which component?",
+  "options": [
+   "A relational database",
+   "A coordination service like ZooKeeper (leader election, config, failure detection)",
+   "A CDN",
+   "A message queue"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "Distributed coordination — leader election, consistent configuration, failure detection — is ZooKeeper's job, using a hierarchical znode namespace + watches with strong consistency (ZAB)."
+ }
+]

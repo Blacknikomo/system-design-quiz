@@ -1,0 +1,718 @@
+[
+ {
+  "id": "q1vl8",
+  "topic": "Pattern: Multi-step",
+  "type": "single",
+  "q": "HI: when inventory can't be found AFTER payment is charged, what mechanism undoes prior steps?",
+  "options": [
+   "A rollback segment",
+   "Compensating actions (like refunds)",
+   "A two-phase commit abort",
+   "A read repair"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: add compensating actions (like refunds if inventory can't be found) to undo completed steps — the core idea behind the saga pattern."
+ },
+ {
+  "id": "qlqc1",
+  "topic": "Pattern: Multi-step",
+  "type": "multi",
+  "q": "HI: which deep-dive challenges does it raise about running workflows in production? (select all)",
+  "options": [
+   "Handling updates/versioning and migrations to a running workflow",
+   "Keeping workflow state size in check",
+   "Ensuring a given step runs exactly once",
+   "Compressing images before upload"
+  ],
+  "correct": [
+   0,
+   1,
+   2
+  ],
+  "why": "HI's deep dives cover workflow versioning/migrations, keeping state size in check, handling external events, and exactly-once steps. Image compression is unrelated."
+ },
+ {
+  "id": "q19uk",
+  "topic": "Pattern: Multi-step",
+  "type": "single",
+  "q": "HI references a talk to show how hard reliable multi-step processes are. Which?",
+  "options": [
+   "'Turning the Database Inside Out' on stream processing",
+   "Jimmy Bogard's 'Six Little Lines of Fail' — even a simple sequence of steps is surprisingly hard in distributed systems",
+   "'The Twelve-Factor App' on stateless services",
+   "'Designing Data-Intensive Applications' on consistency"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI cites Jimmy Bogard's 'Six Little Lines of Fail', whose premise is that distributed systems make even a simple sequence of steps surprisingly hard to do reliably."
+ },
+ {
+  "id": "q10i2",
+  "topic": "Pattern: Scaling Reads",
+  "type": "single",
+  "q": "HI: the typical starting read-to-write ratio for many apps (often climbing higher for content-heavy ones)?",
+  "options": [
+   "1:1",
+   "10:1",
+   "2:1",
+   "100:1 from the start"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: the standard ratio starts at 10:1 but often reaches 100:1+ for content-heavy apps like Instagram or YouTube."
+ },
+ {
+  "id": "qxone",
+  "topic": "Pattern: Scaling Reads",
+  "type": "single",
+  "q": "HI frames the core read-scaling difficulty as ultimately a question of what?",
+  "options": [
+   "Bad software you can debug your way out of",
+   "Physics — CPU instructions/sec, memory limits, disk I/O bounds",
+   "Choosing the wrong programming language",
+   "Insufficient logging"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: it's usually not a software problem you can debug away; it's physics, where CPU, memory, and disk I/O hit hard constraints more code can't overcome."
+ },
+ {
+  "id": "q19t8",
+  "topic": "Pattern: Scaling Reads",
+  "type": "single",
+  "q": "HI: the natural read-scaling progression?",
+  "options": [
+   "Add caching, then shard, then optimize the database",
+   "Optimize within the DB, scale the DB horizontally (replicas/sharding), then add external caching (app + CDN)",
+   "Buy a CDN first, then add replicas, then index",
+   "Shard first, denormalize, then upgrade hardware"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: optimize within the DB (indexing, hardware, denormalization), then scale horizontally (read replicas, sharding), then add external caching layers."
+ },
+ {
+  "id": "q10or",
+  "topic": "Pattern: Scaling Reads",
+  "type": "multi",
+  "q": "HI: which techniques are in the first bucket — optimizing reads WITHIN your database? (select all)",
+  "options": [
+   "Indexing",
+   "Hardware upgrades",
+   "Denormalization strategies",
+   "CDN and edge caching"
+  ],
+  "correct": [
+   0,
+   1,
+   2
+  ],
+  "why": "HI lists indexing, hardware upgrades, and denormalization under in-database optimization. CDN/edge caching is a later external layer."
+ },
+ {
+  "id": "qj2d4",
+  "topic": "Pattern: Scaling Reads",
+  "type": "single",
+  "q": "HI deep dive: many requests rebuild the SAME expired cache entry at once. What's this called?",
+  "options": [
+   "Replication lag on read replicas",
+   "A thundering-herd / cache stampede where many misses hit the DB at once",
+   "A hot partition key on the write path",
+   "CDN cache poisoning"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: this is the cache stampede / thundering herd — many requests miss simultaneously and hammer the backing database to rebuild the entry."
+ },
+ {
+  "id": "q1duo",
+  "topic": "Pattern: Scaling Writes",
+  "type": "single",
+  "q": "HI: why is the write side often harder than the read side?",
+  "options": [
+   "Reads never hit the database",
+   "Bursty, high-throughput writes with lots of contention are a nightmare to build around",
+   "Writes are always cached by default",
+   "Writes don't consume disk I/O"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: read-side tools (replicas, caching) are familiar, but bursty high-throughput writes with contention are hard, and many choices make them worse."
+ },
+ {
+  "id": "qgmxp",
+  "topic": "Pattern: Scaling Writes",
+  "type": "multi",
+  "q": "HI: which strategies does it combine to scale writes? (select all)",
+  "options": [
+   "Vertical scaling and database choices",
+   "Sharding and partitioning",
+   "Handling bursts with queues and load shedding",
+   "Batching and hierarchical aggregation"
+  ],
+  "correct": [
+   0,
+   1,
+   2,
+   3
+  ],
+  "why": "HI lists exactly four: vertical scaling + DB choices, sharding + partitioning, bursts via queues + load shedding, and batching + hierarchical aggregation."
+ },
+ {
+  "id": "qkm6m",
+  "topic": "Pattern: Scaling Writes",
+  "type": "single",
+  "q": "HI: before throwing more hardware at writes, where should you first try to scale?",
+  "options": [
+   "Across hundreds of shards immediately",
+   "Staying within a single-server, single-database architecture",
+   "On a global CDN",
+   "By adding read replicas"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: first scale within a single-server, single-database setup (vertical scaling + write optimization) before adding hardware."
+ },
+ {
+  "id": "q6mf8",
+  "topic": "Pattern: Scaling Writes",
+  "type": "single",
+  "q": "HI: what does vertical partitioning primarily do (vs horizontal sharding)?",
+  "options": [
+   "Splits rows across many machines by a partition key",
+   "Splits a table by columns/fields so different attributes live separately",
+   "Replicates the whole table to every node",
+   "Caches writes in Redis before persisting"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI separates horizontal sharding (splitting rows by key) from vertical partitioning (splitting by columns/attributes)."
+ },
+ {
+  "id": "q1syk",
+  "topic": "Pattern: Scaling Writes",
+  "type": "multi",
+  "q": "HI deep dive: a hot key too popular for even a single shard. Which two approaches are named? (select all)",
+  "options": [
+   "Split all keys",
+   "Split hot keys dynamically",
+   "Drop the writes silently",
+   "Disable sharding entirely"
+  ],
+  "correct": [
+   0,
+   1
+  ],
+  "why": "HI's hot-key deep dive offers Split All Keys and Split Hot Keys Dynamically. Dropping writes or disabling sharding are not the proposed remedies."
+ },
+ {
+  "id": "q9oxw",
+  "topic": "Pattern: Large Blobs",
+  "type": "single",
+  "q": "HI rule of thumb: when should data live in blob storage rather than a database?",
+  "options": [
+   "Over 1KB and rarely read",
+   "Over 10MB and it doesn't need SQL queries",
+   "Any image regardless of size",
+   "Only files over 1GB"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: if something is over 10MB and doesn't need SQL queries, it should probably be in blob storage like S3."
+ },
+ {
+  "id": "qit8m",
+  "topic": "Pattern: Large Blobs",
+  "type": "single",
+  "q": "HI: the durability figure it cites for object stores like S3?",
+  "options": [
+   "99.9% (three nines)",
+   "99.99% (four nines)",
+   "99.999999999% (eleven nines)",
+   "100% guaranteed"
+  ],
+  "correct": [
+   2
+  ],
+  "why": "HI: S3 offers 99.999999999% (11 nines) durability, with effectively unlimited capacity and per-object pricing."
+ },
+ {
+  "id": "q16gk",
+  "topic": "Pattern: Large Blobs",
+  "type": "single",
+  "q": "HI: the core anti-pattern for large-file transfers?",
+  "options": [
+   "Storing metadata in a database",
+   "Routing file bytes through your application servers as a proxy",
+   "Using a CDN for downloads",
+   "Compressing files before upload"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI's 'server as a proxy' problem: routing bytes client to server to S3 and back works for small files but breaks down as files grow."
+ },
+ {
+  "id": "qnzsp",
+  "topic": "Pattern: Large Blobs",
+  "type": "multi",
+  "q": "HI: which mechanisms avoid proxying bytes through your servers? (select all)",
+  "options": [
+   "Presigned URLs so clients upload directly to blob storage",
+   "CDN-based downloads",
+   "Resumable uploads with parallel transfers and progress tracking",
+   "Storing the full file as a BLOB column in Postgres"
+  ],
+  "correct": [
+   0,
+   1,
+   2
+  ],
+  "why": "HI: presigned URLs (direct-to-blob), CDN downloads, and resumable/parallel uploads. Storing the file as a DB BLOB is exactly what it warns against — it kills query, backup, and replication performance."
+ },
+ {
+  "id": "q16af",
+  "topic": "Pattern: Large Blobs",
+  "type": "single",
+  "q": "HI deep dive 'What if the upload fails at 99 percent?' — which feature addresses it?",
+  "options": [
+   "A bigger application server",
+   "Resumable (multipart/chunked) uploads so you don't restart from zero",
+   "Switching to a SQL database",
+   "Disabling the CDN"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI pairs the 'fails at 99%' case with resumable uploads: chunked/multipart transfers let an upload resume rather than restart."
+ },
+ {
+  "id": "q1lhw",
+  "topic": "Pattern: Long-Running Tasks",
+  "type": "single",
+  "q": "HI: the two phases the long-running-tasks pattern splits a request into?",
+  "options": [
+   "Read phase and write phase",
+   "Immediate acknowledgment and background processing",
+   "Authentication and authorization",
+   "Compression and encryption"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: immediate acknowledgment (validate, enqueue, return a job ID in ms) and background processing by separate workers."
+ },
+ {
+  "id": "qfagc",
+  "topic": "Pattern: Long-Running Tasks",
+  "type": "single",
+  "q": "HI: why does synchronous processing of a 45-second PDF report fail, beyond poor UX?",
+  "options": [
+   "The database runs out of rows",
+   "Most web servers and load balancers enforce ~30-60s timeouts, so the request may not even complete",
+   "Browsers refuse all requests over 10 seconds",
+   "PDFs can't be generated server-side"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: the 45s report often won't complete synchronously because servers/LBs enforce ~30-60s timeout limits, on top of the user staring at a spinner."
+ },
+ {
+  "id": "qsm0y",
+  "topic": "Pattern: Long-Running Tasks",
+  "type": "single",
+  "q": "HI: in the immediate-acknowledgment phase, what does the web server return almost instantly?",
+  "options": [
+   "The fully rendered PDF",
+   "A job ID after validating and pushing the job to a queue",
+   "A read replica connection string",
+   "The raw queue offset and worker IP"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: the web server validates, pushes a job to a queue (Redis/RabbitMQ), and returns a job ID within milliseconds, while workers do the heavy lifting and update status."
+ },
+ {
+  "id": "qeh15",
+  "topic": "Pattern: Long-Running Tasks",
+  "type": "multi",
+  "q": "HI: which are listed as common deep dives in the long-running-tasks article? (select all)",
+  "options": [
+   "Handling repeated failures",
+   "Preventing duplicate work",
+   "Managing queue backpressure",
+   "Choosing a CDN region"
+  ],
+  "correct": [
+   0,
+   1,
+   2
+  ],
+  "why": "HI lists handling failures, repeated failures, preventing duplicate work, queue backpressure, mixed workloads, and job dependencies. CDN region selection belongs to the large blobs pattern."
+ },
+ {
+  "id": "qg5sa",
+  "topic": "Pattern: Long-Running Tasks",
+  "type": "single",
+  "q": "HI: how is the worker side described?",
+  "options": [
+   "A single thread inside the web server",
+   "Separate worker processes that continuously poll the queue, grab pending jobs, execute the work, and update job status",
+   "The client browser running the task locally",
+   "A read replica that auto-executes jobs"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: separate worker processes continuously poll the queue, grab pending jobs, run the time-consuming work, and update job status in a database — decoupled from the web server."
+ },
+ {
+  "id": "q1c3k",
+  "topic": "Design: Bitly",
+  "type": "single",
+  "q": "HI Bitly: preferred way to generate the short code, and why?",
+  "options": [
+   "Hash the long URL and take the first 7 chars",
+   "A unique counter encoded in Base62, so codes are unique by construction",
+   "Random 7-char strings with retry on collision",
+   "Use the long URL itself, URL-encoded"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI leans to counter + Base62: uniqueness is guaranteed, no collision handling needed. Hashing/truncation works but requires a UNIQUE constraint and collision retries; keep that constraint anyway as a safety net."
+ },
+ {
+  "id": "qyps8",
+  "topic": "Design: Bitly",
+  "type": "single",
+  "q": "HI Bitly: how do you make the global counter fast and not a per-request bottleneck?",
+  "options": [
+   "A SQL AUTO_INCREMENT column hit on every write",
+   "A single Redis atomic INCR, with counter batching (claim ~1000 IDs at a time per server)",
+   "A UUID generated on each app server",
+   "A timestamp in milliseconds"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: Redis INCR is atomic and fast; batching ID ranges (grab 1000 at once) cuts network round-trips. Losing a few counter values on failover is fine — you only need uniqueness, not a gap-free sequence."
+ },
+ {
+  "id": "q1cys",
+  "topic": "Design: Bitly",
+  "type": "single",
+  "q": "HI Bitly: 301 vs 302 redirect — which does HI prefer and why?",
+  "options": [
+   "301 permanent — browsers cache it, lowering load",
+   "302 temporary — keeps requests flowing through your server so you retain control and can add analytics",
+   "301 because it is better for SEO",
+   "It makes no difference"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI prefers 302: the browser keeps hitting your server, so you keep control and can later add click analytics. 301 lets the browser cache the redirect (less load, but you lose visibility)."
+ },
+ {
+  "id": "q1631",
+  "topic": "Design: Dropbox",
+  "type": "single",
+  "q": "HI Dropbox: where should large files be chunked, and via what mechanism?",
+  "options": [
+   "On the server after a single large upload",
+   "On the client, using S3 Multipart Upload (per-part presigned URLs)",
+   "Inside the database as BLOB rows",
+   "Chunking isn't needed below 50GB"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: chunk on the CLIENT (5–10MB), then S3 Multipart Upload — CreateMultipartUpload → presigned URL per part → CompleteMultipartUpload. Server-side chunking defeats the purpose (the big file still flows through your servers)."
+ },
+ {
+  "id": "qbucr",
+  "topic": "Design: Dropbox",
+  "type": "single",
+  "q": "HI Dropbox: what should identify a file/chunk for dedup and resumable uploads?",
+  "options": [
+   "The filename",
+   "The user ID + timestamp",
+   "A SHA-256 hash of the content (a fingerprint)",
+   "An auto-increment ID"
+  ],
+  "correct": [
+   2
+  ],
+  "why": "HI: fingerprint = SHA-256 of content. It enables dedup (same content already stored) and resumability (which chunks are already present), neither of which a filename can do."
+ },
+ {
+  "id": "qdaqq",
+  "topic": "Design: Dropbox",
+  "type": "single",
+  "q": "HI Dropbox: fixed-size chunks re-upload the whole file when you insert a byte near the start. The fix?",
+  "options": [
+   "Larger fixed chunks",
+   "Content-Defined Chunking (CDC) with a rolling hash (Rabin fingerprinting)",
+   "Upload only at night",
+   "Disable chunking for edited files"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: with fixed offsets, an early insert shifts every boundary so all chunks look changed. Content-defined chunking sets boundaries by a rolling hash of the content, so only the edited region's chunks change."
+ },
+ {
+  "id": "q1awh",
+  "topic": "Design: Ticketmaster",
+  "type": "single",
+  "q": "HI Ticketmaster: how to hold a seat for ~10 min during checkout without double-booking?",
+  "options": [
+   "A long-running DB transaction holding a row lock",
+   "A Redis distributed lock with a TTL that auto-expires if the user abandons",
+   "A boolean column flipped with no timeout",
+   "Optimistic retries only"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI's 'great' answer: Redis lock keyed by seat with a TTL (~10 min) so abandoned holds auto-release. A status+expiration column scanned by cron is the 'good' fallback. The final DB write with ACID is what actually guarantees no double-book."
+ },
+ {
+  "id": "q1g7u",
+  "topic": "Design: Ticketmaster",
+  "type": "single",
+  "q": "HI Ticketmaster: the staff-level differentiator for a 10M-users-on-one-event on-sale is…",
+  "options": [
+   "Bigger database instances",
+   "A virtual waiting queue that admits users to the booking flow in a controlled trickle",
+   "Caching the seat map harder",
+   "Sharding by seat ID"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: a virtual waiting queue protects the booking path from a thundering herd by admitting users in controlled batches — the 'think outside the box' move that signals senior/staff."
+ },
+ {
+  "id": "qwqgk",
+  "topic": "Design: Ticketmaster",
+  "type": "single",
+  "q": "HI Ticketmaster: why not implement event search with SQL LIKE '%term%'?",
+  "options": [
+   "LIKE isn't valid SQL",
+   "It forces a full table scan (no index help) — use Elasticsearch for full-text search",
+   "It returns wrong results",
+   "It only works on numbers"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: leading-wildcard LIKE can't use a B-tree index, so it scans the whole table — too slow at scale. Elasticsearch's inverted index is the right tool; add query-result/edge caching."
+ },
+ {
+  "id": "q1yt4",
+  "topic": "Design: News Feed",
+  "type": "single",
+  "q": "HI News Feed: the standard answer for mixing normal users and celebrities is…",
+  "options": [
+   "Pure fan-out-on-write for everyone",
+   "Pure fan-out-on-read for everyone",
+   "Hybrid: precompute feeds for normal users, fan-out-on-read for celebrities, merge at read time",
+   "Store no feeds, recompute every request"
+  ],
+  "correct": [
+   2
+  ],
+  "why": "HI's 'great' solution: precompute (push) into a per-user feed table for normal accounts, but pull celebrity posts at read time and merge — avoiding the millions-of-writes-per-celebrity-post explosion."
+ },
+ {
+  "id": "q1sie",
+  "topic": "Design: News Feed",
+  "type": "single",
+  "q": "HI News Feed: a few hot posts get hammered and your DynamoDB feed cache develops a hot key. Fix?",
+  "options": [
+   "Increase the TTL",
+   "Replicate the hot entry across multiple cache nodes (redundant post cache) to spread reads",
+   "Switch to a single bigger cache node",
+   "Stop caching hot posts"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: DynamoDB (and single cache nodes) hate hot keys. Replicating the hot post across several cache nodes spreads the read load instead of concentrating it on one partition."
+ },
+ {
+  "id": "qsoqs",
+  "topic": "Design: WhatsApp",
+  "type": "single",
+  "q": "HI WhatsApp: sender and receiver are connected to different chat servers. How do you route the message?",
+  "options": [
+   "A Kafka topic per user",
+   "Redis Pub/Sub with a topic per user, so the receiver's server is subscribed and gets the message",
+   "A shared database both servers poll",
+   "Consistent hashing so both users always land on one server"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI's 'great' answer: Redis Pub/Sub, one topic per user — sidesteps consistent-hashing complexity. A Kafka topic-per-user is an anti-pattern (Kafka isn't built for hundreds of millions of topics)."
+ },
+ {
+  "id": "qhggv",
+  "topic": "Design: WhatsApp",
+  "type": "single",
+  "q": "HI WhatsApp: Pub/Sub is at-most-once and stores nothing. How is delivery still guaranteed?",
+  "options": [
+   "Switch to TCP only",
+   "Write to a durable Inbox table before publishing, require client acks, and use per-chat sequence numbers with gap detection",
+   "Send each message twice",
+   "Rely on the load balancer to retry"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: persist undelivered messages in an Inbox (delete on ack), and have clients detect gaps via per-chat sequence numbers (piggybacked on heartbeats) with a polling backstop — covering Pub/Sub's dropped messages."
+ },
+ {
+  "id": "q5imy",
+  "topic": "Design: WhatsApp",
+  "type": "single",
+  "q": "HI WhatsApp: how should message ordering be handled?",
+  "options": [
+   "A global total order across all chats",
+   "Strict per-chat ordering enforced with locks",
+   "NTP-synced server-receipt timestamps; the client sorts by them (accept occasional pop-in)",
+   "Order by client device clock"
+  ],
+  "correct": [
+   2
+  ],
+  "why": "HI: don't pay for strict ordering. Stamp messages with NTP-synced server receipt time and let clients sort; users tolerate rare reordering/pop-in. Client clocks can't be trusted."
+ },
+ {
+  "id": "q1pnf",
+  "topic": "Design: WhatsApp",
+  "type": "single",
+  "q": "HI WhatsApp: how do you detect a silently-dead WebSocket connection?",
+  "options": [
+   "Wait for the next user message",
+   "Application-level heartbeats (TCP keepalive is too slow)",
+   "Ping the database",
+   "Close all connections every minute"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: TCP keepalive intervals are too coarse; use application-level heartbeats to spot dead connections quickly (and derive 'last seen' from active connections rather than DB writes per heartbeat)."
+ },
+ {
+  "id": "qmlp8",
+  "topic": "Design: Uber",
+  "type": "single",
+  "q": "HI Uber: 10M drivers pinging location every few seconds (~2M writes/sec). Where do you store it?",
+  "options": [
+   "DynamoDB with on-demand capacity",
+   "An in-memory geospatial store like Redis (geohashing / quadtree)",
+   "A Postgres table with a B-tree on (lat, long)",
+   "S3 objects per driver"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: that write rate in DynamoDB would cost a fortune (>$200k/day), and a B-tree can't do 2D proximity. Redis with geohashing handles high-frequency writes and radius queries in memory; add adaptive update intervals client-side."
+ },
+ {
+  "id": "qvwjg",
+  "topic": "Design: Uber",
+  "type": "single",
+  "q": "HI Uber: a driver doesn't respond to a ride offer. What's the robust way to handle the multi-step timeout/retry flow?",
+  "options": [
+   "A simple delay queue",
+   "Durable execution (e.g. Temporal/Cadence) to drive the offer→timeout→reoffer workflow reliably",
+   "A cron job scanning rides",
+   "Client-side timers"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: this is the multi-step-process pattern. Durable execution (Uber authored Cadence) survives crashes and reliably advances offer → 10s timeout → next driver, which a fragile delay queue can't guarantee."
+ },
+ {
+  "id": "q1hws",
+  "topic": "Design: Uber",
+  "type": "single",
+  "q": "HI Uber: which values must NOT be trusted from the client?",
+  "options": [
+   "Only the user's name",
+   "userId, timestamps, and the fare estimate — derive them from the session/server/DB",
+   "Nothing; the client is authenticated",
+   "Only the payment token"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI repeatedly warns: never trust client-supplied identity or money fields. Pull userId from the session/JWT, set timestamps server-side, and re-read the fare from the DB by fareId."
+ },
+ {
+  "id": "q1ez7",
+  "topic": "Design: Ad Click Aggregator",
+  "type": "single",
+  "q": "HI Ad Click Aggregator: the recommended real-time processing pipeline is…",
+  "options": [
+   "Write clicks to Postgres and run GROUP BY on query",
+   "Stream (Kafka/Kinesis) → Flink → an OLAP store (e.g. ClickHouse/Druid/BigQuery)",
+   "Cron job aggregating a CSV",
+   "Client-side counting"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: ingest into a stream, aggregate in Flink, write to an OLAP DB optimized for analytical queries. Using one transactional DB for both ingest and analytics is the anti-pattern."
+ },
+ {
+  "id": "q19yd",
+  "topic": "Design: Ad Click Aggregator",
+  "type": "single",
+  "q": "HI Ad Click Aggregator: a viral ad creates a hot partition. The standard fix?",
+  "options": [
+   "Stop tracking that ad",
+   "Append a random suffix to the partition key (AdId:0..N); the aggregator strips it and SUMs the parts",
+   "Use a bigger Kafka broker",
+   "Switch to fan-out-on-read"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: salt the key with a random suffix so the hot ad's events spread across partitions; the aggregator removes the suffix and sums per AdId. Classic hot-shard remediation."
+ },
+ {
+  "id": "qupqu",
+  "topic": "Design: Ad Click Aggregator",
+  "type": "single",
+  "q": "HI Ad Click Aggregator: how do you guarantee correctness against the fast-but-lossy stream path?",
+  "options": [
+   "Trust the stream; it never loses data",
+   "Lambda architecture: also dump raw events to S3 and run a nightly Spark batch as the source of truth, reconciling against the stream",
+   "Re-run the stream twice",
+   "Cache the results longer"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: speed layer (Flink) for near-real-time + batch layer (Spark over an S3 data lake) as the authoritative recompute. Reconciling the two catches drift/loss in the streaming path."
+ }
+]

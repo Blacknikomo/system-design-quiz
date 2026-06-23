@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cassandra — Interactive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🟦 Cassandra — ring, QUORUM & the write path</h1>
+      <div class="sub">Masterless peer-to-peer ring. Hash a partition key to find its 3 replica owners, write/read at <b>QUORUM</b>, watch the <i>LSM write path</i> (commit log + memtable → SSTables), and see how tunable consistency survives a node failure.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">masterless ring</span>
+      <span class="tag">RF = 3</span>
+      <span class="tag">LSM-tree (append-only)</span>
+      <span class="tag">tunable consistency</span>
+      <span class="tag">gossip + seed nodes</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">Cassandra has <b>no leader</b>. Any node can be the <b>coordinator</b>; it hashes the partition key to a token and the next <b>RF=3</b> nodes around the ring own that key. Writes are durable via the <b>commit log (WAL)</b> and fast because they only append to an in-memory <b>memtable</b> — an <b>LSM-tree</b>, not a B-tree. With <b>W + R &gt; RF</b> (here 2 + 2 &gt; 3) read and write quorums overlap, so a QUORUM read always sees the latest QUORUM write.</p>
+    <div class="note gotcha"><b>The signature gotcha:</b> a poor partition key creates <b>unbounded partitions</b>. If Discord had partitioned messages by <code>channel_id</code> alone, a busy channel becomes one giant ever-growing partition on a few nodes (hotspot, slow reads, compaction pain). The fix: add a <b>time bucket</b> to the key → <code>(channel_id, bucket)</code> so each partition is bounded.</div>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Run an operation</h3>
+    <div class="row">
+      <label class="fld">partition key<input type="text" id="pk" value="user:42" size="12"></label>
+      <label class="fld">value<input type="text" id="val" value="Alice" size="10"></label>
+      <button class="btn" id="writeBtn">WRITE (QUORUM)</button>
+      <button class="btn sec" id="readBtn">READ (QUORUM)</button>
+      <button class="btn warn" id="delBtn">DELETE (tombstone)</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn ghost" id="flushBtn">⤓ Flush memtables → SSTable</button>
+      <button class="btn ghost" id="compactBtn">⚙ Compact SSTables (purge tombstones)</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label class="fld">node
+        <select id="nodeSel"></select>
+      </label>
+      <button class="btn bad" id="killBtn">💥 Kill / Revive node</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="nodes" id="nodes"></div>
+    </div>
+    <div class="explain" id="explain">Press <b>WRITE</b>. The key is hashed to a token; the 3 consecutive nodes that own it light up. The coordinator forwards to all 3 replicas and needs <b>2 acks (QUORUM)</b> to succeed. Each replica appends to its commit log + memtable.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Command log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li>Hash the <b>partition key</b> → a token on the ring; the next <b>RF=3</b> nodes own it (replica set).</li>
+        <li>A coordinator forwards the write to all 3 replicas; <b>QUORUM = ⌊RF/2⌋+1 = 2</b> acks needed.</li>
+        <li>On each replica the write hits the <b>commit log (WAL)</b> for durability, then the <b>memtable</b> (in-memory).</li>
+        <li><b>Flush</b> seals the memtable into an immutable <b>SSTable</b> on disk; the memtable clears.</li>
+        <li>A QUORUM <b>read</b> contacts 2 replicas; since <b>W(2)+R(2) &gt; RF(3)</b> the sets overlap → latest timestamp wins (read repair).</li>
+        <li><b>Delete</b> writes a <b>tombstone</b> (a marker), never an in-place delete. <b>Compaction</b> merges SSTables and purges tombstones + superseded values.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+const N = 5;            // ring size N0..N4
+const RF = 3;           // replication factor
+const QUORUM = Math.floor(RF/2)+1;  // = 2
+let nodes;              // rebuilt each reset
+let clock = 0;          // logical timestamp source
+let busy = false;
+
+// each node: id, alive, commitlog[], memtable: Map(pk -> {value,ts,tombstone}), sstables: [ Map ... ]
+function freshNodes(){
+  const arr=[];
+  for(let i=0;i<N;i++) arr.push({id:i, alive:true, commitlog:[], memtable:new Map(), sstables:[]});
+  return arr;
+}
+
+// simple deterministic hash of the partition key -> token in [0,N)
+function tokenOf(pk){
+  let h=0;
+  for(let i=0;i<pk.length;i++){ h=(h*31 + pk.charCodeAt(i)) >>> 0; }
+  return h % N;
+}
+// the RF consecutive nodes (by id, wrapping) that own this key
+function replicaSet(pk){
+  const start = tokenOf(pk);
+  const ids=[];
+  for(let i=0;i<RF;i++) ids.push((start+i)%N);
+  return ids;
+}
+
+function reset(){
+  busy=false; clock=0;
+  nodes = freshNodes();
+  const sel = document.getElementById('nodeSel');
+  sel.innerHTML = nodes.map(n=>`<option value="${n.id}">N${n.id}</option>`).join('');
+  document.getElementById('log').innerHTML='';
+  logLine('info',`Ring ready: ${N} masterless nodes (N0..N4), RF=${RF}, QUORUM=${QUORUM}. Peers find each other via gossip + seed nodes.`);
+  render();
+  explain('Press <b>WRITE</b> to hash the key onto the ring and forward to its 3 replica owners.');
+}
+
+// ---------- rendering ----------
+function nodeEl(n, owners){
+  const isOwner = owners && owners.includes(n.id);
+  let cls = 'node';
+  if(isOwner) cls += ' replica';
+  if(!n.alive) cls += ' dead';
+  // memtable view
+  let mem='';
+  n.memtable.forEach((rec,k)=>{
+    mem += `<div class="kv ${rec.tombstone?'stale':''}"><span class="k">${k}</span><span>${rec.tombstone?'⌧ tombstone':rec.value}</span></div>`;
+  });
+  if(!mem) mem = '<div class="small muted">(empty)</div>';
+  // sstable view
+  let ss='';
+  if(n.sstables.length){
+    ss = n.sstables.map((t,i)=>{
+      let inner='';
+      t.forEach((rec,k)=>{ inner += `<div class="kv ${rec.tombstone?'stale':''}" style="margin:2px 0"><span class="k">${k}</span><span>${rec.tombstone?'⌧':rec.value}</span></div>`; });
+      return `<div style="border:1px solid var(--line);border-radius:6px;padding:4px;margin:3px 0"><div class="small muted" style="margin-bottom:2px">SSTable #${i+1} (immutable)</div>${inner}</div>`;
+    }).join('');
+  } else {
+    ss = '<div class="small muted">(none)</div>';
+  }
+  const ownBadge = isOwner ? '<span class="badge">replica</span>' : '<span class="badge">peer</span>';
+  return `<div class="${cls}" id="node${n.id}" data-id="${n.id}" style="min-width:172px">
+      <div class="title">${n.alive?'🟦':'💀'} N${n.id}${n.alive?'':' (down)'} ${ownBadge}</div>
+      <div class="small muted" style="margin:2px 0">commit log: ${n.commitlog.length} entr${n.commitlog.length===1?'y':'ies'}</div>
+      <div class="small" style="color:var(--accent);margin-top:6px">memtable</div>
+      ${mem}
+      <div class="small" style="color:var(--accent2);margin-top:6px">SSTables</div>
+      ${ss}
+    </div>`;
+}
+let currentOwners = null;
+function render(){
+  document.getElementById('nodes').innerHTML = nodes.map(n=>nodeEl(n,currentOwners)).join('');
+}
+
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+
+// fly a packet between node elements
+function fly(fromSel, toSel, label, cls){
+  return new Promise(res=>{
+    const stage = document.getElementById('stage');
+    const sr = stage.getBoundingClientRect();
+    const fromEl = (typeof fromSel==='string'?document.querySelector(fromSel):fromSel);
+    const toEl = (typeof toSel==='string'?document.querySelector(toSel):toSel);
+    if(!fromEl || !toEl){ res(); return; }
+    const a = fromEl.getBoundingClientRect();
+    const b = toEl.getBoundingClientRect();
+    const p = document.createElement('div');
+    p.className = 'packet '+(cls||'');
+    p.textContent = label;
+    p.style.left = (a.left - sr.left + a.width/2 - 20)+'px';
+    p.style.top  = (a.top  - sr.top  + a.height/2 - 10)+'px';
+    stage.appendChild(p);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      p.style.left = (b.left - sr.left + b.width/2 - 20)+'px';
+      p.style.top  = (b.top  - sr.top  + b.height/2 - 10)+'px';
+    }));
+    setTimeout(()=>{ p.style.opacity=0; setTimeout(()=>{p.remove();res();},250); }, 720);
+  });
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function flash(id,cls){const e=document.getElementById('node'+id);if(e){e.classList.add(cls);setTimeout(()=>e.classList.remove(cls),600);}}
+
+// apply a record to a replica's LSM write path (commit log + memtable)
+function lsmApply(node, pk, rec){
+  node.commitlog.push({pk, ...rec});
+  node.memtable.set(pk, rec);
+}
+
+// ---------- WRITE (QUORUM) ----------
+async function doWrite(isDelete){
+  if(busy) return;
+  const pk = document.getElementById('pk').value.trim(); if(!pk) return;
+  const value = isDelete ? '' : document.getElementById('val').value.trim();
+  busy=true;
+  const owners = replicaSet(pk);
+  currentOwners = owners; render();
+  const coordId = pickCoordinator(owners);
+  const ts = ++clock;
+  const opName = isDelete ? `DELETE ${pk}` : `WRITE ${pk}="${value}"`;
+  logLine('cmd', `> ${opName}  @QUORUM`);
+  logLine('info', `hash("${pk}") → token N${tokenOf(pk)}; replica set = {${owners.map(i=>'N'+i).join(', ')}}; coordinator = N${coordId}`);
+  flash(coordId,'flash-ok');
+  await sleep(250);
+
+  let acks=0;
+  for(const rid of owners){
+    const r = nodes[rid];
+    await fly('#node'+coordId, '#node'+rid, isDelete?'tombstone':'write', isDelete?'bad':'repl');
+    if(r.alive){
+      const rec = isDelete ? {value:'', ts, tombstone:true} : {value, ts, tombstone:false};
+      lsmApply(r, pk, rec);
+      acks++;
+      flash(rid,'flash-ok');
+      logLine('ok', `N${rid} appended to commit log (WAL) + memtable${isDelete?' (tombstone)':''}  [${acks}/${RF} acks]`);
+    } else {
+      flash(rid,'flash-bad');
+      logLine('err', `N${rid} is DOWN — no ack`);
+    }
+    render();
+    await sleep(180);
+  }
+
+  if(acks >= QUORUM){
+    logLine('ok', `✅ ${opName} SUCCEEDED — ${acks}/${RF} acks ≥ QUORUM(${QUORUM})`);
+    if(isDelete){
+      explain(`Got <b>${acks}/${RF}</b> acks (≥ QUORUM). A delete is NOT an in-place removal — it writes a <b>tombstone</b> marker with timestamp ${ts}. The old value is still in older SSTables until <b>compaction</b> purges both. Tombstones must out-live gc_grace to avoid resurrecting deleted data.`);
+    } else {
+      explain(`Got <b>${acks}/${RF}</b> acks (≥ QUORUM ${QUORUM}) → success. Each replica only had to <b>append</b> to the commit log and the in-memory memtable — that's the <b>LSM-tree</b> write path. No random-disk B-tree updates, which is why Cassandra absorbs huge write throughput. Try <b>Flush</b> to seal these into an SSTable.`);
+    }
+  } else {
+    logLine('err', `❌ ${opName} FAILED — only ${acks}/${RF} acks < QUORUM(${QUORUM})`);
+    explain(`Only <b>${acks}</b> replica(s) responded, below QUORUM(${QUORUM}). With <b>2</b> of the 3 owning replicas down, a QUORUM write can't be satisfied and the coordinator returns an error. One node down is fine (2/3 still acks); two down breaks quorum.`);
+  }
+  busy=false;
+}
+
+function pickCoordinator(owners){
+  // any live node can coordinate; prefer a live owner, else any live node
+  const liveOwner = owners.find(i=>nodes[i].alive);
+  if(liveOwner!==undefined) return liveOwner;
+  const anyLive = nodes.find(n=>n.alive);
+  return anyLive ? anyLive.id : owners[0];
+}
+
+// most-recent record for a pk visible at a node (memtable wins over SSTables; latest ts wins)
+function latestAt(node, pk){
+  let best=null;
+  // SSTables (oldest first) then memtable last so memtable naturally overrides; but compare ts to be safe
+  const sources = [...node.sstables, node.memtable];
+  for(const src of sources){
+    if(src.has(pk)){
+      const rec = src.get(pk);
+      if(!best || rec.ts >= best.ts) best = rec;
+    }
+  }
+  return best;
+}
+
+// ---------- READ (QUORUM) ----------
+async function doRead(){
+  if(busy) return;
+  const pk = document.getElementById('pk').value.trim(); if(!pk) return;
+  busy=true;
+  const owners = replicaSet(pk);
+  currentOwners = owners; render();
+  const coordId = pickCoordinator(owners);
+  logLine('cmd', `> READ ${pk}  @QUORUM`);
+  logLine('info', `replica set = {${owners.map(i=>'N'+i).join(', ')}}; need ${QUORUM} of ${RF} replicas; coordinator = N${coordId}`);
+  flash(coordId,'flash-ok');
+  await sleep(250);
+
+  // contact up to QUORUM live replicas (prefer alive ones)
+  const liveOwners = owners.filter(i=>nodes[i].alive);
+  const contacted=[];
+  for(const rid of owners){
+    if(contacted.length>=QUORUM) break;
+    if(!nodes[rid].alive){ logLine('err',`N${rid} is DOWN — skipping`); continue; }
+    await fly('#node'+coordId, '#node'+rid, 'read', 'read');
+    contacted.push(rid);
+    flash(rid,'flash-ok');
+    const rec = latestAt(nodes[rid], pk);
+    logLine('ok', `N${rid} returned ${rec ? (rec.tombstone?'⌧ tombstone (ts '+rec.ts+')':'"'+rec.value+'" (ts '+rec.ts+')') : '(nil)'}`);
+    render();
+    await sleep(180);
+  }
+
+  if(contacted.length < QUORUM){
+    logLine('err', `❌ READ FAILED — only ${contacted.length}/${RF} replicas reachable < QUORUM(${QUORUM})`);
+    explain(`Fewer than QUORUM(${QUORUM}) replicas were reachable. With <b>2 of 3</b> replicas down, a QUORUM read can't be served. One node down still works (2/3 reachable).`);
+    busy=false; return;
+  }
+
+  // reconcile: latest timestamp wins across contacted replicas (read repair, conceptually)
+  let winner=null, winnerNode=null, mismatch=false, firstVal=undefined;
+  for(const rid of contacted){
+    const rec = latestAt(nodes[rid], pk);
+    const key = rec? (rec.tombstone?'__TOMB__':rec.value)+'@'+rec.ts : 'nil';
+    if(firstVal===undefined) firstVal=key; else if(key!==firstVal) mismatch=true;
+    if(rec && (!winner || rec.ts > winner.ts)){ winner=rec; winnerNode=rid; }
+  }
+
+  const shown = !winner ? '(nil)' : (winner.tombstone ? '(deleted)' : `"${winner.value}"`);
+  logLine('ok', `✅ READ ${pk} → ${shown}  (latest timestamp wins, from N${winnerNode}${winner?', ts '+winner.ts:''})`);
+
+  if(mismatch){
+    logLine('warn', `replicas disagreed → READ REPAIR: coordinator pushes the latest (ts ${winner.ts}) back to stale replicas`);
+    explain(`The ${QUORUM} contacted replicas returned <b>different versions</b>. Cassandra resolves with <b>last-write-wins by timestamp</b> and triggers <b>read repair</b> to update the stale replica. Because <b>W(2)+R(2) &gt; RF(3)</b>, the read quorum and write quorum overlap on ≥1 node, so the latest acked write is guaranteed to be in the set you read.`);
+  } else {
+    explain(`Returned <b>${shown}</b>. With QUORUM read (${QUORUM}) and QUORUM write (${QUORUM}) on RF=${RF}, <b>W+R &gt; RF</b> (4 &gt; 3): the two quorums must share a node, so a QUORUM read can never miss the latest QUORUM-acked write. That's tunable strong consistency on a masterless ring.`);
+  }
+  busy=false;
+}
+
+// ---------- FLUSH ----------
+async function doFlush(){
+  if(busy) return;
+  busy=true;
+  logLine('cmd', '> FLUSH (memtable → SSTable)');
+  let flushed=0;
+  for(const n of nodes){
+    if(n.alive && n.memtable.size>0){
+      n.sstables.push(new Map(n.memtable));   // seal immutable copy
+      n.memtable = new Map();                  // clear memtable
+      flushed++;
+      flash(n.id,'flash-ok');
+    }
+  }
+  render();
+  if(flushed){
+    logLine('ok', `flushed ${flushed} node(s): memtable sealed into a new immutable SSTable; memtable cleared`);
+    explain(`Each non-empty memtable was written sequentially to disk as a new <b>immutable SSTable</b> and the memtable was cleared. SSTables are never modified in place — updates and deletes just create newer entries in newer SSTables. Over time these pile up, so we periodically <b>compact</b>.`);
+  } else {
+    logLine('warn','nothing to flush — all memtables empty');
+    explain('All memtables were empty, so there was nothing to seal. Do a WRITE first, then Flush.');
+  }
+  busy=false;
+}
+
+// ---------- COMPACT ----------
+async function doCompact(){
+  if(busy) return;
+  busy=true;
+  logLine('cmd', '> COMPACT (merge SSTables, purge tombstones)');
+  let compacted=0, purged=0;
+  for(const n of nodes){
+    if(n.alive && n.sstables.length>1){
+      // merge: keep latest ts per key across all SSTables
+      const merged=new Map();
+      for(const t of n.sstables){
+        t.forEach((rec,k)=>{
+          const cur=merged.get(k);
+          if(!cur || rec.ts>=cur.ts) merged.set(k,rec);
+        });
+      }
+      // purge tombstones (and the values they shadow)
+      const out=new Map();
+      merged.forEach((rec,k)=>{ if(rec.tombstone){ purged++; } else { out.set(k,rec); } });
+      n.sstables = out.size? [out] : [];
+      compacted++;
+      flash(n.id,'flash-ok');
+    }
+  }
+  render();
+  if(compacted){
+    logLine('ok', `compacted ${compacted} node(s): many SSTables merged into one; ${purged} tombstone(s)/superseded value(s) purged`);
+    explain(`Compaction did a merge-sort of the SSTables, keeping the <b>latest timestamp</b> per key and <b>dropping tombstones</b> (and the dead values they shadow). Result: one tidy SSTable per node, faster reads, reclaimed space. In real Cassandra a tombstone is only dropped after <b>gc_grace_seconds</b> so a down replica can't resurrect deleted data.`);
+  } else {
+    logLine('warn','nothing to compact — need ≥2 SSTables on a node (Flush a few writes first)');
+    explain('Compaction needs at least two SSTables on a node. Do several WRITEs with Flush between them, then Compact.');
+  }
+  busy=false;
+}
+
+// ---------- KILL / REVIVE ----------
+function toggleNode(){
+  if(busy) return;
+  const id = parseInt(document.getElementById('nodeSel').value,10);
+  const n = nodes[id];
+  n.alive = !n.alive;
+  if(n.alive){
+    logLine('info', `N${id} REVIVED — gossip detects it; it will catch up via hinted handoff / read repair`);
+    explain(`N${id} is back. Peers learn via <b>gossip</b>; missed writes are delivered by <b>hinted handoff</b> and reconciled by read repair. There is no master to re-elect — every node is equal.`);
+  } else {
+    logLine('warn', `💥 N${id} KILLED. If it owns the key, a QUORUM op now needs the other 2 replicas.`);
+    explain(`N${id} is down. A QUORUM write/read still <b>succeeds with one owning replica down</b> (2 of 3 ack). Kill a <b>second</b> owning replica and the same op will <b>fail</b> — try it: write to a key whose replica set includes two dead nodes.`);
+  }
+  render();
+}
+
+// ---------- wire up ----------
+document.getElementById('writeBtn').onclick=()=>doWrite(false);
+document.getElementById('readBtn').onclick=doRead;
+document.getElementById('delBtn').onclick=()=>doWrite(true);
+document.getElementById('flushBtn').onclick=doFlush;
+document.getElementById('compactBtn').onclick=doCompact;
+document.getElementById('killBtn').onclick=toggleNode;
+document.getElementById('resetBtn').onclick=reset;
+reset();
+</script>
+</body>
+</html>

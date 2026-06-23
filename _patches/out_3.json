@@ -1,0 +1,588 @@
+[
+ {
+  "id": "qne40",
+  "options": [
+   "Modern NVMe SSDs have made random and sequential access essentially equal",
+   "Random access is still meaningfully slower than sequential, even on SSDs",
+   "Sequential access on SSDs is actually slower than sequential on HDDs",
+   "On SSDs the access pattern only matters for writes, not reads"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI flags as a misconception that SSDs equalize access; random is still meaningfully slower than sequential (far worse on HDDs), making proper indexing critical."
+ },
+ {
+  "id": "qkfz9",
+  "options": [
+   "Writes are blocked entirely while any index on the table exists",
+   "A single write may trigger several disk writes, since every index must also be updated",
+   "Indexes cost extra disk space but add no write-time overhead",
+   "Writes speed up because the index already holds a copy of the row"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: on insert/update the DB updates the main table plus every index, so multiple indexes mean a single write triggers several disk writes, plus extra disk space."
+ },
+ {
+  "id": "q1on2",
+  "options": [
+   "About 5x faster, roughly 10ms down to 2ms",
+   "About 50x faster, roughly 50ms down to 1ms",
+   "About 2x faster, roughly 4ms down to 2ms",
+   "About 500x faster, roughly 50ms down to 0.1ms"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: Postgres ~50ms vs Redis ~1ms, a 50x improvement, because memory sits closer to the CPU and avoids disk."
+ },
+ {
+  "id": "q1vdu",
+  "options": [
+   "Writes get slow because both the cache and the DB must confirm each write",
+   "If the cache crashes before flushing to the DB, recent writes can be lost",
+   "The cache fills with entries that are written but never actually read",
+   "Each read must first consult a directory to locate the data"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "Write-behind writes only to cache and flushes to the DB asynchronously, giving fast writes but data loss if the cache crashes before flushing. Suits workloads tolerant of occasional loss."
+ },
+ {
+  "id": "q45qu",
+  "options": [
+   "Only when reads are deduplicated via request coalescing",
+   "Only when expiration is TTL-based, not invalidation triggered on writes",
+   "Only when the cache runs in-process within the application",
+   "Only when hot keys are replicated across multiple cache nodes"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: warming refreshes popular keys before they expire, which only helps with TTL-based expiration. If you invalidate on writes instead, warming does not prevent stampedes."
+ },
+ {
+  "id": "qw18x",
+  "options": [
+   "Raise the TTL to several hours so entries expire far less often",
+   "Request coalescing or single-flight, where one request rebuilds while others wait",
+   "Switch to a write-through cache so entries are refreshed on every write",
+   "Shard the cache across more nodes to spread the load on a miss"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI calls request coalescing (single-flight) the most effective fix: one request rebuilds the entry while the rest wait, instead of hundreds hitting the DB.",
+  "accept": "Raising the TTL reduces stampede frequency but does not prevent the thundering herd when an entry finally expires, so coalescing is the better answer."
+ },
+ {
+  "id": "qx7el",
+  "options": [
+   "Cache-aside is the sensible interview default for most reads",
+   "Redis supports write-through natively, no application code required",
+   "CDNs are essentially a form of read-through cache",
+   "In-process caching is an optimization layer added after an external cache"
+  ],
+  "correct": [
+   0,
+   2,
+   3
+  ],
+  "why": "HI: cache-aside is the default, CDNs are read-through, and in-process caching comes after an external cache. It explicitly says Redis does NOT natively support write-through; application or framework code is needed."
+ },
+ {
+  "id": "q1tmp",
+  "options": [
+   "Around 256 GiB",
+   "Around 2.5 TB",
+   "Around 256 TiB",
+   "Around 16 TB"
+  ],
+  "correct": [
+   2
+  ],
+  "why": "HI: even Aurora maxes out around 256 TiB, the kind of ceiling that forces splitting data across machines."
+ },
+ {
+  "id": "q15lp",
+  "options": [
+   "Partitioning splits data across many machines while sharding stays on one instance",
+   "Partitioning splits data within a single DB instance while sharding splits across machines",
+   "They mean exactly the same thing with no practical distinction",
+   "Partitioning applies only to NoSQL stores while sharding applies only to SQL"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: partitioning usually means splitting within one instance (ranges or hash); sharding means across machines. Terms are used loosely; what matters is one machine vs many."
+ },
+ {
+  "id": "q9zs9",
+  "options": [
+   "Boolean columns cannot be fed into a hash function reliably",
+   "Two possible values cap you at two shards with badly uneven load",
+   "Each request would require an extra directory lookup to route it",
+   "The value flips when a user upgrades, forcing constant resharding"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI's canonical bad shard key: low cardinality (two values) caps you at two shards, and if most users are free, one shard is overloaded. Good keys need high cardinality plus even distribution."
+ },
+ {
+  "id": "qznlo",
+  "options": [
+   "Range-based sharding on a natural ordering key",
+   "Hash-based sharding on the partition key",
+   "Directory-based sharding via a lookup service",
+   "Vertical partitioning by splitting columns across tables"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI labels hash-based sharding the default and most common; it is what your interviewer assumes unless you explicitly state otherwise."
+ },
+ {
+  "id": "q1del",
+  "options": [
+   "Isolate a hot key onto its own dedicated shard",
+   "Use compound shard keys such as hash of user_id plus date",
+   "Route every cross-shard write through two-phase commit by default",
+   "Denormalize related data so it stays together on one shard"
+  ],
+  "correct": [
+   0,
+   1,
+   3
+  ],
+  "why": "HI recommends isolating hot keys, compound keys, and denormalizing. It warns AGAINST 2PC as the go-to (slow, fragile); prefer sagas or avoiding cross-shard transactions."
+ },
+ {
+  "id": "qu89t",
+  "options": [
+   "It spreads hot keys so popular items never overload one node",
+   "It minimizes how much data must be moved when a node is added or removed",
+   "It removes the need for a hash function by mapping keys directly",
+   "It provides strong consistency across all replicas of a key"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: modulo hashing (going from %3 to %4) remaps almost every key; consistent hashing moves only a bounded fraction when membership changes."
+ },
+ {
+  "id": "quto9",
+  "options": [
+   "Compute hash of the event ID modulo the current node count",
+   "Hash the event ID to a point on the ring, then move clockwise to the next node",
+   "Look the event ID up in a directory table that maps it to a node",
+   "Assign the event to whichever node currently reports the lowest load"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: place nodes on the ring, hash the event ID to a point, then move clockwise to the next node, avoiding modulo and limiting movement on membership change."
+ },
+ {
+  "id": "qcqpp",
+  "options": [
+   "Hot keys created by a single piece of extremely popular content",
+   "A failed node dumping its entire load onto its one clockwise neighbor",
+   "The need to replicate each key for durability and availability",
+   "Extending the ring beyond the 2^32 address space when nodes grow"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: without virtual nodes a failed node's load shifts entirely to one neighbor (doubling it). Virtual nodes place each DB at many ring points so failure load spreads evenly."
+ },
+ {
+  "id": "qpk9k",
+  "options": [
+   "Virtual nodes fix structural imbalance while replication or key-salting fix workload imbalance",
+   "Redis Cluster implements consistent hashing using virtual nodes per master",
+   "Redis Cluster uses fixed hash slots, 16,384 of them via CRC16(key) mod 16384",
+   "DynamoDB replicates each partition across 3 AZs, so a primary failure promotes a replica with no data movement"
+  ],
+  "correct": [
+   0,
+   2,
+   3
+  ],
+  "why": "HI: virtual nodes fix key-distribution imbalance while replication or salting fix traffic imbalance; Redis Cluster uses fixed slots (NOT consistent hashing); DynamoDB replicates partitions across 3 AZs so failover moves no data."
+ },
+ {
+  "id": "q1muv",
+  "options": [
+   "Whether to build on a SQL or a NoSQL datastore",
+   "Whether to favor consistency or availability when a network partition occurs",
+   "Whether to scale by sharding the data or by replicating it",
+   "Whether to guarantee strong or eventual durability of writes"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: partition tolerance is non-negotiable in any distributed system, so CAP boils down to one choice: prioritize consistency or availability when a partition occurs."
+ },
+ {
+  "id": "q1lty",
+  "options": [
+   "Consistency, because showing a stale display name is unacceptable",
+   "Availability, because showing the old name beats showing an error",
+   "Consistency, because profile fields are treated as financial data",
+   "Availability, but only by rejecting writes while still serving reads"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: for the profile example the answer is clear, show the stale old name (availability) rather than an error, since a stale name beats no name."
+ },
+ {
+  "id": "q1yuh",
+  "options": [
+   "Ticket and seat booking, to prevent double-booking the same seat",
+   "Viewing a Yelp restaurant's posted opening hours",
+   "E-commerce inventory counts, to prevent overselling stock",
+   "Stock trading order books matching buyers and sellers"
+  ],
+  "correct": [
+   0,
+   2,
+   3
+  ],
+  "why": "HI lists ticket booking, inventory, and financial/trading as consistency-required. Yelp showing slightly outdated hours is an availability example; brief staleness is fine."
+ },
+ {
+  "id": "q1qg1",
+  "options": [
+   "Causal consistency, where related operations are seen in order",
+   "Strong consistency, where every reader sees the latest write at once",
+   "Read-your-own-writes, where you see your updates but others may lag",
+   "Eventual consistency, where all replicas converge given enough time"
+  ],
+  "correct": [
+   2
+  ],
+  "why": "HI: read-your-own-writes is common in social media so users see their own profile edits right away, even if others briefly see stale data."
+ },
+ {
+  "id": "q6wvd",
+  "options": [
+   "Strong consistency, where reads always reflect the newest write",
+   "Causal consistency, preserving the order of related operations",
+   "Eventual consistency, where replicas converge over time",
+   "Read-your-own-writes, guaranteeing you see your own updates"
+  ],
+  "correct": [
+   2
+  ],
+  "why": "HI: eventual consistency is the most relaxed model and the default of most distributed databases, what you implicitly choose when prioritizing availability."
+ },
+ {
+  "id": "qjc2e",
+  "options": [
+   "Being unable to state the CAP theorem when asked",
+   "Doing scale math with outdated hardware numbers that underestimate modern systems",
+   "Never bringing up sharding as a scaling option",
+   "Reaching for Redis whenever caching comes up"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: relying on outdated hardware constraints leads to over-engineered designs, one of the biggest tells of book-only knowledge."
+ },
+ {
+  "id": "q19qq",
+  "options": [
+   "Around 512 GiB of RAM",
+   "Around 4 TB of RAM",
+   "Around 24 TB of RAM",
+   "Around 60 TB of RAM"
+  ],
+  "correct": [
+   2
+  ],
+  "why": "HI cites U-24tb1.metal at 24 TB RAM (X1e.32xlarge at 4 TB, M6i.32xlarge at 512 GiB); many apps that once needed distributed systems now fit on one machine."
+ },
+ {
+  "id": "qpzry",
+  "options": [
+   "Under 1ms",
+   "Roughly 1-2ms",
+   "Roughly 50-150ms",
+   "Roughly 250-300ms"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: under 1ms within a single AZ, 1-2ms across AZs in a region, and 50-150ms cross-region."
+ },
+ {
+  "id": "q1eap",
+  "options": [
+   "A hard ceiling of roughly 60 TB per bucket",
+   "Effectively unlimited, with petabyte-scale considered standard practice",
+   "Capped near 256 TiB, the same ceiling as Amazon Aurora",
+   "Suitable only for cold, rarely accessed archival data"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: S3 is effectively unlimited (petabyte-scale is standard); the days of storage being a primary constraint are largely behind us."
+ },
+ {
+  "id": "q8pxe",
+  "options": [
+   "i3en.24xlarge offers roughly 60 TB of local SSD",
+   "D3en.12xlarge offers roughly 336 TB of HDD",
+   "Within a datacenter, 25 Gbps networking is common",
+   "A single Postgres instance should be sharded once it reaches 100GB"
+  ],
+  "correct": [
+   0,
+   1,
+   2
+  ],
+  "why": "HI cites i3en.24xlarge at 60 TB SSD, D3en.12xlarge at 336 TB HDD, and 25 Gbps datacenter networking. It explicitly criticizes the textbook split-at-100GB rule as obsolete."
+ },
+ {
+  "id": "q1jo6",
+  "options": [
+   "Durable streaming of messages between decoupled services",
+   "Full-text search and querying over large volumes of data",
+   "Strongly consistent transactional writes across records",
+   "Distributed locking and coordination among nodes"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI frames Elasticsearch around search and querying over big data via inverted indexes, not as a queue, lock service, or transactional store."
+ },
+ {
+  "id": "q1qho",
+  "options": [
+   "An index is one Lucene file that every node opens and shares",
+   "An index is split into shards, and each shard is a self-contained Lucene index",
+   "Shards are read replicas pointing at a single master Lucene instance",
+   "Index and shard are two interchangeable names for the same unit"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: an index is partitioned into shards for horizontal scaling, and each shard is itself a complete Lucene index that can live on a different node."
+ },
+ {
+  "id": "qlbk2",
+  "options": [
+   "Primary shard count is fixed at creation; changing it means reindexing into a new index",
+   "Adding primary shards later triggers an automatic rebalance at no real cost",
+   "Primary shard count influences only read latency, never write throughput",
+   "Elasticsearch sets the shard count automatically and it cannot be configured"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI: primary shard count is fixed at index creation; changing it requires reindexing into a new index, a common gotcha interviewers probe."
+ },
+ {
+  "id": "qcgjh",
+  "options": [
+   "As a search layer running alongside a separate primary database",
+   "As the single primary datastore and source of truth for the system",
+   "As a tool for autocomplete, fuzzy matching, and relevance ranking",
+   "As a store backed by inverted indexes kept in sync from the DB"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: Elasticsearch should generally not be your source of truth; keep a separate primary DB and sync ES as a secondary search index."
+ },
+ {
+  "id": "q1dit",
+  "options": [
+   "Change Data Capture streaming DB changes into Elasticsearch",
+   "Application-level dual writes that update both stores together",
+   "A periodic full table scan used as the only real-time sync mechanism",
+   "Clients writing search documents straight to ES, bypassing the DB"
+  ],
+  "correct": [
+   0,
+   1
+  ],
+  "why": "HI presents CDC and dual writes as the standard sync strategies. A periodic scan is not real-time sync, and bypassing the primary DB contradicts the source-of-truth pattern."
+ },
+ {
+  "id": "qd3nz",
+  "options": [
+   "A B-tree keyed on document ID for fast point lookups",
+   "An inverted index mapping each term to the documents containing it",
+   "A consistent hash ring spreading documents across nodes",
+   "A skip list ordered by document timestamp for range scans"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: the inverted index maps each term to the documents containing it, enabling fast full-text search, unlike a B-tree keyed on IDs."
+ },
+ {
+  "id": "q8gnc",
+  "options": [
+   "A topic is the physical storage while a partition is just a logical label",
+   "A topic is a logical grouping while a partition is the physical ordered append-only log",
+   "Topic and partition describe the same underlying unit of storage",
+   "A single partition can span and serve several different topics"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: a topic is a logical grouping of messages; a partition is the physical, ordered, immutable append-only log. A topic can have many partitions across brokers."
+ },
+ {
+  "id": "q1x5l",
+  "options": [
+   "Every consumer reads every partition and deduplicates the overlap",
+   "Each partition is assigned to exactly one consumer within the group",
+   "Kafka load-balances each individual message randomly across consumers",
+   "The producer decides which consumer in the group handles each message"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: within a consumer group each partition is assigned to exactly one consumer, so under normal operation each event goes to a single consumer."
+ },
+ {
+  "id": "qk2e8",
+  "options": [
+   "Around 100GB of data and 100K messages per second",
+   "Around 1TB of data and roughly 1M messages per second",
+   "Around 10TB of data and 10M messages per second",
+   "Around 500GB of data and 50K messages per second"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI's hand-wavy but useful estimate: a single broker stores ~1TB and handles up to ~1M messages per second, used to decide whether scaling is even needed."
+ },
+ {
+  "id": "qp353",
+  "options": [
+   "partition equals hash(key) mod num_partitions using the murmur2 hash",
+   "Round-robin across partitions, ignoring the message key entirely",
+   "By the message timestamp taken modulo the partition count",
+   "By routing to whichever broker currently reports the lowest load"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI: partition equals hash(key) mod num_partitions with murmur2 by default. A bad key causes hot partitions."
+ },
+ {
+  "id": "q9zg0",
+  "options": [
+   "Random salting appended to the partition key to spread load",
+   "A compound key such as ad ID combined with region",
+   "Storing the full event payload blob directly inside Kafka",
+   "Applying back pressure to slow the producer down"
+  ],
+  "correct": [
+   0,
+   1,
+   3
+  ],
+  "why": "HI lists no-key default partitioning, random salting, compound keys, and back pressure. Storing large blobs in Kafka is an anti-pattern, not a fix."
+ },
+ {
+  "id": "q7ktc",
+  "options": [
+   "Strict message ordering within a single partition",
+   "Built-in consumer retries with automatic dead-letter queues",
+   "Durable replication of messages across multiple brokers",
+   "Per-consumer offset tracking to resume from a position"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: Kafka has no out-of-the-box consumer retry support; you build your own retry topic plus DLQ. That is why the Web Crawler breakdown chose SQS, which provides them natively."
+ },
+ {
+  "id": "q1owz",
+  "options": [
+   "Authenticating and authorizing each incoming request",
+   "Routing each request to the appropriate backend service",
+   "Caching responses to reduce backend load",
+   "Terminating SSL and managing certificates"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: candidates emphasize middleware but forget the core reason, request routing, deciding which backend handles each incoming request."
+ },
+ {
+  "id": "qf2z8",
+  "options": [
+   "After routing, once the backend has accepted the request",
+   "Up front, as the first step before routing or other work",
+   "Only after a cached response has been checked or stored",
+   "Never at the gateway; validation is left to each backend"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI lists validation first, so malformed requests (bad JSON, missing API key) are rejected early without wasting backend resources."
+ },
+ {
+  "id": "qjopq",
+  "options": [
+   "Client-to-gateway uses a dedicated LB like ELB or NGINX; gateway-to-service is done by the gateway",
+   "The gateway handles client-to-gateway balancing internally, no separate LB needed",
+   "Load balancing is generally unrelated to API gateways in practice",
+   "Backend services balance among themselves; the gateway never load-balances"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI separates client-to-gateway balancing (a dedicated LB such as ELB or NGINX in front) from gateway-to-service balancing (the gateway distributing across backend instances)."
+ },
+ {
+  "id": "q19vp",
+  "options": [
+   "Highly user-specific responses, to personalize output per user",
+   "Frequently accessed data that changes rarely and is not user specific",
+   "Essentially every response, since gateway caching is always safe",
+   "Only error responses, to avoid re-running failed backend calls"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: gateway caching fits frequently accessed, infrequently changing, non-user-specific data where the same input returns the same result."
+ },
+ {
+  "id": "qebq4",
+  "options": [
+   "Always, even for a simple single-client client-server app",
+   "For microservices; skip it for a simple monolithic or single-client design",
+   "Only once you also need a dedicated database caching layer",
+   "Only for very small systems with fewer than three services"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: use a gateway with microservices, but it is overkill for simple monolithic or single-client systems."
+ },
+ {
+  "id": "qbgy3",
+  "options": [
+   "Walk through its full middleware pipeline in detail",
+   "Briefly note it handles routing plus basic middleware, then move on",
+   "Replace it conceptually with a message queue for decoupling",
+   "Model it as the system's source of truth for request state"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI stresses the gateway is thin and not the interesting part; the bigger risk is over-spending time, so note routing plus middleware and move on."
+ }
+]

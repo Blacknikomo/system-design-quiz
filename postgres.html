@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PostgreSQL — Interactive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🐘 PostgreSQL — indexes, transactions &amp; MVCC</h1>
+      <div class="sub">Relational system of record. Watch an <i>Index Scan</i> jump straight to a row vs a <i>Seq Scan</i> reading every row, see a transaction stay invisible until <b>COMMIT</b>, and watch an UPDATE write a <b>new row version</b> instead of overwriting in place.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">ACID</span>
+      <span class="tag">B-tree index (default)</span>
+      <span class="tag">MVCC</span>
+      <span class="tag">Read Committed</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">Postgres is a <b>system of record</b>: writes are <b>Atomic, Consistent, Isolated, Durable</b>. Reads can use a <b>B-tree index</b> to seek a row in <code>O(log n)</code> instead of scanning the whole table in <code>O(n)</code>. Concurrency is handled by <b>MVCC</b> — each row update creates a new version, so readers never block writers.</p>
+    <div class="note info"><b>Index types:</b> <b>B-tree</b> is the default (equality &amp; range). Also <b>GIN</b> for full-text search &amp; <b>JSONB</b> containment, <b>GiST</b>/<b>PostGIS</b> for geo/spatial, and <b>BRIN</b> for huge naturally-ordered tables. An index trades write cost &amp; disk for fast reads.</div>
+    <div class="note warn"><b>Trade-off:</b> indexes speed up reads but <b>slow writes</b> (every INSERT/UPDATE/DELETE must also maintain the index) and consume disk. Index the columns you filter/join on — not everything.</div>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Run SQL</h3>
+    <div class="row">
+      <label class="fld">email<input type="text" id="insEmail" value="erin@x.io" size="12"></label>
+      <label class="fld">name<input type="text" id="insName" value="Erin" size="10"></label>
+      <button class="btn" id="insBtn">INSERT</button>
+      <span style="width:14px"></span>
+      <label class="fld">WHERE email =<input type="text" id="selEmail" value="carol@x.io" size="12"></label>
+      <button class="btn sec" id="selBtn">SELECT</button>
+      <span style="width:14px"></span>
+      <label class="fld">new name<input type="text" id="updName" value="Carolyn" size="10"></label>
+      <button class="btn sec" id="updBtn">UPDATE (set name WHERE email)</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn ghost" id="idxBtn">🔑 B-tree index on email: ON</button>
+      <span style="width:14px"></span>
+      <button class="btn sec" id="beginBtn">BEGIN</button>
+      <button class="btn warn" id="commitBtn">COMMIT</button>
+      <button class="btn bad" id="rollbackBtn">ROLLBACK</button>
+      <span style="width:14px"></span>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="nodes" id="nodes"></div>
+    </div>
+    <div class="explain" id="explain">Try a <b>SELECT</b> with the index ON (jumps straight to the row), then toggle the index OFF and SELECT again (scans every row). Then <b>BEGIN</b> a transaction and INSERT/UPDATE — changes stay invisible to other sessions until <b>COMMIT</b>.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Command log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>Index Scan:</b> the B-tree (sorted emails → row pointers) is binary-searched, jumping straight to the row.</li>
+        <li><b>Seq Scan:</b> with no index, Postgres reads <span style="color:var(--warn)">every row</span> top-to-bottom until it matches.</li>
+        <li><b>BEGIN:</b> INSERT/UPDATE become <span style="color:var(--warn)">pending</span> (dashed) — durable only after COMMIT, discarded by ROLLBACK.</li>
+        <li>Another session uses <b>Read Committed</b>: it does <span style="color:var(--warn)">not</span> see your uncommitted changes.</li>
+        <li><b>MVCC:</b> an UPDATE writes a <b>new tuple</b> and marks the old one superseded (<code>xmax</code>) — readers can still read the old version.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+// Each row (tuple) in the heap: {id,email,name, xmin (txn that created it), xmax (txn that superseded it, or 0),
+//   committed (visible to everyone), pending (created/changed inside the open txn)}
+let rows = [];
+let nextId = 1;
+let nextXid = 100;        // transaction id counter
+let indexOn = true;
+let inTxn = false;
+let curXid = 0;           // xid of the open transaction
+let busy = false;
+
+function seed(){
+  rows = []; nextId = 1; nextXid = 100;
+  const data = [
+    ['alice@x.io','Alice'],
+    ['bob@x.io','Bob'],
+    ['carol@x.io','Carol'],
+    ['dave@x.io','Dave'],
+    ['frank@x.io','Frank'],
+    ['grace@x.io','Grace'],
+  ];
+  data.forEach(([email,name])=>{
+    rows.push({id:nextId++, email, name, xmin:1, xmax:0, committed:true, pending:false});
+  });
+}
+
+function reset(){
+  busy=false; indexOn=true; inTxn=false; curXid=0;
+  seed();
+  document.getElementById('idxBtn').textContent = '🔑 B-tree index on email: ON';
+  document.getElementById('log').innerHTML='';
+  logLine('info','Database ready: table "users" with 6 committed rows. B-tree index on email: ON.');
+  render();
+  explain('Try a <b>SELECT</b> with the index ON, then toggle it OFF and SELECT again to compare <b>Index Scan</b> vs <b>Seq Scan</b>.');
+  syncButtons();
+}
+
+function syncButtons(){
+  document.getElementById('commitBtn').disabled = !inTxn;
+  document.getElementById('rollbackBtn').disabled = !inTxn;
+  document.getElementById('beginBtn').disabled = inTxn;
+}
+
+// rows that are visible to a normal "other" reader = committed & not superseded by a committed delete
+function liveRows(){
+  return rows.filter(r=>r.xmax===0 || !committedDelete(r));
+}
+function committedDelete(){ return false; } // (no standalone DELETE in this sim)
+
+// what another concurrent session (Read Committed) sees: only committed rows, latest committed version
+function otherSessionRows(){
+  return rows.filter(r=>r.committed && r.xmax===0);
+}
+
+// ---------- rendering ----------
+function rowKv(r){
+  let cls='kv', tag='';
+  if(r.pending){ cls+=' pending'; tag='<span class="pill" style="color:var(--warn);border-color:var(--warn)">pending</span>'; }
+  if(r.xmax!==0){ cls+=' stale'; tag='<span class="pill" style="color:var(--warn);border-color:var(--warn)">xmax '+r.xmax+'</span>'; }
+  return `<div class="${cls}" id="row${r.id}" data-email="${r.email}">
+      <span class="k">#${r.id}</span>
+      <span style="flex:1;text-align:left;padding:0 6px">${r.email}</span>
+      <span>${r.name}</span>
+      ${tag}
+    </div>`;
+}
+
+function heapNode(){
+  const body = rows.map(rowKv).join('') || '<div class="small muted">(empty)</div>';
+  return `<div class="node primary" id="heap" style="min-width:280px">
+      <div class="title">🗄️ users (heap)
+        <span class="badge">${rows.length} tuples</span></div>
+      ${body}
+    </div>`;
+}
+
+function indexNode(){
+  if(!indexOn){
+    return `<div class="node dead" id="idx" style="min-width:190px">
+        <div class="title">🔑 idx_users_email <span class="badge">DROPPED</span></div>
+        <div class="small muted" style="padding:4px 0">No index — queries must Seq Scan the heap.</div>
+      </div>`;
+  }
+  // B-tree: sorted by email, each entry points to a live committed tuple
+  const live = rows.filter(r=>r.xmax===0).slice().sort((a,b)=>a.email<b.email?-1:1);
+  const entries = live.map(r=>
+    `<div class="kv" id="idxe-${r.id}"><span class="k">${r.email}</span><span class="muted">→ #${r.id}</span></div>`
+  ).join('') || '<div class="small muted">(empty)</div>';
+  return `<div class="node replica" id="idx" style="min-width:210px">
+      <div class="title">🔑 idx_users_email <span class="badge">B-tree</span></div>
+      <div class="small muted" style="margin:-2px 0 4px">sorted email → row ptr</div>
+      ${entries}
+    </div>`;
+}
+
+function sessionNode(){
+  const seen = otherSessionRows();
+  return `<div class="node" id="other" style="min-width:200px">
+      <div class="title">👥 another session <span class="badge">${inTxn?'Read Committed':'idle'}</span></div>
+      <div class="small muted" style="margin:-2px 0 4px">sees only COMMITTED rows (${seen.length})</div>
+      ${seen.map(r=>`<div class="kv"><span class="k">${r.email}</span><span>${r.name}</span></div>`).join('')}
+    </div>`;
+}
+
+function render(){
+  document.getElementById('nodes').innerHTML = indexNode() + heapNode() + sessionNode();
+}
+
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+function flashRow(id, cls){
+  const e=document.getElementById('row'+id);
+  if(e){ e.classList.add(cls); setTimeout(()=>e&&e.classList.remove(cls),650); }
+}
+function highlightRow(id, on){
+  const e=document.getElementById('row'+id);
+  if(e) e.style.boxShadow = on ? '0 0 0 2px var(--warn)' : '';
+}
+
+// fly a "probe" packet from a source element to a target row element
+function fly(fromSel, toSel, label, cls){
+  return new Promise(res=>{
+    const stage = document.getElementById('stage');
+    const sr = stage.getBoundingClientRect();
+    const from = (typeof fromSel==='string'?document.querySelector(fromSel):fromSel);
+    const to   = (typeof toSel==='string'?document.querySelector(toSel):toSel);
+    if(!from||!to){ res(); return; }
+    const a = from.getBoundingClientRect();
+    const b = to.getBoundingClientRect();
+    const p = document.createElement('div');
+    p.className = 'packet '+(cls||'');
+    p.textContent = label;
+    p.style.left = (a.left - sr.left + a.width/2 - 20)+'px';
+    p.style.top  = (a.top  - sr.top  + a.height/2 - 10)+'px';
+    stage.appendChild(p);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      p.style.left = (b.left - sr.left + b.width/2 - 20)+'px';
+      p.style.top  = (b.top  - sr.top  + b.height/2 - 10)+'px';
+    }));
+    setTimeout(()=>{ p.style.opacity=0; setTimeout(()=>{p.remove();res();},220); }, 480);
+  });
+}
+
+// ---------- operations ----------
+
+// (A) SELECT — Index Scan vs Seq Scan
+async function doSelect(){
+  if(busy) return;
+  const email = document.getElementById('selEmail').value.trim();
+  if(!email) return;
+  busy=true;
+  logLine('cmd', `> SELECT * FROM users WHERE email = '${email}';`);
+
+  // candidate live tuples (latest version of each row)
+  const candidates = rows.filter(r=>r.xmax===0);
+  const match = candidates.find(r=>r.email===email && (r.committed || r.pending));
+
+  if(indexOn){
+    logLine('info', 'planner chose → Index Scan using idx_users_email');
+    // probe the B-tree, then jump straight to the heap tuple
+    if(match){
+      await fly('#idx', '#idxe-'+match.id, '🔍 '+email, 'read');
+      await sleep(120);
+      await fly('#idxe-'+match.id, '#row'+match.id, '→ #'+match.id, 'read');
+      flashRow(match.id, 'flash-ok');
+      logLine('ok', `Index Scan: 1 index lookup (O(log n)) → row #${match.id} found. 1 row.`);
+      explain(`<b>Index Scan.</b> The B-tree on <code>email</code> is binary-searched (≈ log₂ of ${candidates.length} rows), jumping <b>straight</b> to row #${match.id} — no heap rows wasted. This is the <code>O(log n)</code> win indexes buy you.`);
+    } else {
+      await fly('#idx', '#idx', '🔍 '+email, 'bad');
+      logLine('warn', `Index Scan: key '${email}' not in B-tree → 0 rows.`);
+      explain(`<b>Index Scan</b> found no matching key in the B-tree, so it returned <b>0 rows</b> without touching the heap at all.`);
+    }
+  } else {
+    logLine('warn', 'planner chose → Seq Scan (no usable index)');
+    explain(`<b>Seq Scan.</b> With no index, Postgres must read <b>every</b> heap tuple top-to-bottom until it finds a match — <code>O(n)</code>.`);
+    let examined=0, found=false;
+    for(const r of candidates){
+      examined++;
+      highlightRow(r.id, true);
+      await fly('#heap', '#row'+r.id, examined, 'bad');
+      await sleep(90);
+      highlightRow(r.id, false);
+      if(r.email===email && (r.committed || r.pending)){
+        flashRow(r.id, 'flash-ok');
+        logLine('ok', `Seq Scan: matched at row #${r.id} after examining ${examined} of ${candidates.length} rows.`);
+        explain(`<b>Seq Scan.</b> Postgres examined <b>${examined}</b> row(s) one-by-one to find the match. On a million-row table this is the difference between a few page reads and reading the whole table.`);
+        found=true;
+        break;
+      }
+    }
+    if(!found){
+      logLine('warn', `Seq Scan: examined all ${examined} rows → 0 rows. Worst case of O(n).`);
+      explain(`<b>Seq Scan</b> read all <b>${examined}</b> rows and found nothing — the worst case. An index would have answered this in one lookup.`);
+    }
+  }
+  busy=false;
+}
+
+// (B)+(C) INSERT — pending if in a txn
+async function doInsert(){
+  if(busy) return;
+  const email = document.getElementById('insEmail').value.trim();
+  const name  = document.getElementById('insName').value.trim();
+  if(!email||!name) return;
+  busy=true;
+  logLine('cmd', `> INSERT INTO users (email, name) VALUES ('${email}', '${name}');`);
+  const r = {id:nextId++, email, name, xmin:(inTxn?curXid:nextXid++), xmax:0,
+             committed:!inTxn, pending:inTxn};
+  rows.push(r);
+  render();
+  flashRow(r.id, inTxn?'flash-bad':'flash-ok');
+  await fly('#heap', '#row'+r.id, 'new tuple', inTxn?'bad':'read');
+  if(inTxn){
+    logLine('warn', `row #${r.id} inserted as PENDING (xmin ${curXid}) — visible only inside txn ${curXid}.`);
+    explain(`Inside transaction <b>${curXid}</b>, the new tuple is written but marked <b>pending</b> (dashed). Look right: <b>another session does not see it</b>. It becomes durable &amp; visible only on <b>COMMIT</b>; <b>ROLLBACK</b> throws it away.`);
+  } else {
+    logLine('ok', `row #${r.id} inserted &amp; auto-committed (xmin ${r.xmin}).`);
+    explain(`No open transaction, so the INSERT auto-commits: the row is immediately durable and visible to everyone. ${indexOn?'The B-tree index was also updated (a write cost).':''}`);
+  }
+  render();
+  busy=false;
+}
+
+// (C) UPDATE — MVCC: new tuple version, old marked with xmax
+async function doUpdate(){
+  if(busy) return;
+  const email = document.getElementById('selEmail').value.trim();
+  const newName = document.getElementById('updName').value.trim();
+  if(!email||!newName) return;
+  busy=true;
+  logLine('cmd', `> UPDATE users SET name = '${newName}' WHERE email = '${email}';`);
+  const old = rows.find(r=>r.email===email && r.xmax===0 && (r.committed||r.pending));
+  if(!old){
+    logLine('warn', `UPDATE matched 0 rows (no live tuple with email '${email}').`);
+    explain(`No live row matched <code>email = '${email}'</code>, so nothing was updated.`);
+    busy=false; return;
+  }
+  const xid = inTxn ? curXid : nextXid++;
+  // MVCC: do NOT overwrite. Mark old superseded, write a NEW tuple version.
+  old.xmax = xid;
+  const nv = {id:nextId++, email, name:newName, xmin:xid, xmax:0,
+              committed:!inTxn, pending:inTxn};
+  rows.push(nv);
+  render();
+  await fly('#row'+old.id, '#row'+nv.id, 'v2', inTxn?'bad':'read');
+  flashRow(old.id, 'flash-bad');
+  flashRow(nv.id, inTxn?'flash-bad':'flash-ok');
+  logLine('info', `MVCC: old tuple #${old.id} marked superseded (xmax ${xid}); new version #${nv.id} written.`);
+  if(inTxn){
+    logLine('warn', `new version #${nv.id} is PENDING — other sessions still read old #${old.id}.`);
+    explain(`<b>MVCC in action.</b> Postgres did <b>not</b> overwrite row #${old.id} in place — it set its <code>xmax = ${xid}</code> and wrote a brand-new tuple #${nv.id} ('${newName}'). Because the new version is uncommitted, <b>concurrent readers still see the old #${old.id}</b> — readers don't block writers and vice-versa.`);
+  } else {
+    logLine('ok', `committed: new version #${nv.id} is now visible; old #${old.id} is dead (awaits VACUUM).`);
+    explain(`<b>MVCC.</b> Even with auto-commit, the UPDATE created a <b>new tuple</b> #${nv.id} and left the old #${old.id} as a dead version (later reclaimed by <b>VACUUM</b>). Snapshots taken before this commit could still have read the old row.`);
+  }
+  render();
+  busy=false;
+}
+
+// transactions
+function doBegin(){
+  if(busy||inTxn) return;
+  inTxn=true; curXid=nextXid++;
+  logLine('cmd', '> BEGIN;');
+  logLine('info', `transaction ${curXid} started. Subsequent writes stay private until COMMIT.`);
+  explain(`Transaction <b>${curXid}</b> is open. Now INSERT or UPDATE — changes will be <b>pending</b> (dashed) and invisible to the other session until you <b>COMMIT</b>.`);
+  syncButtons();
+}
+
+async function doCommit(){
+  if(busy||!inTxn) return;
+  busy=true;
+  logLine('cmd', '> COMMIT;');
+  const pend = rows.filter(r=>r.pending);
+  rows.forEach(r=>{ if(r.pending){ r.pending=false; r.committed=true; } });
+  render();
+  pend.forEach(r=>flashRow(r.id,'flash-ok'));
+  await sleep(200);
+  logLine('ok', `transaction ${curXid} committed: ${pend.length} change(s) durable (fsync to WAL) &amp; visible to all sessions.`);
+  explain(`<b>COMMIT.</b> Transaction ${curXid}'s ${pend.length} change(s) are flushed to the <b>WAL</b> (durable) and become visible to everyone — see the other session now reflects them. ${indexOn?'The index now includes the new committed rows.':''}`);
+  inTxn=false; curXid=0;
+  syncButtons();
+  busy=false;
+}
+
+async function doRollback(){
+  if(busy||!inTxn) return;
+  busy=true;
+  logLine('cmd', '> ROLLBACK;');
+  // discard pending inserts; revert pending updates (restore old version's xmax)
+  const discarded = rows.filter(r=>r.pending).length;
+  rows.forEach(r=>{ if(r.xmax===curXid) r.xmax=0; }); // un-supersede old versions
+  rows = rows.filter(r=>!r.pending);                   // drop pending tuples
+  render();
+  await sleep(200);
+  logLine('warn', `transaction ${curXid} rolled back: ${discarded} pending change(s) discarded. Atomicity preserved.`);
+  explain(`<b>ROLLBACK.</b> All ${discarded} pending tuple(s) were discarded and any superseded rows restored — the database is exactly as it was before BEGIN. This is the <b>A</b> (atomicity) in ACID: all-or-nothing.`);
+  inTxn=false; curXid=0;
+  syncButtons();
+  busy=false;
+}
+
+function toggleIndex(){
+  if(busy) return;
+  indexOn = !indexOn;
+  document.getElementById('idxBtn').textContent = '🔑 B-tree index on email: ' + (indexOn?'ON':'OFF');
+  if(indexOn){
+    logLine('ok', 'CREATE INDEX idx_users_email ON users(email);  — B-tree built.');
+    explain(`Index <b>ON</b>. SELECT/UPDATE by email can now use an <b>Index Scan</b> (<code>O(log n)</code>). Note: this index must now be maintained on every write.`);
+  } else {
+    logLine('warn', 'DROP INDEX idx_users_email;  — no index on email now.');
+    explain(`Index <b>OFF</b>. SELECT by email must fall back to a <b>Seq Scan</b> (<code>O(n)</code>) — Postgres reads every row. Run a SELECT to watch it crawl the whole table.`);
+  }
+  render();
+}
+
+// ---------- wire up ----------
+document.getElementById('insBtn').onclick = doInsert;
+document.getElementById('selBtn').onclick = doSelect;
+document.getElementById('updBtn').onclick = doUpdate;
+document.getElementById('idxBtn').onclick = toggleIndex;
+document.getElementById('beginBtn').onclick = doBegin;
+document.getElementById('commitBtn').onclick = doCommit;
+document.getElementById('rollbackBtn').onclick = doRollback;
+document.getElementById('resetBtn').onclick = reset;
+
+// pending-row styling (uses only existing palette vars, not restyling shared classes)
+const st = document.createElement('style');
+st.textContent = '.kv.pending{border-style:dashed;border-color:var(--warn);opacity:.7;color:var(--warn)}';
+document.head.appendChild(st);
+
+reset();
+</script>
+</body>
+</html>

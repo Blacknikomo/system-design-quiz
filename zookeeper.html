@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZooKeeper — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* tiny layout tweaks only — tree rows + client column */
+  .ztree{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;flex:1;min-width:260px}
+  .znode{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:6px;margin:2px 0;
+    border:1px solid transparent;transition:.2s}
+  .znode .nm{color:var(--accent)}
+  .znode .meta{color:var(--muted);font-size:11px}
+  .znode .data{color:var(--txt);font-size:11px}
+  .znode.eph{border-color:#5a4520;background:var(--warnbg)}
+  .znode.eph .nm{color:var(--warn)}
+  .znode.watched{box-shadow:inset 3px 0 0 var(--accent2)}
+  .znode.flash-ok{box-shadow:0 0 0 2px rgba(46,204,113,.6)}
+  .znode.flash-bad{box-shadow:0 0 0 2px rgba(255,92,92,.6)}
+  .znode .leadtag{font-size:10px;padding:1px 7px;border-radius:20px;border:1px solid var(--ok);color:var(--ok)}
+  .stagecols{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+  .clientcol{display:flex;flex-direction:column;gap:10px;min-width:200px}
+  .node.client{min-width:190px}
+  .node.client .seq{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--muted);margin-top:6px}
+  .empty{color:var(--muted);font-size:12px;padding:4px 8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🦓 ZooKeeper — znodes, watches &amp; leader election</h1>
+      <div class="sub">A hierarchical namespace of <i>znodes</i> coordinates a distributed system. <b>Persistent</b> nodes hold config; <b>ephemeral</b> nodes vanish when their client's session dies — giving you automatic failure detection and the canonical <i>leader-election</i> pattern.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">distributed coordination</span>
+      <span class="tag">hierarchical znodes</span>
+      <span class="tag">ephemeral = session-bound</span>
+      <span class="tag">one-shot watches</span>
+      <span class="tag">leader election</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">ZooKeeper exposes a filesystem-like tree of <b>znodes</b>. <b>Persistent</b> znodes (e.g. <code>/config</code>) survive until explicitly deleted and can hold data. <b>Ephemeral</b> znodes are tied to a client <b>session</b> and disappear the instant that client dies — that is the failure-detection primitive. Clients place one-shot <b>watches</b> on a znode to be notified once when its data changes or it is deleted.</p>
+    <div class="note info"><b>Strong consistency:</b> a ZooKeeper ensemble keeps every replica in agreement through the <b>ZAB</b> (ZooKeeper Atomic Broadcast) consensus protocol — all writes go through a single leader and are totally ordered, so every client sees the same tree.</div>
+    <div class="note gotcha"><b>The gotcha:</b> watches are <b>one-shot</b>. After a watch fires it is consumed; if you still care about that znode you must <b>re-register</b> the watch — and a change happening in the gap between fire and re-register can be missed.</div>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Run a command</h3>
+    <div class="row">
+      <label class="fld">path<input type="text" id="path" value="/config/db" size="14"></label>
+      <label class="fld">data / value<input type="text" id="val" value="host=primary" size="14"></label>
+      <label class="fld">client
+        <select id="client">
+          <option value="A">Client-A</option>
+          <option value="B">Client-B</option>
+          <option value="C">Client-C</option>
+        </select>
+      </label>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px;margin-top:18px">
+        <input type="checkbox" id="eph"> ephemeral
+      </label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="createBtn">Create znode</button>
+      <button class="btn sec" id="setBtn">Set data</button>
+      <button class="btn sec" id="watchBtn">Add watch</button>
+      <button class="btn warn" id="delBtn">Delete</button>
+      <span style="width:14px"></span>
+      <button class="btn" id="joinBtn">Join election</button>
+      <button class="btn bad" id="killBtn">Kill client</button>
+      <button class="btn ghost" id="reviveBtn">Revive client</button>
+      <span style="width:14px"></span>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="stagecols">
+        <div class="ztree" id="tree"></div>
+        <div class="clientcol" id="clients"></div>
+      </div>
+    </div>
+    <div class="explain" id="explain">Create persistent znodes for config, set their data to fire watches, or have clients <b>Join election</b> to create ephemeral-sequential nodes. <b>Kill</b> the leader to watch a re-election ripple through.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Event log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>Create</b> a znode under the tree — persistent (holds config) or <b>ephemeral</b> (owned by a client session).</li>
+        <li><b>Set data</b> on a watched znode fires its <b>one-shot watch</b> → the watching client is notified, then must re-register.</li>
+        <li><b>Join election</b> creates an ephemeral <b>sequential</b> znode <code>/election/n_…</code>; the lowest sequence is the <span style="color:var(--ok)">leader</span>.</li>
+        <li>Each follower <b>watches the next-lower</b> znode (not the leader) to avoid a herd of wake-ups.</li>
+        <li><b>Kill</b> a client → its ephemeral znodes vanish. If the leader dies, the watcher of its znode wakes and the <b>next-lowest becomes leader</b>.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+const CLIENTS = ['A','B','C'];
+// znode: {path, data, ephemeral, owner(null|client), seq(null|int), watchers:Set(client)}
+let tree;        // Map path -> znode
+let seqCounter;  // global sequential counter for /election
+let alive;       // {A:true,B:true,C:true}
+let busy = false;
+
+function reset(){
+  busy = false;
+  seqCounter = 0;
+  alive = {A:true, B:true, C:true};
+  tree = new Map();
+  // root + a persistent config subtree + the election parent
+  addNode('/',         '',            false, null, null);
+  addNode('/config',   '',            false, null, null);
+  addNode('/config/db','host=primary',false, null, null);
+  addNode('/election', '',            false, null, null);
+  document.getElementById('log').innerHTML = '';
+  logLine('info', 'Ensemble up. Tree seeded: /, /config, /config/db (persistent), /election. All sessions alive.');
+  render();
+  explain('Create persistent znodes for config, set data to fire watches, or have clients <b>Join election</b> to create ephemeral-sequential nodes. <b>Kill</b> the leader to watch a re-election ripple through.');
+}
+
+function addNode(path, data, ephemeral, owner, seq){
+  tree.set(path, {path, data, ephemeral:!!ephemeral, owner:owner||null,
+                  seq:(seq===undefined?null:seq), watchers:new Set()});
+}
+
+// election children sorted by sequence number
+function electionNodes(){
+  return [...tree.values()].filter(n => n.seq !== null)
+    .sort((a,b)=>a.seq-b.seq);
+}
+function leaderPath(){
+  const e = electionNodes();
+  return e.length ? e[0].path : null;
+}
+function ownerOf(path){ const n=tree.get(path); return n?n.owner:null; }
+
+// ---------- rendering ----------
+function depthOf(path){ return path==='/' ? 0 : path.split('/').length-1; }
+
+function nodeRow(n){
+  const indent = depthOf(n.path)*16;
+  const cls = ['znode'];
+  if(n.ephemeral) cls.push('eph');
+  if(n.watchers.size) cls.push('watched');
+  const id = 'z_'+n.path.replace(/[^a-zA-Z0-9]/g,'_');
+  const isLeader = n.path === leaderPath();
+  let meta = [];
+  if(n.ephemeral) meta.push('ephemeral'+(n.owner?(' · '+n.owner):''));
+  else if(n.path!=='/') meta.push('persistent');
+  if(n.watchers.size) meta.push('👁 '+[...n.watchers].join(','));
+  const dataStr = n.data ? `<span class="data">= "${n.data}"</span>` : '';
+  const leadEl = isLeader ? '<span class="leadtag">LEADER</span>' : '';
+  return `<div class="${cls.join(' ')}" id="${id}" style="margin-left:${indent}px">
+      <span class="nm">${n.path==='/'?'/':n.path.split('/').pop()}</span>
+      ${dataStr} ${leadEl}
+      <span class="meta">${meta.join(' · ')}</span>
+    </div>`;
+}
+
+function render(){
+  const paths = [...tree.keys()].sort();
+  document.getElementById('tree').innerHTML =
+    '<h3 style="margin-top:0">ZNODE TREE</h3>' +
+    paths.map(p=>nodeRow(tree.get(p))).join('');
+
+  const lp = leaderPath();
+  document.getElementById('clients').innerHTML =
+    '<h3 style="margin-top:0">CLIENT SESSIONS</h3>' +
+    CLIENTS.map(c=>{
+      const dead = !alive[c];
+      const myEph = [...tree.values()].filter(n=>n.owner===c);
+      const myElect = myEph.filter(n=>n.seq!==null);
+      const isLeader = myElect.some(n=>n.path===lp);
+      const cls = ['node','client'];
+      if(dead) cls.push('dead');
+      else if(isLeader) cls.push('primary');
+      const badge = dead ? '<span class="badge">session lost</span>'
+                  : isLeader ? '<span class="badge">leader</span>'
+                  : '<span class="badge">session ok</span>';
+      let seqLine = '';
+      if(myElect.length){
+        seqLine = myElect.map(n=>'znode '+n.path.split('/').pop()+(n.path===lp?' (lowest → leader)':' (follower)')).join('<br>');
+      } else if(!dead){
+        seqLine = 'not in election';
+      } else {
+        seqLine = '—';
+      }
+      return `<div class="${cls.join(' ')}" id="cl_${c}">
+          <div class="title">🧑‍💻 Client-${c} ${badge}</div>
+          <div class="seq">eph nodes: ${dead?0:myEph.length}<br>${seqLine}</div>
+        </div>`;
+    }).join('');
+}
+
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+
+const sleep = ms => new Promise(r=>setTimeout(r, ms));
+function flashZ(path, cls){
+  const id = 'z_'+path.replace(/[^a-zA-Z0-9]/g,'_');
+  const e = document.getElementById(id);
+  if(e){ e.classList.add(cls); setTimeout(()=>e.classList.remove(cls), 700); }
+}
+function flashClient(c, cls){
+  const e = document.getElementById('cl_'+c);
+  if(e){ e.classList.add(cls); setTimeout(()=>e.classList.remove(cls), 700); }
+}
+
+// fire any one-shot watches on a path (deletion or data change). Returns notified clients.
+function fireWatches(path, reason){
+  const n = tree.get(path);
+  if(!n || n.watchers.size===0) return [];
+  const notified = [...n.watchers];
+  n.watchers.clear(); // one-shot: consumed
+  notified.forEach(c=>{
+    if(alive[c]) flashClient(c, 'flash-ok');
+    logLine('warn', `WATCH fired → Client-${c} notified: ${path} ${reason}. (watch consumed — must re-register)`);
+  });
+  return notified;
+}
+
+// ---------- operations ----------
+async function createZnode(){
+  if(busy) return;
+  const path = document.getElementById('path').value.trim();
+  const data = document.getElementById('val').value.trim();
+  const eph  = document.getElementById('eph').checked;
+  const c    = document.getElementById('client').value;
+  if(!path || path[0] !== '/'){ logLine('err','path must start with "/"'); return; }
+  if(tree.has(path)){ logLine('err',`NodeExistsException: ${path} already exists`); return; }
+  const parent = path.substring(0, path.lastIndexOf('/')) || '/';
+  if(!tree.has(parent)){ logLine('err',`NoNodeException: parent ${parent} does not exist`); return; }
+  if(eph && !alive[c]){ logLine('err',`Client-${c} session is dead — cannot create ephemeral node`); return; }
+  busy = true;
+  logLine('cmd', `> create ${path} "${data}"${eph?' [ephemeral, owner=Client-'+c+']':' [persistent]'}`);
+  addNode(path, data, eph, eph?c:null, null);
+  render(); flashZ(path,'flash-ok');
+  if(eph){
+    explain(`Created <b>ephemeral</b> znode <code>${path}</code> owned by <b>Client-${c}</b>. It exists only while that client's session is alive — kill the client and it vanishes automatically. That's ZooKeeper's <b>failure detector</b>.`);
+  } else {
+    explain(`Created <b>persistent</b> znode <code>${path}</code>${data?` holding data <code>"${data}"</code>`:''}. It survives client deaths until explicitly deleted — typical for shared <b>config</b>.`);
+  }
+  busy = false;
+}
+
+async function setData(){
+  if(busy) return;
+  const path = document.getElementById('path').value.trim();
+  const data = document.getElementById('val').value.trim();
+  if(!tree.has(path)){ logLine('err',`NoNodeException: ${path} does not exist`); return; }
+  busy = true;
+  const n = tree.get(path);
+  logLine('cmd', `> setData ${path} "${data}"`);
+  n.data = data;
+  render(); flashZ(path,'flash-ok');
+  logLine('ok', `${path} data updated → "${data}" (version bumped)`);
+  const notified = fireWatches(path, 'data changed');
+  render();
+  if(notified.length){
+    explain(`<b>setData</b> on <code>${path}</code> bumped its version and <b>fired the one-shot watch(es)</b> → ${notified.map(c=>'Client-'+c).join(', ')} notified. Each notified client must <b>re-register</b> a fresh watch to keep listening.`);
+  } else {
+    explain(`<b>setData</b> on <code>${path}</code> updated its value. No watch was registered, so no client was notified. Add a watch first to see the notification fire.`);
+  }
+  busy = false;
+}
+
+async function addWatch(){
+  if(busy) return;
+  const path = document.getElementById('path').value.trim();
+  const c    = document.getElementById('client').value;
+  if(!tree.has(path)){ logLine('err',`NoNodeException: cannot watch ${path} — does not exist`); return; }
+  if(!alive[c]){ logLine('err',`Client-${c} session dead — cannot register watch`); return; }
+  busy = true;
+  tree.get(path).watchers.add(c);
+  logLine('cmd', `> exists/getData ${path} watch=true  (Client-${c})`);
+  logLine('info', `Client-${c} registered a one-shot watch on ${path}`);
+  render(); flashZ(path,'flash-ok');
+  explain(`Client-<b>${c}</b> set a <b>one-shot watch</b> on <code>${path}</code>. It will fire <b>exactly once</b> on the next data change or deletion of that znode — then it's gone and must be re-registered.`);
+  busy = false;
+}
+
+async function deleteZnode(){
+  if(busy) return;
+  const path = document.getElementById('path').value.trim();
+  if(!tree.has(path)){ logLine('err',`NoNodeException: ${path} does not exist`); return; }
+  if(path==='/' ){ logLine('err','cannot delete root /'); return; }
+  const hasChild = [...tree.keys()].some(p=>p!==path && p.startsWith(path+'/'));
+  if(hasChild){ logLine('err',`NotEmptyException: ${path} has children`); return; }
+  busy = true;
+  logLine('cmd', `> delete ${path}`);
+  fireWatches(path, 'deleted');
+  tree.delete(path);
+  render();
+  logLine('ok', `${path} removed`);
+  explain(`Deleted <code>${path}</code>. Deletion also <b>fires any watch</b> on the node, so interested clients learn it is gone. This same mechanism powers leader election when an ephemeral election node disappears.`);
+  busy = false;
+}
+
+// ---------- leader election ----------
+async function joinElection(){
+  if(busy) return;
+  const c = document.getElementById('client').value;
+  if(!alive[c]){ logLine('err',`Client-${c} session dead — revive it first`); return; }
+  busy = true;
+  const seq = ++seqCounter;
+  const path = '/election/n_' + String(seq).padStart(10,'0');
+  addNode(path, '', true, c, seq);
+  logLine('cmd', `> create -e -s /election/n_  (Client-${c})`);
+  logLine('ok', `Client-${c} created ephemeral-sequential ${path}`);
+  render(); flashZ(path,'flash-ok');
+  await recomputeWatchesAndLeader(`Client-${c} joined`);
+  busy = false;
+}
+
+// followers watch the next-lower znode; recompute leader + log it
+async function recomputeWatchesAndLeader(why){
+  const e = electionNodes();
+  // clear election watches and re-set them: each node watches the previous one
+  e.forEach(n=>n.watchers.clear());
+  for(let i=1;i<e.length;i++){
+    e[i-1].watchers.add(e[i].owner); // node i watches node i-1
+  }
+  render();
+  const lp = leaderPath();
+  if(lp){
+    const leaderClient = ownerOf(lp);
+    flashClient(leaderClient, 'flash-ok');
+    logLine('info', `Leader = Client-${leaderClient} (lowest seq ${lp.split('_').pop()}). Followers each watch their next-lower znode.`);
+    explain(`<b>Election (${why}):</b> ${e.length} client(s) hold ephemeral-sequential znodes under <code>/election</code>. The <b>lowest sequence</b> → <b>Client-${leaderClient} is LEADER</b>. Each follower watches only the <b>next-lower</b> znode — so a death wakes just one client, not a thundering herd.`);
+  } else {
+    explain('No clients in the election. Have a client <b>Join election</b> to elect a leader.');
+  }
+}
+
+// ---------- session lifecycle ----------
+async function killClient(){
+  if(busy) return;
+  const c = document.getElementById('client').value;
+  if(!alive[c]){ logLine('err',`Client-${c} is already dead`); return; }
+  busy = true;
+  const wasLeaderPath = leaderPath();
+  const wasLeader = wasLeaderPath && ownerOf(wasLeaderPath)===c;
+  alive[c] = false;
+  flashClient(c, 'flash-bad');
+  logLine('cmd', `> Client-${c} session expired (TCP/heartbeat lost)`);
+
+  // remove ALL ephemeral znodes owned by c, firing watches on each
+  const owned = [...tree.values()].filter(n=>n.owner===c).map(n=>n.path);
+  for(const p of owned){
+    fireWatches(p, 'deleted (owner session died)');
+    tree.delete(p);
+    logLine('warn', `ephemeral ${p} auto-deleted (Client-${c} session gone)`);
+    await sleep(120);
+  }
+  render();
+
+  if(owned.length===0){
+    explain(`Client-<b>${c}</b> died. It held no ephemeral znodes, so nothing was removed. Persistent znodes are unaffected by session loss.`);
+    busy = false;
+    return;
+  }
+
+  // if leader died, re-elect
+  if(wasLeader){
+    const newLeader = leaderPath();
+    if(newLeader){
+      const nc = ownerOf(newLeader);
+      logLine('err', `LEADER Client-${c} died → its election znode vanished → watcher woke up`);
+      await sleep(200);
+      await recomputeWatchesAndLeader(`re-election after Client-${c} died`);
+      logLine('ok', `RE-ELECTION: Client-${nc} now has the lowest seq → new LEADER`);
+      explain(`<b>Failover:</b> the leader's ephemeral znode vanished when Client-${c}'s session died. The follower watching it <b>woke up</b>, saw it now holds the lowest sequence, and became the <b>new LEADER → Client-${nc}</b>. This is the canonical ZooKeeper leader-election failover.`);
+    } else {
+      logLine('warn', `Leader Client-${c} died — no other clients in election, leadership vacant`);
+      await recomputeWatchesAndLeader(`Client-${c} died`);
+    }
+  } else {
+    await recomputeWatchesAndLeader(`Client-${c} died`);
+    explain(`Client-<b>${c}</b> (a follower) died; its ephemeral znodes were removed. The client that was watching ${c}'s znode re-points its watch to the next-lower node. The <b>leader is unchanged</b>.`);
+  }
+  busy = false;
+}
+
+async function reviveClient(){
+  if(busy) return;
+  const c = document.getElementById('client').value;
+  if(alive[c]){ logLine('err',`Client-${c} is already alive`); return; }
+  busy = true;
+  alive[c] = true;
+  flashClient(c, 'flash-ok');
+  logLine('ok', `Client-${c} reconnected — new session established`);
+  render();
+  explain(`Client-<b>${c}</b> re-established a session. Its old ephemeral znodes are <b>not</b> resurrected — a new session is a clean slate. To rejoin the election it must <b>Join election</b> again (taking a new, higher sequence number → back of the line).`);
+  busy = false;
+}
+
+// ---------- wire up ----------
+document.getElementById('createBtn').onclick = createZnode;
+document.getElementById('setBtn').onclick    = setData;
+document.getElementById('watchBtn').onclick  = addWatch;
+document.getElementById('delBtn').onclick    = deleteZnode;
+document.getElementById('joinBtn').onclick   = joinElection;
+document.getElementById('killBtn').onclick   = killClient;
+document.getElementById('reviveBtn').onclick = reviveClient;
+document.getElementById('resetBtn').onclick  = reset;
+reset();
+</script>
+</body>
+</html>

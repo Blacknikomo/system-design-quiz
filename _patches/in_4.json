@@ -1,0 +1,720 @@
+[
+ {
+  "id": "q1j4u",
+  "topic": "Cassandra",
+  "type": "single",
+  "q": "HI: what storage structure gives Cassandra its high write throughput, replacing the B-tree?",
+  "options": [
+   "A Log Structured Merge Tree (LSM tree)",
+   "A skip list",
+   "An inverted index",
+   "A hash table with chaining"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI: Cassandra uses an LSM tree instead of a B-tree, favoring write speed by treating most writes as append-only (Memtable then immutable SSTable)."
+ },
+ {
+  "id": "q1diu",
+  "topic": "Cassandra",
+  "type": "single",
+  "q": "HI: the purpose of a clustering key within a Cassandra primary key?",
+  "options": [
+   "It picks which partition the row lives in",
+   "It determines the sorted order of rows within a partition",
+   "It enforces referential integrity across tables",
+   "It encrypts the row at rest"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: a primary key is partition key(s) + clustering key(s). The partition key picks the partition; the clustering key sets sorted order within it (e.g. Discord ORDER BY message_id DESC)."
+ },
+ {
+  "id": "q1t70",
+  "topic": "Cassandra",
+  "type": "single",
+  "q": "HI: with replication factor 3, why does QUORUM for both reads and writes guarantee a read sees the latest write?",
+  "options": [
+   "QUORUM forces all 3 replicas to respond",
+   "QUORUM needs 2 of 3 each, so read and write sets always share at least one node",
+   "QUORUM routes every request to a single leader",
+   "QUORUM disables eventual consistency cluster-wide"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "QUORUM = majority (n/2+1). For 3 nodes that's 2, so write touches 2 and read touches 2 of 3, guaranteeing at least one overlapping node that has seen the write."
+ },
+ {
+  "id": "qcwkm",
+  "topic": "Cassandra",
+  "type": "single",
+  "q": "HI: why did Discord add a bucket (fixed 10-day window) to the partition key of their Cassandra messages table?",
+  "options": [
+   "To support JOINs between channels and authors",
+   "To stop busy-channel partitions growing unbounded and hitting large-partition problems",
+   "To enable strong consistency for reads",
+   "To reduce SSTables created during compaction"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: partitioning only by channel_id let busy channels grow monotonically into large-partition problems. The 10-day bucket caps partition size and rolls over, while recent reads still hit one partition."
+ },
+ {
+  "id": "q7602",
+  "topic": "Cassandra",
+  "type": "multi",
+  "q": "HI: which are true about how Cassandra handles writes and deletes? (select all)",
+  "options": [
+   "A delete is recorded as a tombstone rather than removing data in place",
+   "Writes go to the commit log, then the Memtable, then later flush to an immutable SSTable",
+   "Each write updates the existing row in place inside the SSTable on disk",
+   "Compaction consolidates SSTables and removes tombstoned rows"
+  ],
+  "correct": [
+   0,
+   1,
+   3
+  ],
+  "why": "HI: deletes are tombstones; writes hit the commit log (WAL) then the Memtable, later flushed to an immutable SSTable. SSTables are immutable (no in-place updates); compaction merges SSTables and purges tombstones."
+ },
+ {
+  "id": "q90lo",
+  "topic": "Cassandra",
+  "type": "single",
+  "q": "HI: how do Cassandra nodes share cluster state (which nodes are alive, the schema)?",
+  "options": [
+   "A central ZooKeeper coordinator",
+   "A peer-to-peer gossip protocol biased toward seed nodes",
+   "A primary leader broadcasting to followers",
+   "A shared SQL metadata table"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: Cassandra uses peer-to-peer gossip with a bias toward seed nodes (guaranteed hotspots) so info reaches the whole cluster and no sub-clusters form. No single coordinator."
+ },
+ {
+  "id": "qsvbq",
+  "topic": "DynamoDB",
+  "type": "single",
+  "q": "HI: maximum size of a single DynamoDB item, including all attributes?",
+  "options": [
+   "64KB",
+   "256KB",
+   "400KB",
+   "1MB"
+  ],
+  "correct": [
+   2
+  ],
+  "why": "HI: each item has a primary key and can hold up to 400KB of data including all attributes."
+ },
+ {
+  "id": "q4zal",
+  "topic": "DynamoDB",
+  "type": "single",
+  "q": "HI: how do you choose eventual vs strong consistency for a DynamoDB read?",
+  "options": [
+   "A table-level setting fixed at creation",
+   "Per-request via ConsistentRead=true on the read call",
+   "Automatically by item size",
+   "Globally per AWS region"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: not table-level. Set ConsistentRead=true per GetItem/Query/Scan. Strong reads hit the leader, cost 2x the RCU (1 RCU/4KB vs 0.5), and aren't supported on GSIs."
+ },
+ {
+  "id": "qjac3",
+  "topic": "DynamoDB",
+  "type": "multi",
+  "q": "HI: which correctly distinguish a GSI from an LSI in DynamoDB? (select all)",
+  "options": [
+   "A GSI can use a different partition key; an LSI must share the base table partition key",
+   "GSIs support only eventually consistent reads; LSIs also support strong reads",
+   "LSIs can be added or removed any time; GSIs must be defined at table creation",
+   "An LSI is co-located on the base table's partitions; a GSI lives on separate partitions"
+  ],
+  "correct": [
+   0,
+   1,
+   3
+  ],
+  "why": "HI: GSIs use a different partition key, live on separate partitions, eventual-only. LSIs share the partition key, are co-located, support strong reads, but must be defined at table creation (the reversed claim is wrong)."
+ },
+ {
+  "id": "q1foo",
+  "topic": "DynamoDB",
+  "type": "single",
+  "q": "HI: using ProjectionExpression to return only a few attributes primarily saves what?",
+  "options": [
+   "RCU cost — only projected attributes are read from storage",
+   "Network bandwidth only; the full item is still read and full RCU charged",
+   "Storage cost — unprojected attributes aren't persisted",
+   "Nothing — it's unsupported"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: unlike SQL column selection, ProjectionExpression only cuts network bandwidth. The full item is still read and you pay full RCU on its total size — which is why large items should be normalized."
+ },
+ {
+  "id": "q158k",
+  "topic": "DynamoDB",
+  "type": "single",
+  "q": "HI: roughly how many read/write capacity units does a single DynamoDB partition support?",
+  "options": [
+   "~3,000 RCUs and ~1,000 WCUs",
+   "~1,000 RCUs and ~3,000 WCUs",
+   "~10,000 RCUs and ~10,000 WCUs",
+   "Unlimited — no per-partition ceiling"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI: ~3,000 RCUs and ~1,000 WCUs per partition (~12MB/s reads, ~1MB/s writes) — useful for back-of-envelope partition-count math."
+ },
+ {
+  "id": "q9r3m",
+  "topic": "DynamoDB",
+  "type": "single",
+  "q": "HI: an important caveat about DAX (DynamoDB Accelerator) and stale data?",
+  "options": [
+   "DAX never caches reads, so staleness is impossible",
+   "DAX only auto-invalidates for writes that pass through DAX; direct writes to DynamoDB leave cached entries stale until TTL/eviction",
+   "DAX caches strongly consistent reads, which go stale",
+   "DAX needs no client change and is fully transparent"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: DAX is read-through/write-through but only invalidates for writes through DAX. Direct DynamoDB writes bypass it, so entries stay stale until TTL/eviction. DAX also doesn't cache strong reads and needs the DAX client SDK."
+ },
+ {
+  "id": "q1ssx",
+  "topic": "PostgreSQL",
+  "type": "single",
+  "q": "HI: what index type does PostgreSQL create by default, including on a primary key?",
+  "options": [
+   "A hash index",
+   "A B-tree index",
+   "A GIN index",
+   "An LSM tree index"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: Postgres defaults to B-tree indexes (auto-created on the primary key), good for exact matches, range queries, and sorting when ORDER BY columns match the index order."
+ },
+ {
+  "id": "qxq5m",
+  "topic": "PostgreSQL",
+  "type": "single",
+  "q": "HI: why is read performance the first focus when evaluating Postgres for a social platform?",
+  "options": [
+   "Writes aren't supported without extensions",
+   "In most apps reads vastly outnumber writes — users browse far more than they create",
+   "Postgres can't index write-heavy tables",
+   "Reads are billed separately"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: reads vastly outnumber writes in most apps; users spend far more time browsing than creating, making read performance critical."
+ },
+ {
+  "id": "qlouw",
+  "topic": "PostgreSQL",
+  "type": "single",
+  "q": "HI: a common interview trap with Postgres indexes?",
+  "options": [
+   "Adding an index to every column",
+   "Using B-tree indexes for range queries",
+   "Indexing the primary key",
+   "Multi-column indexes for common query patterns"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI: indexing every column is a trap — each index slows writes, consumes disk, and may not even be used if the planner prefers a sequential scan."
+ },
+ {
+  "id": "q39sj",
+  "topic": "PostgreSQL",
+  "type": "multi",
+  "q": "HI social-media example: which operations have which consistency/integrity needs? (select all)",
+  "options": [
+   "Creating a DM thread (thread, participants, first message) must be atomic",
+   "Like counts can be eventually consistent",
+   "Comments and follows need referential integrity",
+   "Follower counts must be strongly consistent across every replica instantly"
+  ],
+  "correct": [
+   0,
+   1,
+   2
+  ],
+  "why": "HI: DM-thread creation must be atomic, like counts can be eventually consistent (a few seconds lag is fine), comments/follows need referential integrity. It doesn't claim follower counts need instant strong consistency."
+ },
+ {
+  "id": "q1ryg",
+  "topic": "PostgreSQL",
+  "type": "single",
+  "q": "HI warns candidates against which kind of statement about Postgres?",
+  "options": [
+   "That it supports B-tree indexes",
+   "Overly broad claims like 'NoSQL scales better than Postgres' without understanding the nuances",
+   "That reads usually outnumber writes",
+   "That indexes speed up reads"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: candidates get tripped up either diving too deep (MVCC, WAL) or making broad claims like 'NoSQL scales better than Postgres' without nuance. Interviewers want informed trade-offs."
+ },
+ {
+  "id": "q1o6g",
+  "topic": "Flink",
+  "type": "single",
+  "q": "HI: what fundamentally changes when you count clicks per user over the last 5 minutes vs processing each click independently?",
+  "options": [
+   "You introduce state — each message must remember previous counts",
+   "You no longer need Kafka as a source",
+   "You can switch back to a stateless DB write",
+   "You eliminate windowing"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI: the 5-minute window introduces state because each message depends on previous ones, unlike the trivial stateless transform-and-write case."
+ },
+ {
+  "id": "q19ll",
+  "topic": "Flink",
+  "type": "single",
+  "q": "HI: before reaching for a stream processor like Flink, what should you first ask?",
+  "options": [
+   "Do I really need real-time latencies?",
+   "Can I afford more Kafka partitions?",
+   "Is my data structured or unstructured?",
+   "Should I use Spark or Hadoop for the sink?"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI stresses asking 'do I really need real-time latencies?' — many seeming stream problems reduce to batch problems (Spark/Hadoop), saving an ops headache."
+ },
+ {
+  "id": "qhdbu",
+  "topic": "Flink",
+  "type": "multi",
+  "q": "HI: problems from holding 5-minute click counts as in-memory counters in your own service? (select all)",
+  "options": [
+   "A crash loses all state, forcing slow re-reading of the whole Kafka topic",
+   "Scaling out requires complicated state redistribution to new instances",
+   "Out-of-order or late events can hurt count accuracy",
+   "Kafka can't deliver messages fast enough"
+  ],
+  "correct": [
+   0,
+   1,
+   2
+  ],
+  "why": "HI enumerates crash-losing-state, state redistribution on scaling, and late/out-of-order events as the motivation for Flink. Kafka throughput is not cited."
+ },
+ {
+  "id": "q1k4l",
+  "topic": "Flink",
+  "type": "single",
+  "q": "HI: the role of the Job Manager relative to Task Managers in Flink?",
+  "options": [
+   "The Job Manager coordinates and schedules; Task Managers execute the actual tasks",
+   "The Job Manager stores checkpoints and Task Managers only read them",
+   "Task Managers coordinate the Job Manager, which only persists state",
+   "Both run identical roles with no coordinator"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI: the coordinating Job Manager schedules work; Task Managers run it in task slots, which is where parallelism comes from."
+ },
+ {
+  "id": "q12zw",
+  "topic": "Flink",
+  "type": "single",
+  "q": "HI: the basis for Flink's exactly-once processing guarantee?",
+  "options": [
+   "Periodic checkpointing of state to a state backend",
+   "Re-reading the entire Kafka topic on every failure",
+   "Disabling watermarks so nothing is late",
+   "Holding all counters in volatile memory only"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI ties exactly-once to checkpointing state into a state backend, letting Flink recover after failure rather than replaying everything from scratch."
+ },
+ {
+  "id": "q1ym1",
+  "topic": "Flink",
+  "type": "single",
+  "q": "HI: why do watermarks matter in a Flink job?",
+  "options": [
+   "They let Flink reason about event-time progress and handle late/out-of-order events",
+   "They encrypt the stream between operators",
+   "They replace the Job Manager",
+   "They define how many task slots each Task Manager gets"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI: watermarks track event-time progress so windows correctly account for late and out-of-order events."
+ },
+ {
+  "id": "q1xg9",
+  "topic": "ZooKeeper",
+  "type": "single",
+  "q": "HI: what core problem was ZooKeeper (2008) designed to solve?",
+  "options": [
+   "Coordinating distributed systems — leader election, consistent config, failure detection",
+   "Storing large media blobs efficiently",
+   "A high-throughput message queue replacing Kafka",
+   "Batch analytics over historical data"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI frames ZooKeeper as distributed coordination: electing leaders, keeping consistent config, and detecting failures in real time."
+ },
+ {
+  "id": "q96j9",
+  "topic": "ZooKeeper",
+  "type": "multi",
+  "q": "HI: which primitives does ZooKeeper use to solve coordination problems? (select all)",
+  "options": [
+   "A hierarchical namespace",
+   "Data nodes (znodes)",
+   "Watches",
+   "A SQL query engine"
+  ],
+  "correct": [
+   0,
+   1,
+   2
+  ],
+  "why": "HI: ZooKeeper coordinates via a hierarchical namespace, data nodes (znodes), and watches. It has no SQL query engine."
+ },
+ {
+  "id": "q1usl",
+  "topic": "ZooKeeper",
+  "type": "single",
+  "q": "HI: which universal distributed-systems problems does ZooKeeper teach you to solve?",
+  "options": [
+   "Consensus, leader election, and configuration management",
+   "Image resizing, CDN routing, and compression",
+   "Garbage collection, JIT compilation, and threading",
+   "Sharding keys, hashing rings, and bloom filters"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI: learning ZooKeeper gives insight into consensus, leader election, and configuration management — the canonical coordination problems."
+ },
+ {
+  "id": "q1bgc",
+  "topic": "ZooKeeper",
+  "type": "single",
+  "q": "HI chat-app example: why does a single-server deployment need no coordination?",
+  "options": [
+   "Both users connect to the same server, so delivery is in-memory and low latency",
+   "ZooKeeper is embedded in the single server by default",
+   "The server uses ZAB consensus even with one node",
+   "Messages are batched and processed offline"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI: when both users are on the same server, delivery is in-memory with low latency — coordination only appears once you scale out."
+ },
+ {
+  "id": "qy005",
+  "topic": "ZooKeeper",
+  "type": "single",
+  "q": "HI: which consensus protocol underlies ZooKeeper's strong consistency?",
+  "options": [
+   "ZAB (ZooKeeper Atomic Broadcast)",
+   "Raft",
+   "Two-phase commit (2PC)",
+   "Gossip"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI's 'Consensus with ZAB' section indicates ZooKeeper relies on the ZAB protocol for its strong consistency guarantees."
+ },
+ {
+  "id": "qv0vy",
+  "topic": "ZooKeeper",
+  "type": "single",
+  "q": "HI: ZooKeeper's place in today's landscape?",
+  "options": [
+   "Aged, with alternatives, but still central to the Apache ecosystem",
+   "The newest and fastest coordination service available",
+   "Fully removed from all major systems",
+   "Primarily a relational database now"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI: ZooKeeper (2008) has aged and faces alternatives, yet remains central to the Apache ecosystem in particular."
+ },
+ {
+  "id": "q5vyf",
+  "topic": "Pattern: Real-time",
+  "type": "single",
+  "q": "HI frames real-time updates as two distinct hops. What are they?",
+  "options": [
+   "Client to LB, and LB to server",
+   "The first hop (server to client) and the second hop (source to server)",
+   "Browser to DNS, and DNS to origin",
+   "Read replica to cache, and cache to client"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI splits it into the first hop (server to client) and the second hop (source to server), each with different trade-offs."
+ },
+ {
+  "id": "q11b6",
+  "topic": "Pattern: Real-time",
+  "type": "single",
+  "q": "HI: why does standard HTTP break down for real-time systems?",
+  "options": [
+   "HTTP can't transmit binary data",
+   "HTTP is request-response — client asks, server responds, connection closes — so the server can't proactively push",
+   "HTTP is always slower than UDP",
+   "HTTP requires DNS on every request"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: standard HTTP is request-response; it works for browsing but breaks when servers need to proactively push updates."
+ },
+ {
+  "id": "qs1pd",
+  "topic": "Pattern: Real-time",
+  "type": "single",
+  "q": "HI OSI layering: which protocol/layer/property pairing is correct?",
+  "options": [
+   "IP at Layer 4 guarantees in-order delivery",
+   "TCP at Layer 4 is connectionless and spray-and-pray",
+   "UDP at Layer 4 is connectionless with no delivery/ordering guarantees",
+   "WebSockets at Layer 3 handle packet routing"
+  ],
+  "correct": [
+   2
+  ],
+  "why": "HI: UDP is a connectionless Transport (L4) protocol with no delivery/ordering guarantees (spray-and-pray); TCP is connection-oriented; IP sits at L3."
+ },
+ {
+  "id": "q1nj6",
+  "topic": "Pattern: Real-time",
+  "type": "multi",
+  "q": "HI: which client-server approaches does the first-hop section explicitly cover? (select all)",
+  "options": [
+   "Long Polling",
+   "Server-Sent Events (SSE)",
+   "WebSockets",
+   "GraphQL subscriptions over gRPC"
+  ],
+  "correct": [
+   0,
+   1,
+   2
+  ],
+  "why": "HI covers Simple Polling, Long Polling, SSE, WebSockets, and WebRTC. GraphQL subscriptions over gRPC is not one of the named protocols."
+ },
+ {
+  "id": "qq1df",
+  "topic": "Pattern: Real-time",
+  "type": "single",
+  "q": "HI: for the second hop (source to the server holding the connection), which two PUSH approaches are contrasted?",
+  "options": [
+   "Pushing via consistent hashes and pushing via pub/sub",
+   "Two-phase commit and gossip protocols",
+   "Write-ahead logging and change data capture",
+   "Leader election and quorum reads"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI details pushing via consistent hashes and via pub/sub (plus pulling via polling) as ways to route an update to the specific server holding a client's connection."
+ },
+ {
+  "id": "q1wdz",
+  "topic": "Pattern: Real-time",
+  "type": "single",
+  "q": "HI: how is SSE characterized relative to WebSockets?",
+  "options": [
+   "SSE is full-duplex like WebSockets",
+   "SSE is an efficient one-way street (server to client); WebSockets are the full-duplex champion",
+   "SSE is peer-to-peer; WebSockets are server-based",
+   "SSE requires UDP; WebSockets require TCP"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI titles SSE 'The Efficient One-Way Street' (server-to-client) and WebSockets 'The Full-Duplex Champion'; WebRTC is the peer-to-peer option."
+ },
+ {
+  "id": "qjtxc",
+  "topic": "Pattern: Contention",
+  "type": "single",
+  "q": "HI: how is contention defined?",
+  "options": [
+   "When a database runs out of disk space",
+   "When multiple processes compete for the same resource at the same time",
+   "When a network partition splits a cluster",
+   "When a cache and database disagree on a value"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: contention is multiple processes competing for the same resource at once (the last concert ticket), causing race conditions, double-bookings, and inconsistent state if unhandled."
+ },
+ {
+  "id": "qlseq",
+  "topic": "Pattern: Contention",
+  "type": "single",
+  "q": "HI Alice and Bob ticket example: why does the naive read-check-decrement oversell the seat?",
+  "options": [
+   "The index on concert_id was missing",
+   "Bob reads the same count Alice read before Alice writes her update back, so both pass the check and both decrement",
+   "The UPDATE had a syntax error",
+   "The seat count was cached in a stale CDN"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: Alice reads one seat, then Bob reads the same count before Alice writes; both check what they read, both decrement, dropping the count to negative one."
+ },
+ {
+  "id": "qkm1j",
+  "topic": "Pattern: Contention",
+  "type": "multi",
+  "q": "HI: which approaches to contention are covered as distinct named solutions? (select all)",
+  "options": [
+   "Conditional Writes",
+   "Pessimistic Locking",
+   "Optimistic Concurrency Control",
+   "Eventual consistency via vector clocks"
+  ],
+  "correct": [
+   0,
+   1,
+   2
+  ],
+  "why": "HI enumerates Conditional Writes, Pessimistic Locking, Optimistic Concurrency Control, Isolation Levels, and Distributed Locks. Vector-clock eventual consistency is not listed."
+ },
+ {
+  "id": "qp10c",
+  "topic": "Pattern: Contention",
+  "type": "single",
+  "q": "HI deep dive: the classic gotcha with optimistic concurrency is…",
+  "options": [
+   "The thundering herd problem",
+   "The ABA problem",
+   "The split-brain problem",
+   "The dining philosophers problem"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI calls out the ABA problem: a value changes from A to B and back to A between read and write, defeating a naive version check."
+ },
+ {
+  "id": "q1nwn",
+  "topic": "Pattern: Contention",
+  "type": "single",
+  "q": "HI: which failure mode is a deep-dive concern specific to pessimistic locking?",
+  "options": [
+   "Lost updates",
+   "Deadlocks",
+   "Cache stampedes",
+   "Clock drift"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI has a dedicated deep dive on preventing deadlocks with pessimistic locking — holding locks across multiple resources can make processes wait on each other in a cycle."
+ },
+ {
+  "id": "qrzl4",
+  "topic": "Pattern: Contention",
+  "type": "single",
+  "q": "HI's stance on when to reach for heavy contention machinery?",
+  "options": [
+   "Always use distributed locks to be safe",
+   "It has a 'When NOT to overcomplicate' section, warning against over-engineering low-contention cases",
+   "Pessimistic locking should be the default everywhere",
+   "Contention can only be solved with a dedicated coordination service"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI's 'When NOT to overcomplicate' section signals you should match the solution to the actual level of contention rather than always reaching for distributed locks/OCC."
+ },
+ {
+  "id": "q18xc",
+  "topic": "Pattern: Multi-step",
+  "type": "single",
+  "q": "HI: which solutions does the multi-step article present?",
+  "options": [
+   "Sagas, workflow systems, and durable execution",
+   "Sharding, replication, and caching",
+   "Load balancing, autoscaling, and rate limiting",
+   "Indexing, partitioning, and denormalization"
+  ],
+  "correct": [
+   0
+  ],
+  "why": "HI centers multi-step processes on sagas, workflow systems, and durable execution (Single Server Orchestration, Event Sourcing, Workflows)."
+ },
+ {
+  "id": "q1ldb",
+  "topic": "Pattern: Multi-step",
+  "type": "single",
+  "q": "HI: the core design problem of naive multi-step orchestration?",
+  "options": [
+   "It uses too much disk for logs",
+   "It interweaves system-level concerns (crashes, retries, failures) with business-level concerns, making the system brittle",
+   "It can't scale reads across replicas",
+   "It requires synchronous HTTP for every call"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI: organically patching processes interweaves system-level concerns like crashes/retries with business logic, making the design complex and brittle."
+ },
+ {
+  "id": "qv3cn",
+  "topic": "Pattern: Multi-step",
+  "type": "single",
+  "q": "HI: which example workflow motivates the multi-step pattern?",
+  "options": [
+   "A social media feed fan-out",
+   "E-commerce order fulfillment (charge payment, reserve inventory, create shipping label, wait for pickup, send confirmation)",
+   "A video transcoding pipeline",
+   "A real-time stock ticker"
+  ],
+  "correct": [
+   1
+  ],
+  "why": "HI uses e-commerce order fulfillment: charge payment, reserve inventory, create a shipping label, wait for a human pickup, send confirmation — any step can fail or time out."
+ }
+]

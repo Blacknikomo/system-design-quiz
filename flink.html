@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flink — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* tiny layout tweaks only — window buckets + clock/watermark strip */
+  .clkbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+  .pill.clk{font-size:13px;padding:4px 12px;color:var(--txt);border-color:var(--accent);background:#15233a}
+  .pill.wm{font-size:13px;padding:4px 12px;color:var(--warn);border-color:#5a4520;background:var(--warnbg)}
+  .pill.clk b,.pill.wm b{font-family:ui-monospace,Menlo,monospace}
+  .node.fired{opacity:.5;border-color:var(--line)!important;filter:grayscale(.4)}
+  .node .rng{font-family:ui-monospace,Menlo,monospace;color:var(--muted);font-size:11px;margin-bottom:6px}
+  .emitwrap{margin-top:14px}
+  .emit{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--okbg);border:1px solid #1c5235;
+    border-radius:6px;padding:4px 8px;margin:4px 0;color:var(--ok)}
+  .emit .w{color:var(--muted)}
+  .empt{color:var(--muted);font-size:12px;padding:4px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🌊 Flink — windows, state &amp; watermarks</h1>
+      <div class="sub">Count events per key in <i>tumbling</i> 10-second windows. Send events (even <i>out-of-order</i> ones), advance the <b>event-time clock</b>, and watch the <b>watermark</b> trail behind to decide exactly when each window <i>closes and emits</i> — and what happens to events that arrive too <i>late</i>.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">stateful streaming</span>
+      <span class="tag">tumbling windows</span>
+      <span class="tag">event-time</span>
+      <span class="tag">watermarks</span>
+      <span class="tag">checkpointed state → exactly-once</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">Flink processes an unbounded stream and keeps <b>managed state</b> — here, a running count per key inside each <b>tumbling window</b> <code>[0,10), [10,20), …</code>. Events carry an <b>event timestamp</b>; they route to the window that contains it, not the window that's "current". A <b>watermark</b> trails the event-time clock by a bounded "max out-of-orderness" lag; when the watermark passes a window's <b>end</b>, Flink decides no more in-order data is coming, <b>closes</b> the window and <b>emits</b> its aggregate. State survives crashes via <b>checkpointing</b>, giving <b>exactly-once</b> results.</p>
+    <div class="note info"><b>First ask:</b> do you actually need real-time? If a daily/hourly batch job is fine, reach for <b>Spark / batch</b> — it's simpler and cheaper. Flink earns its keep only when you need <i>low-latency, continuous, stateful</i> results over an unbounded stream.</div>
+    <div class="note gotcha"><b>The gotcha:</b> "I'll just keep window counts in a plain in-memory map in my own service." That map is <b>lost on crash</b>, <b>can't be redistributed</b> when you scale out / rebalance keys, and has <b>no principled way to handle late or out-of-order events</b> — you'd either close windows too early or never. Flink's <b>checkpointed keyed state + watermarks</b> are exactly what solve all three.</div>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Send an event</h3>
+    <div class="row">
+      <label class="fld">key<input type="text" id="k" value="video_A" size="12"></label>
+      <label class="fld">event timestamp (s)<input type="number" id="ts" value="0" size="6" style="width:90px"></label>
+      <button class="btn" id="sendBtn">SEND event</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn sec" id="advBtn">⏱ +5s advance time</button>
+      <span style="width:14px"></span>
+      <button class="btn ghost" id="resetBtn">↺ Reset all</button>
+      <span class="small muted" style="margin-left:8px">Tip: advance the clock, then SEND an event with a small timestamp to fire a <b>late</b> event.</span>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="clkbar" id="clkbar"></div>
+      <div class="nodes" id="nodes"></div>
+      <div class="emitwrap">
+        <h3 style="margin-top:0">Emitted results (closed windows)</h3>
+        <div id="emitted"></div>
+      </div>
+    </div>
+    <div class="explain" id="explain"></div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Event log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li>An event <code>(key, timestamp)</code> routes to the window whose range <b>contains its timestamp</b> — by <span style="color:var(--accent)">event-time</span>, not arrival order.</li>
+        <li>The window's per-key count is incremented in <b>managed keyed state</b> (this is the stateful aggregation; a stateless <code>map/filter</code> would keep nothing).</li>
+        <li><b>+5s</b> advances the event-time clock; the <b>watermark</b> follows at <code>clock − 5s</code> (bounded out-of-orderness).</li>
+        <li>When the <b>watermark</b> passes a window's <b>end</b>, that window <b>closes &amp; emits</b> its aggregate, then is greyed out.</li>
+        <li>An event landing in an <b>already-closed</b> window is <span style="color:var(--bad)">LATE</span> → dropped by default (Flink could instead route to a side output or allow lateness).</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+const WSIZE = 10;     // tumbling window size in seconds
+const LAG   = 5;      // max out-of-orderness: watermark = clock - LAG
+const NWIN  = 5;      // number of window buckets shown: [0,10) ... [40,50)
+let clock;            // current event-time clock (seconds)
+let watermark;        // current watermark (seconds)
+let windows;          // [{start,end,fired, counts:{key:n}}, ...]
+let busy = false;
+
+function winIndexFor(ts){ return Math.floor(ts / WSIZE); }
+
+function reset(){
+  busy = false;
+  clock = 0;
+  watermark = clock - LAG;       // = -5
+  windows = [];
+  for(let i=0;i<NWIN;i++){
+    windows.push({start:i*WSIZE, end:(i+1)*WSIZE, fired:false, counts:{}});
+  }
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('ts').value = clock;
+  logLine('info', `Job started. Tumbling windows of ${WSIZE}s, max out-of-orderness ${LAG}s. clock=${clock}s, watermark=${watermark}s.`);
+  render();
+  explain('Send an event with a <b>timestamp</b> to route it into a window and grow that window’s keyed <b>state</b>. Then press <b>+5s</b> to advance event-time and watch the <b>watermark</b> close windows behind it.');
+}
+
+// ---------- rendering ----------
+function clkEl(){
+  document.getElementById('clkbar').innerHTML =
+    `<span class="pill clk">event-time clock: <b>${clock}s</b></span>`+
+    `<span class="pill wm">watermark: <b>${watermark}s</b></span>`+
+    `<span class="small muted">watermark = clock − ${LAG}s (closes a window once it passes the window’s end)</span>`;
+}
+function winEl(w, i){
+  const keys = Object.keys(w.counts);
+  const rows = keys.length
+    ? keys.map(k=>`<div class="kv${w.fired?'':' new'}"><span class="k">${k}</span><span>${w.counts[k]}</span></div>`).join('')
+    : '<div class="empt">(no events)</div>';
+  const cls = 'node' + (w.fired?' fired':' primary');
+  const badge = w.fired ? '<span class="badge">closed</span>' : '<span class="badge">open</span>';
+  return `<div class="${cls}" id="win${i}">
+      <div class="title">🪟 window ${badge}</div>
+      <div class="rng">[${w.start}, ${w.end})</div>
+      ${rows}
+    </div>`;
+}
+function emittedEl(){
+  const out = [];
+  windows.forEach(w=>{
+    if(w.fired){
+      const keys = Object.keys(w.counts);
+      if(keys.length===0){
+        out.push(`<div class="emit"><span class="w">[${w.start},${w.end})</span> &rarr; (empty, no results)</div>`);
+      } else {
+        keys.forEach(k=>{
+          out.push(`<div class="emit"><span class="w">[${w.start},${w.end})</span> &rarr; ${k} = ${w.counts[k]}</div>`);
+        });
+      }
+    }
+  });
+  document.getElementById('emitted').innerHTML = out.length ? out.join('') :
+    '<div class="empt">No windows have closed yet. Advance the clock so the watermark passes a window’s end.</div>';
+}
+function render(){
+  clkEl();
+  document.getElementById('nodes').innerHTML = windows.map(winEl).join('');
+  emittedEl();
+}
+
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+
+const sleep = ms => new Promise(r=>setTimeout(r, ms));
+function flash(id, cls){
+  const e = document.getElementById(id);
+  if(e){ e.classList.add(cls); setTimeout(()=>e.classList.remove(cls), 600); }
+}
+
+// fly a packet from one element to another inside the stage
+function fly(fromEl, toEl, label, cls){
+  return new Promise(res=>{
+    const stage = document.getElementById('stage');
+    const sr = stage.getBoundingClientRect();
+    const a = (typeof fromEl==='string'?document.querySelector(fromEl):fromEl).getBoundingClientRect();
+    const b = (typeof toEl==='string'?document.querySelector(toEl):toEl).getBoundingClientRect();
+    const p = document.createElement('div');
+    p.className = 'packet ' + (cls||'');
+    p.textContent = label;
+    p.style.left = (a.left - sr.left + a.width/2 - 20) + 'px';
+    p.style.top  = (a.top  - sr.top  + 6) + 'px';
+    stage.appendChild(p);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      p.style.left = (b.left - sr.left + b.width/2 - 20) + 'px';
+      p.style.top  = (b.top  - sr.top  + b.height/2 - 10) + 'px';
+    }));
+    setTimeout(()=>{ p.style.opacity=0; setTimeout(()=>{ p.remove(); res(); }, 250); }, 720);
+  });
+}
+
+// ---------- operations ----------
+async function send(){
+  if(busy) return;
+  const key = document.getElementById('k').value.trim() || 'key';
+  const tsRaw = document.getElementById('ts').value;
+  const ts = parseInt(tsRaw, 10);
+  if(isNaN(ts) || ts < 0){
+    logLine('warn', 'Enter a non-negative integer timestamp (seconds).');
+    return;
+  }
+  busy = true;
+  const idx = winIndexFor(ts);
+  logLine('cmd', `> SEND key=${key} timestamp=${ts}s`);
+
+  // event beyond the buckets we visualize
+  if(idx >= NWIN){
+    logLine('warn', `timestamp ${ts}s falls in window [${idx*WSIZE},${(idx+1)*WSIZE}) which is beyond this demo (showing [0,${NWIN*WSIZE})). Use a smaller timestamp.`);
+    explain(`This demo visualizes windows up to <b>[${(NWIN-1)*WSIZE},${NWIN*WSIZE})</b>. Pick a timestamp under <b>${NWIN*WSIZE}s</b>.`);
+    busy = false;
+    return;
+  }
+
+  const w = windows[idx];
+
+  // LATE event: its window already closed (watermark passed window end)
+  if(w.fired){
+    await fly('#stage', '#win'+idx, `${key}@${ts}`, 'bad');
+    flash('win'+idx, 'flash-bad');
+    logLine('err', `LATE event: timestamp ${ts}s belongs to window [${w.start},${w.end}) which already CLOSED (watermark=${watermark}s ≥ ${w.end}s). Dropped.`);
+    explain(`Event <code>${key}@${ts}s</code> is <b style="color:var(--bad)">LATE</b>: its window <b>[${w.start},${w.end})</b> already fired because the <b>watermark (${watermark}s)</b> passed the window end <b>(${w.end}s)</b>. By default Flink <b>drops</b> late data — this is exactly the case a hand-rolled counter would silently miscount. (Real Flink can instead emit to a <i>side output</i> or keep the window open with <code>allowedLateness</code>.)`);
+    busy = false;
+    return;
+  }
+
+  // normal / out-of-order-but-still-in-time event
+  await fly('#stage', '#win'+idx, `${key}@${ts}`, '');
+  w.counts[key] = (w.counts[key] || 0) + 1;
+  render();
+  flash('win'+idx, 'flash-ok');
+  logLine('ok', `routed to window [${w.start},${w.end}); ${key} count → ${w.counts[key]}  (managed keyed state)`);
+
+  const ooo = ts < watermark + LAG ? '' : '';
+  const oooNote = ts < clock
+    ? ` This event’s timestamp (${ts}s) is <i>earlier</i> than the clock (${clock}s) — it’s <b>out-of-order</b>, but still ahead of the watermark, so the window is still open and it’s counted correctly.`
+    : '';
+  explain(`Routed by <b>event-time</b>: timestamp <b>${ts}s</b> ∈ window <b>[${w.start},${w.end})</b>. ${key}’s count in that window is now <b>${w.counts[key]}</b>, held in <b>checkpointed keyed state</b>.${oooNote} The window stays <b>open</b> until the watermark passes <b>${w.end}s</b>.`);
+  busy = false;
+}
+
+async function advance(){
+  if(busy) return;
+  busy = true;
+  clock += 5;
+  watermark = clock - LAG;
+  document.getElementById('ts').value = clock;
+  logLine('cmd', `> advance event-time +5s`);
+  logLine('info', `clock=${clock}s, watermark=${watermark}s`);
+  render();
+
+  // close any window whose end the watermark has now passed
+  let fired = 0;
+  for(let i=0;i<NWIN;i++){
+    const w = windows[i];
+    if(!w.fired && watermark >= w.end){
+      w.fired = true;
+      fired++;
+      render();
+      flash('win'+i, 'flash-ok');
+      const keys = Object.keys(w.counts);
+      const summary = keys.length ? keys.map(k=>`${k}=${w.counts[k]}`).join(', ') : '(empty)';
+      logLine('ok', `WINDOW FIRED: [${w.start},${w.end}) closed (watermark ${watermark}s ≥ end ${w.end}s) → emit ${summary}`);
+      await sleep(250);
+    }
+  }
+
+  if(fired > 0){
+    explain(`Watermark advanced to <b>${watermark}s</b>. <b>${fired}</b> window(s) whose end ≤ watermark are now <b>closed &amp; emitted</b> — Flink concluded no more in-order events for them will arrive. Any event arriving for those ranges from now on is <b style="color:var(--bad)">late</b> and dropped by default.`);
+  } else {
+    explain(`Clock = <b>${clock}s</b>, watermark = <b>${watermark}s</b>. No window has fully passed the watermark yet (a window <b>[s,e)</b> fires only once <b>watermark ≥ e</b>). The ${LAG}s lag is the slack Flink gives <b>out-of-order</b> events before declaring a window complete.`);
+  }
+  busy = false;
+}
+
+// ---------- wire up ----------
+document.getElementById('sendBtn').onclick = send;
+document.getElementById('advBtn').onclick = advance;
+document.getElementById('resetBtn').onclick = reset;
+reset();
+</script>
+</body>
+</html>

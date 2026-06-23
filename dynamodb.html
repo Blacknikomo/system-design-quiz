@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DynamoDB — Interactive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>⚡ DynamoDB — partitions, consistency &amp; GSIs</h1>
+      <div class="sub">Managed key-value / wide-column store. Watch how the <i>partition key</i> hashes to a partition, how a leader replica acks writes before followers catch up, and why an <i>eventually-consistent</i> read can be stale while a <i>strongly-consistent</i> one isn't.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">partition key → hash</span>
+      <span class="tag">leader + followers</span>
+      <span class="tag">eventual by default</span>
+      <span class="tag">RCU / WCU billing</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">Every item's <b>partition key</b> is hashed to choose a partition. A write goes to that partition's <b>leader</b> replica, which acks the client, then <b>asynchronously replicates</b> to followers. A <b>strongly-consistent</b> read hits the leader (always latest, 1 RCU); an <b>eventually-consistent</b> read may hit a lagging follower (possibly stale, 0.5 RCU).</p>
+    <div class="note gotcha"><b>Signature gotchas:</b> item size limit is <b>400KB</b>. <code>ProjectionExpression</code> only saves <b>network bandwidth, not RCU</b> — you still pay for the full item size read. A <b>hot partition key</b> throttles (per-partition ceiling ≈ <b>3000 RCU / 1000 WCU</b>). And <b>strongly-consistent reads are NOT available on GSIs.</b></div>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Run an operation</h3>
+    <div class="row">
+      <label class="fld">partition key (pk)<input type="text" id="pk" value="user#1" size="10"></label>
+      <label class="fld">email value<input type="text" id="val" value="alice@x.com" size="12"></label>
+      <button class="btn" id="putBtn">PutItem</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label class="fld">ConsistentRead
+        <select id="consistency"><option value="eventual">eventual (0.5 RCU)</option><option value="strong">strong (1 RCU)</option></select>
+      </label>
+      <button class="btn sec" id="getBtn">GetItem</button>
+      <span style="width:14px"></span>
+      <button class="btn ghost" id="pauseBtn">⏸ Pause replication (simulate lag)</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn sec" id="gsiBtn">＋ Create GSI on email</button>
+      <button class="btn sec" id="qgsiBtn">Query GSI by email value</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="nodes" id="nodes"></div>
+    </div>
+    <div class="explain" id="explain">Run <b>PutItem</b>: the partition key is hashed to pick a partition, the write lands on that partition's leader, then replicates to followers. Pause replication, PutItem a new value, then GetItem to compare eventual vs strong reads.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Command log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><code>PutItem</code>: <code>hash(pk) % 3</code> picks the partition; the write hits its <b>leader</b> (blue).</li>
+        <li>Leader acks the client (1 WCU/1KB), then <b>async-replicates</b> to followers (purple).</li>
+        <li><code>GetItem · eventual</code> may read a <span style="color:var(--warn)">stale</span> follower (0.5 RCU).</li>
+        <li><code>GetItem · strong</code> reads the leader → always latest (1 RCU = 2×).</li>
+        <li>A <b>GSI</b> re-keys items by <code>email</code> on its own partitions — <b>eventual only</b>, no strong reads.</li>
+      </ol>
+      <div class="note info" style="margin-top:12px"><b>LSI vs GSI:</b> a <b>Local Secondary Index</b> shares the table's partition key (co-located on the same partitions), supports <b>strong reads</b>, and must be defined at table creation. A <b>Global Secondary Index</b> uses a <b>different key</b>, lives on <b>separate partitions</b>, is <b>eventually consistent only</b>, and can be added anytime.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+// Each partition has a leader (authoritative) + a follower (async replica that can lag).
+// store: Map(pk -> {email}). leaderStore is truth; followerStore may lag while paused.
+let parts;          // 3 partitions, rebuilt each reset
+let paused = false;
+let busy = false;
+let gsi = null;     // null until created; then {store: Map(email -> pk)} eventually consistent
+
+const NPART = 3;
+
+function hashStr(s){
+  let h = 0;
+  for(let i=0;i<s.length;i++){ h = (h*31 + s.charCodeAt(i)) >>> 0; }
+  return h;
+}
+function partFor(pk){ return hashStr(pk) % NPART; }
+
+function freshParts(){
+  const a = [];
+  for(let i=0;i<NPART;i++){
+    a.push({ id:i, leader:new Map(), follower:new Map(), lag:0 });
+  }
+  return a;
+}
+
+function reset(){
+  paused = false; busy = false; gsi = null;
+  parts = freshParts();
+  document.getElementById('pauseBtn').textContent = '⏸ Pause replication (simulate lag)';
+  document.getElementById('log').innerHTML = '';
+  logLine('info', `Table ready: ${NPART} partitions, each with a leader + follower replica. No GSI yet.`);
+  render();
+  explain('Run <b>PutItem</b>: the partition key is hashed to pick a partition, the write lands on that partition\'s leader, then replicates to followers. Pause replication, PutItem a new value, then GetItem to compare eventual vs strong reads.');
+}
+
+// ---------- rendering ----------
+function kvRows(map, staleMap){
+  if(map.size === 0) return '<div class="small muted" style="padding:4px 0">(empty)</div>';
+  let out = '';
+  [...map.keys()].sort().forEach(pk=>{
+    const v = map.get(pk).email;
+    const stale = staleMap && (!staleMap.has(pk) || staleMap.get(pk).email !== v);
+    // For a follower, "stale" means it differs from the leader (truth).
+    out += `<div class="kv ${stale?'stale':''}"><span class="k">${pk}</span><span>${v}</span></div>`;
+  });
+  return out;
+}
+
+function nodeEl(p){
+  const lagging = p.lag > 0;
+  const lagBadge = lagging
+    ? `<span class="badge" style="color:var(--warn);border-color:var(--warn)">lag ${p.lag}</span>`
+    : '';
+  // leader block (truth) then follower block (may be stale vs leader)
+  const leaderRows = kvRows(p.leader, null);
+  const followerRows = kvRows(p.follower, p.leader); // stale relative to leader
+  return `<div class="node primary" id="node${p.id}" data-id="${p.id}">
+      <div class="title">⚡ partition-${p.id} <span class="badge">LEADER</span>${lagBadge}</div>
+      ${leaderRows}
+      <div class="title" style="margin-top:10px;font-size:11px;color:var(--accent2)">follower (async)</div>
+      <div class="node replica" style="min-width:0;padding:8px;margin-top:4px">${followerRows}</div>
+    </div>`;
+}
+
+function gsiEl(){
+  if(!gsi) return '';
+  const rows = gsi.store.size === 0
+    ? '<div class="small muted" style="padding:4px 0">(empty)</div>'
+    : [...gsi.store.keys()].sort().map(em=>
+        `<div class="kv"><span class="k">${em}</span><span>→ ${gsi.store.get(em)}</span></div>`).join('');
+  return `<div class="node replica" id="gsiNode" style="border-style:dashed">
+      <div class="title">🔎 GSI: email-index <span class="badge">SEPARATE PARTITIONS</span> <span class="badge" style="color:var(--warn);border-color:var(--warn)">eventual only</span></div>
+      ${rows}
+    </div>`;
+}
+
+function render(){
+  document.getElementById('nodes').innerHTML = parts.map(nodeEl).join('') + gsiEl();
+}
+
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+
+// fly a packet from one element to another inside #stage
+function fly(fromSel, toSel, label, cls){
+  return new Promise(res=>{
+    const stage = document.getElementById('stage');
+    const from = typeof fromSel==='string' ? document.querySelector(fromSel) : fromSel;
+    const to   = typeof toSel==='string'   ? document.querySelector(toSel)   : toSel;
+    if(!from || !to){ res(); return; }
+    const sr = stage.getBoundingClientRect();
+    const a = from.getBoundingClientRect();
+    const b = to.getBoundingClientRect();
+    const p = document.createElement('div');
+    p.className = 'packet ' + (cls || '');
+    p.textContent = label;
+    p.style.left = (a.left - sr.left + a.width/2 - 20) + 'px';
+    p.style.top  = (a.top  - sr.top  + a.height/2 - 10) + 'px';
+    stage.appendChild(p);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      p.style.left = (b.left - sr.left + b.width/2 - 20) + 'px';
+      p.style.top  = (b.top  - sr.top  + b.height/2 - 10) + 'px';
+    }));
+    setTimeout(()=>{ p.style.opacity = 0; setTimeout(()=>{ p.remove(); res(); }, 250); }, 720);
+  });
+}
+const sleep = ms => new Promise(r=>setTimeout(r, ms));
+function flash(id, cls){ const e = document.getElementById('node'+id); if(e){ e.classList.add(cls); setTimeout(()=>e.classList.remove(cls), 600); } }
+
+// ---------- operations ----------
+async function doPut(){
+  if(busy) return;
+  const pk = document.getElementById('pk').value.trim();
+  const email = document.getElementById('val').value.trim();
+  if(!pk || !email) return;
+  busy = true;
+  const idx = partFor(pk);
+  const p = parts[idx];
+  logLine('cmd', `> PutItem { pk:"${pk}", email:"${email}" }`);
+  logLine('info', `hash("${pk}") % ${NPART} = partition-${idx} → routed to its leader`);
+  // 1. client -> leader
+  await fly('#node'+idx, '#node'+idx, 'PUT '+pk, '');
+  p.leader.set(pk, {email});
+  render(); flash(idx, 'flash-ok');
+  logLine('ok', `leader partition-${idx} applied write + ACKed client · cost 1 WCU (≈1KB item)`);
+  explain(`<b>Leader acked immediately</b> after applying the write to partition-${idx}. Cost: <b>1 WCU</b> per 1KB. The client is done now — followers don't have it yet (async replication).`);
+  await sleep(350);
+  // 2. replicate to follower
+  if(paused){
+    p.lag++;
+    render();
+    logLine('warn', `replication PAUSED — partition-${idx} follower now lags behind the leader`);
+    explain('Replication is paused: the leader holds a newer value than its follower. An <b>eventual</b> read may hit the follower and return a <span style="color:var(--warn)">stale</span> value, while a <b>strong</b> read of the leader returns the latest.');
+  } else {
+    await fly('#node'+idx, '#node'+idx, 'repl '+pk, 'repl');
+    p.follower.set(pk, {email});
+    render(); flash(idx, 'flash-ok');
+    logLine('info', `partition-${idx} follower caught up via async stream`);
+  }
+  // 3. GSI is also async; only updated when replication is flowing
+  if(gsi){
+    if(paused){
+      logLine('warn', 'GSI update also queued — GSIs are eventually consistent and lag too');
+    } else {
+      await fly('#node'+idx, '#gsiNode', 'idx '+email, 'repl');
+      gsi.store.set(email, pk);
+      render();
+      logLine('info', `GSI email-index updated (eventually): "${email}" → ${pk}`);
+    }
+  }
+  busy = false;
+}
+
+async function doGet(){
+  if(busy) return;
+  const pk = document.getElementById('pk').value.trim();
+  if(!pk) return;
+  const mode = document.getElementById('consistency').value;
+  const idx = partFor(pk);
+  const p = parts[idx];
+  busy = true;
+  logLine('cmd', `> GetItem { pk:"${pk}" } · ConsistentRead=${mode==='strong'}`);
+  await fly('#node'+idx, '#node'+idx, 'GET '+pk, 'read');
+  if(mode === 'strong'){
+    const v = p.leader.has(pk) ? `"${p.leader.get(pk).email}"` : '(item not found)';
+    flash(idx, 'flash-ok');
+    logLine('ok', `STRONG read of leader partition-${idx} → ${v} · cost 1 RCU`);
+    explain(`<b>Strongly-consistent</b> read went straight to the leader of partition-${idx} → <b>${v}</b>. Always the latest value. Cost: <b>1 RCU</b> (2× an eventual read). Note: strong reads are <b>not available on GSIs</b>.`);
+  } else {
+    // eventual: read follower, which may lag
+    const follower = p.follower.has(pk) ? p.follower.get(pk).email : null;
+    const leader = p.leader.has(pk) ? p.leader.get(pk).email : null;
+    const stale = follower !== leader;
+    const v = follower !== null ? `"${follower}"` : '(item not found)';
+    flash(idx, stale ? 'flash-bad' : 'flash-ok');
+    if(stale){
+      logLine('warn', `EVENTUAL read of follower partition-${idx} → ${v}  ⚠ STALE (leader has "${leader}") · cost 0.5 RCU`);
+      explain(`<b>Eventually-consistent</b> read hit the lagging follower of partition-${idx} → <b>${v}</b>, but the leader already holds <b>"${leader}"</b>. Cheaper (<b>0.5 RCU</b>) but can be stale. Resume replication, or use a strong read, to get the latest.`);
+    } else {
+      logLine('ok', `EVENTUAL read of follower partition-${idx} → ${v} · cost 0.5 RCU`);
+      explain(`<b>Eventually-consistent</b> read of partition-${idx} follower → <b>${v}</b>. The follower happened to be caught up. Cost: <b>0.5 RCU</b> (half a strong read). Pause replication, PutItem, then read eventual to see it go stale.`);
+    }
+  }
+  busy = false;
+}
+
+function togglePause(){
+  if(busy) return;
+  paused = !paused;
+  const b = document.getElementById('pauseBtn');
+  b.textContent = paused ? '▶ Resume replication' : '⏸ Pause replication (simulate lag)';
+  if(!paused){
+    logLine('info', 'replication RESUMED — streaming backlog to followers and GSI');
+    (async()=>{
+      busy = true;
+      for(const p of parts){
+        if(p.lag > 0){
+          await fly('#node'+p.id, '#node'+p.id, 'catch-up', 'repl');
+          // followers converge to leader truth
+          p.follower = new Map([...p.leader].map(([k,v])=>[k,{email:v.email}]));
+          p.lag = 0;
+          render(); flash(p.id, 'flash-ok');
+        }
+      }
+      if(gsi){
+        // rebuild GSI from all leaders (eventual convergence)
+        gsi.store = new Map();
+        for(const p of parts){ for(const [k,v] of p.leader){ gsi.store.set(v.email, k); } }
+        await fly('#node0', '#gsiNode', 'reindex', 'repl');
+        render();
+        logLine('info', 'GSI email-index converged');
+      }
+      logLine('ok', 'followers caught up — reads are now consistent');
+      busy = false;
+    })();
+  } else {
+    logLine('warn', 'replication PAUSED — new writes will leave followers (and GSI) behind');
+    explain('Replication paused. PutItem a new value, then GetItem with <b>eventual</b> vs <b>strong</b> to see the follower return a <span style="color:var(--warn)">stale</span> value while the leader has the latest.');
+  }
+}
+
+async function createGSI(){
+  if(busy) return;
+  if(gsi){ logLine('warn', 'GSI on email already exists'); return; }
+  busy = true;
+  gsi = { store: new Map() };
+  // backfill from existing leader data (eventual)
+  for(const p of parts){ for(const [k,v] of p.leader){ gsi.store.set(v.email, k); } }
+  render();
+  await fly('#node0', '#gsiNode', 'backfill', 'repl');
+  logLine('ok', `Created GSI "email-index": re-keys items by email on SEPARATE partitions. Backfilled ${gsi.store.size} item(s).`);
+  explain('GSI <b>email-index</b> created. It stores <code>email → pk</code> on its own partitions, maintained <b>asynchronously</b>. It is <b>eventually consistent only</b> — you cannot do a strong read against a GSI. (An LSI, by contrast, shares the table\'s partition key, is co-located, and supports strong reads — but must be defined at table creation.)');
+  busy = false;
+}
+
+async function queryGSI(){
+  if(busy) return;
+  if(!gsi){ logLine('err', 'No GSI yet — click "Create GSI on email" first'); return; }
+  const email = document.getElementById('val').value.trim();
+  if(!email) return;
+  busy = true;
+  logLine('cmd', `> Query email-index { email = "${email}" }`);
+  await fly('#gsiNode', '#gsiNode', 'GSI '+email, 'read');
+  if(gsi.store.has(email)){
+    const pk = gsi.store.get(email);
+    flash('gsiNode', 'flash-ok'); // gsiNode has no node prefix; flash uses node+id, so flash manually below
+    const g = document.getElementById('gsiNode'); if(g){ g.classList.add('flash-ok'); setTimeout(()=>g.classList.remove('flash-ok'),600); }
+    logLine('ok', `GSI hit: "${email}" → pk=${pk} (eventually consistent · uses the GSI's own RCU)`);
+    explain(`Queried the GSI by <b>email="${email}"</b> → resolved to <b>pk=${pk}</b>. The GSI is its own table on separate partitions, so this never touches the base table's leader — and it's <b>always eventual</b>, never strong.`);
+  } else {
+    const g = document.getElementById('gsiNode'); if(g){ g.classList.add('flash-bad'); setTimeout(()=>g.classList.remove('flash-bad'),600); }
+    logLine('warn', `GSI miss: no item indexed for "${email}" (may not have replicated yet — GSIs lag)`);
+    explain(`No GSI entry for <b>"${email}"</b>. Either it was never written, or the GSI hasn't caught up — remember GSIs are <b>eventually consistent</b>, so a just-written item may not be queryable yet.`);
+  }
+  busy = false;
+}
+
+// ---------- wire up ----------
+document.getElementById('putBtn').onclick = doPut;
+document.getElementById('getBtn').onclick = doGet;
+document.getElementById('pauseBtn').onclick = togglePause;
+document.getElementById('gsiBtn').onclick = createGSI;
+document.getElementById('qgsiBtn').onclick = queryGSI;
+document.getElementById('resetBtn').onclick = reset;
+reset();
+</script>
+</body>
+</html>

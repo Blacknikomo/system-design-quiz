@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API Gateway — Interactive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🚪 API Gateway — auth, rate limiting &amp; routing</h1>
+      <div class="sub">A single entry point in front of your services. Watch a request flow through the pipeline: <i>authenticate → rate-limit → route</i> to the right backend — and see exactly where 401s, 429s and 404s get returned.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">single entry point</span>
+      <span class="tag">auth</span>
+      <span class="tag">rate limiting</span>
+      <span class="tag">SSL termination</span>
+      <span class="tag">routing</span>
+      <span class="tag">AWS API Gateway · Kong · nginx</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">An <b>API gateway</b> sits in front of your backend services and handles <b>cross-cutting concerns</b> in one place — authentication, rate limiting, request logging, TLS/SSL termination — so individual services don't each reimplement them. After those checks pass, it <b>routes</b> the request to the correct backend based on the path.</p>
+    <div class="note info"><b>The pipeline:</b> every request runs the gauntlet — <b>① Auth</b> (valid API key?) → <b>② Rate limit</b> (token bucket per client) → <b>③ Route</b> (path prefix → service). A failure at any stage short-circuits the rest and returns an error (<b>401 / 429 / 404</b>). Only a fully-passing request reaches a backend and gets a <b>200</b>.</div>
+    <div class="note gotcha"><b>Token bucket:</b> each client gets a bucket of capacity <b>5</b> that refills <b>1 token every 2s</b>. Each allowed request spends a token; an empty bucket returns <b>429 Too Many Requests</b>. Spam <b>Send</b> to drain it and trip the limit.</div>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Send a request</h3>
+    <div class="row">
+      <label class="fld">path<input type="text" id="path" value="/users/123" size="14"></label>
+      <label class="fld">API key<input type="text" id="apikey" value="secret-123" size="14"></label>
+      <label class="fld">client id<input type="text" id="client" value="alice" size="10"></label>
+      <button class="btn" id="sendBtn">▶ Send request</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px">
+        <input type="checkbox" id="validKey" checked> use valid key (<code>secret-123</code>)
+      </label>
+      <span style="width:14px"></span>
+      <button class="btn sec" id="usersBtn">GET /users/123</button>
+      <button class="btn sec" id="ordersBtn">GET /orders/42</button>
+      <button class="btn sec" id="searchBtn">GET /search?q=x</button>
+      <button class="btn sec" id="missBtn">GET /payments/9 (no route)</button>
+      <span style="width:14px"></span>
+      <button class="btn ghost" id="resetBtn">↺ Reset (refill buckets)</button>
+    </div>
+    <div class="row small muted" style="margin-top:10px">
+      <span><b>Routing table:</b></span>
+      <span class="pill">/users → Users</span>
+      <span class="pill">/orders → Orders</span>
+      <span class="pill">/search → Search</span>
+      <span class="pill" style="border-color:var(--bad);color:var(--bad)">no match → 404</span>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="nodes" id="nodes"></div>
+    </div>
+    <div class="explain" id="explain">Press <b>Send request</b>. The packet enters the gateway and runs <b>auth → rate limit → route</b>. Try an invalid key (uncheck the box) for a 401, spam Send for a 429, or send <code>/payments/9</code> for a 404.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Request log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li>Client sends an HTTP request → it hits the <b>gateway</b>, the single entry point.</li>
+        <li><b>① Auth:</b> gateway checks the API key. Invalid/missing → <span style="color:var(--bad)">401</span> and stop.</li>
+        <li><b>② Rate limit:</b> spend one token from the client's bucket. Empty → <span style="color:var(--bad)">429</span> and stop.</li>
+        <li><b>③ Route:</b> match the path prefix against the routing table → forward to that backend.</li>
+        <li>Backend responds → gateway returns <span style="color:var(--ok)">200</span>. No matching route → <span style="color:var(--bad)">404</span>.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- config ----------
+const CAP = 5;            // token bucket capacity per client
+const REFILL_MS = 2000;   // 1 token every 2s
+const VALID_KEY = 'secret-123';
+const ROUTES = [          // path prefix -> backend service
+  {prefix:'/users',  svc:'users',  label:'Users service'},
+  {prefix:'/orders', svc:'orders', label:'Orders service'},
+  {prefix:'/search', svc:'search', label:'Search service'},
+];
+
+// ---------- model ----------
+let buckets;     // Map clientId -> {tokens, last}
+let busy = false;
+let refillTimer = null;
+
+function reset(){
+  busy = false;
+  buckets = new Map();
+  if(refillTimer) clearInterval(refillTimer);
+  document.getElementById('log').innerHTML = '';
+  render();
+  logLine('info', `Gateway ready. Token bucket: capacity ${CAP}, refill 1/${REFILL_MS/1000}s per client.`);
+  explain('Press <b>Send request</b> to push a packet through the <b>auth → rate limit → route</b> pipeline.');
+  refillTimer = setInterval(tick, 250);
+}
+
+function bucketFor(client){
+  if(!buckets.has(client)) buckets.set(client, {tokens:CAP, last:Date.now()});
+  return buckets.get(client);
+}
+
+// continuous refill based on elapsed time
+function tick(){
+  const now = Date.now();
+  let changed = false;
+  buckets.forEach(b=>{
+    if(b.tokens < CAP){
+      const gained = Math.floor((now - b.last) / REFILL_MS);
+      if(gained > 0){
+        b.tokens = Math.min(CAP, b.tokens + gained);
+        b.last += gained * REFILL_MS;
+        changed = true;
+      }
+    } else {
+      b.last = now;
+    }
+  });
+  if(changed) renderBucket();
+}
+
+// ---------- rendering ----------
+function bucketMeter(client){
+  const b = bucketFor(client);
+  let dots = '';
+  for(let i=0;i<CAP;i++){
+    const filled = i < b.tokens;
+    dots += `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;margin-right:3px;border:1px solid var(--line);background:${filled?'var(--ok)':'transparent'}"></span>`;
+  }
+  const cls = b.tokens===0 ? 'stale' : '';
+  return `<div class="kv ${cls}"><span class="k">${client}</span><span>${dots} ${b.tokens}/${CAP}</span></div>`;
+}
+
+function render(){
+  const client = (document.getElementById('client')||{}).value || 'alice';
+  const node = (id, icon, title, badge, body) =>
+    `<div class="node" id="${id}" style="min-width:140px">
+       <div class="title">${icon} ${title} <span class="badge">${badge}</span></div>
+       ${body}
+     </div>`;
+
+  const gw = `
+    <div class="node active" id="gateway" style="min-width:430px;border-color:var(--accent)">
+      <div class="title">🚪 API Gateway <span class="badge" style="color:var(--accent);border-color:var(--accent)">single entry point</span></div>
+      <div class="nodes" style="gap:14px;justify-content:flex-start">
+        <div class="node" id="stage-auth" style="min-width:96px"><div class="title" style="font-size:12px">① Auth</div><div class="small muted">API key</div></div>
+        <div class="node" id="stage-rate" style="min-width:130px"><div class="title" style="font-size:12px">② Rate limit</div><div id="bucketBox">${bucketMeter(client)}</div></div>
+        <div class="node" id="stage-route" style="min-width:96px"><div class="title" style="font-size:12px">③ Route</div><div class="small muted">path prefix</div></div>
+      </div>
+    </div>`;
+
+  const client_box = node('client', '💻', 'Client', client, `<div class="small muted">sends HTTP</div>`);
+
+  const services = `
+    <div class="nodes" id="services" style="gap:14px;justify-content:center">
+      ${node('svc-users','📇','Users service','/users','<div class="kv"><span class="k">GET</span><span>200</span></div>')}
+      ${node('svc-orders','🧾','Orders service','/orders','<div class="kv"><span class="k">GET</span><span>200</span></div>')}
+      ${node('svc-search','🔍','Search service','/search','<div class="kv"><span class="k">GET</span><span>200</span></div>')}
+    </div>`;
+
+  document.getElementById('nodes').innerHTML =
+    `<div style="display:flex;flex-direction:column;gap:18px;width:100%;align-items:center">
+       <div class="nodes" style="gap:22px;align-items:center">${client_box}${gw}</div>
+       ${services}
+     </div>`;
+}
+
+function renderBucket(){
+  const box = document.getElementById('bucketBox');
+  if(box){
+    const client = (document.getElementById('client')||{}).value || 'alice';
+    box.innerHTML = bucketMeter(client);
+  }
+}
+
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+const sleep = ms => new Promise(r=>setTimeout(r, ms));
+function flash(id, cls){ const e=document.getElementById(id); if(e){ e.classList.add(cls); setTimeout(()=>e.classList.remove(cls), 700);} }
+
+// fly a packet from one element to another inside #stage
+function fly(fromSel, toSel, label, cls){
+  return new Promise(res=>{
+    const stage = document.getElementById('stage');
+    const sr = stage.getBoundingClientRect();
+    const fromEl = typeof fromSel==='string' ? document.querySelector(fromSel) : fromSel;
+    const toEl   = typeof toSel==='string'   ? document.querySelector(toSel)   : toSel;
+    if(!fromEl || !toEl){ res(); return; }
+    const a = fromEl.getBoundingClientRect();
+    const b = toEl.getBoundingClientRect();
+    const p = document.createElement('div');
+    p.className = 'packet ' + (cls || '');
+    p.textContent = label;
+    p.style.left = (a.left - sr.left + a.width/2 - 20) + 'px';
+    p.style.top  = (a.top  - sr.top  + a.height/2 - 10) + 'px';
+    stage.appendChild(p);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      p.style.left = (b.left - sr.left + b.width/2 - 20) + 'px';
+      p.style.top  = (b.top  - sr.top  + b.height/2 - 10) + 'px';
+    }));
+    setTimeout(()=>{ p.style.opacity = 0; setTimeout(()=>{ p.remove(); res(); }, 250); }, 720);
+  });
+}
+
+function matchRoute(path){
+  return ROUTES.find(r => path === r.prefix || path.startsWith(r.prefix + '/') || path.startsWith(r.prefix + '?'));
+}
+
+// ---------- the request pipeline ----------
+async function send(){
+  if(busy) return;
+  busy = true;
+  render();
+
+  const path = document.getElementById('path').value.trim() || '/';
+  const useValid = document.getElementById('validKey').checked;
+  const typedKey = document.getElementById('apikey').value.trim();
+  // checkbox forces a valid key; otherwise honour whatever was typed
+  const key = useValid ? VALID_KEY : typedKey;
+  const client = document.getElementById('client').value.trim() || 'anon';
+
+  logLine('cmd', `> GET ${path}   (client=${client}, key="${key || '(none)'}")`);
+
+  // 0. client -> gateway
+  await fly('#client', '#gateway', 'GET ' + path, '');
+
+  // ① AUTH
+  flash('stage-auth', 'active');
+  await fly('#client', '#stage-auth', 'auth?', '');
+  if(key !== VALID_KEY){
+    flash('stage-auth', 'flash-bad');
+    await fly('#stage-auth', '#client', '401', 'bad');
+    logLine('err', `401 Unauthorized — API key "${key || '(none)'}" is invalid. Request rejected at auth.`);
+    explain(`<b>① Auth failed.</b> The gateway compares the supplied API key against valid credentials. <code>${key||'(none)'}</code> is not recognised → <span style="color:var(--bad)">401 Unauthorized</span>. The request never reached rate limiting or any backend.`);
+    busy = false; return;
+  }
+  flash('stage-auth', 'flash-ok');
+  logLine('ok', 'auth ✓ key valid');
+
+  // ② RATE LIMIT (token bucket)
+  flash('stage-rate', 'active');
+  await fly('#stage-auth', '#stage-rate', 'token?', '');
+  const b = bucketFor(client);
+  if(b.tokens <= 0){
+    renderBucket();
+    flash('stage-rate', 'flash-bad');
+    await fly('#stage-rate', '#client', '429', 'bad');
+    logLine('err', `429 Too Many Requests — bucket for "${client}" is empty (0/${CAP}). Wait for refill.`);
+    explain(`<b>② Rate limit tripped.</b> Client <code>${client}</code>'s token bucket is empty → <span style="color:var(--bad)">429 Too Many Requests</span>. It refills 1 token every ${REFILL_MS/1000}s — wait, then retry.`);
+    busy = false; return;
+  }
+  b.tokens -= 1;
+  b.last = Date.now();
+  renderBucket();
+  flash('stage-rate', 'flash-ok');
+  logLine('ok', `rate ✓ spent 1 token (client ${client}: ${b.tokens}/${CAP} left)`);
+
+  // ③ ROUTE
+  flash('stage-route', 'active');
+  await fly('#stage-rate', '#stage-route', 'match', '');
+  const route = matchRoute(path);
+  if(!route){
+    flash('stage-route', 'flash-bad');
+    await fly('#stage-route', '#client', '404', 'bad');
+    logLine('err', `404 Not Found — no route matches "${path}" in the routing table.`);
+    explain(`<b>③ No route.</b> The path <code>${path}</code> doesn't match any prefix (<code>/users</code>, <code>/orders</code>, <code>/search</code>) → <span style="color:var(--bad)">404 Not Found</span>. Auth and rate limiting passed, but there's nothing to forward to.`);
+    busy = false; return;
+  }
+  flash('stage-route', 'flash-ok');
+  logLine('info', `route ✓ ${route.prefix} → ${route.label}`);
+
+  // forward to backend, get 200 back
+  const svcSel = '#svc-' + route.svc;
+  await fly('#stage-route', svcSel, 'forward', '');
+  flash('svc-' + route.svc, 'flash-ok');
+  logLine('ok', `${route.label} handled it`);
+  await fly(svcSel, '#client', '200 OK', 'read');
+  logLine('ok', `200 OK — ${path} routed to ${route.label}`);
+  explain(`<b>200 OK.</b> The request passed auth + rate limiting, matched <code>${route.prefix}</code>, and the gateway forwarded it to the <b>${route.label}</b>, which responded. This is the happy path through all three pipeline stages.`);
+  busy = false;
+}
+
+// presets
+function preset(path, valid){
+  document.getElementById('path').value = path;
+  if(typeof valid === 'boolean') document.getElementById('validKey').checked = valid;
+  send();
+}
+
+// ---------- wire up ----------
+document.getElementById('sendBtn').onclick = send;
+document.getElementById('usersBtn').onclick = () => preset('/users/123');
+document.getElementById('ordersBtn').onclick = () => preset('/orders/42');
+document.getElementById('searchBtn').onclick = () => preset('/search?q=x');
+document.getElementById('missBtn').onclick = () => preset('/payments/9');
+document.getElementById('resetBtn').onclick = reset;
+document.getElementById('client').addEventListener('input', renderBucket);
+reset();
+</script>
+</body>
+</html>
