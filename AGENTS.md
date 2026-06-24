@@ -17,6 +17,7 @@ interactive/
 ├── index.html           # hub: links every simulator + the quiz
 ├── style.css            # SHARED theme + visual primitives (all pages link it)
 ├── system-design-quiz.html   # the quiz (single self-contained file)
+├── cheatsheets.html     # terse FR/NFR/tech-why recall cards per HI design problem
 ├── redis.html           # 9 technology simulators, one file each:
 ├── kafka.html
 ├── elasticsearch.html

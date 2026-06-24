@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Cheat Sheets — Recall</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .cs{border:1px solid var(--line);border-radius:12px;margin-bottom:12px;overflow:hidden;background:var(--panel)}
+  .cs-head{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;user-select:none}
+  .cs-head:hover{background:var(--panel2)}
+  .cs-head .ic{font-size:20px;flex:0 0 auto}
+  .cs-head .nm{font-weight:700;font-size:16px}
+  .cs-head .scope{color:var(--muted);font-size:13px}
+  .cs-head .chev{margin-left:auto;color:var(--muted);transition:transform .2s;flex:0 0 auto}
+  .cs.open .cs-head .chev{transform:rotate(90deg)}
+  .cs-body{display:none;padding:0 16px 16px;border-top:1px solid var(--line)}
+  .cs.open .cs-body{display:block}
+  .cs-tags{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:720px){.grid2{grid-template-columns:1fr}}
+  .blk h4{margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .blk.nfr h4{color:var(--warn)}
+  .blk.tech h4{color:var(--ok)}
+  .blk.got h4{color:var(--bad)}
+  .blk ul{margin:0;padding-left:18px}
+  .blk li{margin:3px 0;font-size:13.5px}
+  .blk .why{color:var(--muted)}
+  .api{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 9px;margin-top:4px;display:inline-block}
+  .recall-hint{display:none;color:var(--muted);font-size:12.5px;font-style:italic;padding:0 16px 14px}
+  body.recall .cs:not(.open) .recall-hint{display:block}
+  .toolbar{position:sticky;top:0;z-index:10;background:var(--bg);padding:10px 0;margin-bottom:6px;border-bottom:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🧠 System Cheat Sheets</h1>
+      <div class="sub">Terse recall cards for the HelloInterview design problems — functional &amp; non-functional requirements, tech choices and <i>why</i>, and the "great" moves. Built for active recall: see the name, recall the design, then reveal to check.</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="row">
+      <input type="text" id="search" placeholder="filter by name / tech / keyword…" style="flex:1;min-width:180px">
+      <button class="btn sec" id="expandAll">Expand all</button>
+      <button class="btn sec" id="collapseAll">Collapse all</button>
+      <label class="chip"><input type="checkbox" id="recallChk" style="accent-color:var(--accent)"> Recall mode</label>
+    </div>
+    <div class="small muted" id="count" style="margin-top:6px"></div>
+  </div>
+
+  <div id="list"></div>
+  <p class="small muted" style="margin-top:18px">Tip: in <b>Recall mode</b>, cards stay collapsed — try to reconstruct the design out loud, then click to reveal. Pairs with the quiz and the per-technology simulators.</p>
+</div>
+
+<script>
+const DESIGNS = [
+  {icon:"🔗", name:"URL Shortener (Bitly)", scope:"shorten + redirect, read-heavy", tags:["KV","cache","counter"],
+   fr:["Shorten a long URL (optional custom alias, expiry)","Redirect short code → long URL"],
+   nfr:["Availability > consistency","Redirect < 100ms","~1B URLs, read:write ≈ 1000:1"],
+   api:"POST /urls {long,alias?,exp?} · GET /{code} → 302",
+   tech:[["Any DB (Postgres/Dynamo)","write load tiny (~1/s); choice barely matters"],["Redis atomic counter + batching","unique code gen; Base62 encode; grab ~1000 ids/server"],["Redis / CDN cache","fast redirects; reads dominate"]],
+   got:["302 (not 301) → keep control + analytics","UNIQUE constraint as collision safety net","Predictable ids are enumerable → don't shorten private URLs","Multi-region = disjoint counter ranges"]},
+
+  {icon:"📦", name:"File Storage / Sync (Dropbox)", scope:"upload, sync, share large files", tags:["blob","CDN","chunking"],
+   fr:["Upload / download / share files","Auto-sync across a user's devices"],
+   nfr:["Availability > consistency","Files up to ~50GB","Durable, recoverable"],
+   api:"presigned PUT to S3 · GET via CDN signed URL · /files/changes?since=",
+   tech:[["S3 (blob) + metadata DB","bytes in S3, only URL/refs in DB"],["Presigned URLs","client uploads/downloads direct to S3, bypassing app servers"],["CDN signed URLs","fast global download"]],
+   got:["Chunk on the CLIENT + S3 multipart (resumable)","SHA-256 fingerprint → dedup + resume (not filename)","Content-defined chunking (rolling hash) for delta sync","Last-write-wins; short-lived signed URLs"]},
+
+  {icon:"🎫", name:"Ticketmaster", scope:"browse + book, no double-booking", tags:["ACID","lock","search"],
+   fr:["View + search events","Book tickets without double-booking"],
+   nfr:["Availability for view/search; STRONG consistency for booking","10M users on one event; search < 500ms"],
+   api:"GET /events/:id · GET /events/search · POST /bookings/:eventId (reserve→confirm)",
+   tech:[["PostgreSQL (ACID)","the real no-double-book guarantee"],["Elasticsearch","full-text search (LIKE = full scan)"],["Redis lock + TTL","seat hold ~10min, auto-release on abandon"],["Stripe tokenization + idempotent webhook","payment"]],
+   got:["Lock is for UX; the ACID write is the guarantee","Virtual waiting queue for huge on-sales (staff move)","Cache + horizontal scale for hammered event pages"]},
+
+  {icon:"📰", name:"News Feed", scope:"posts, follows, reverse-chron feed", tags:["fan-out","cache","GSI"],
+   fr:["Create posts; follow users","View reverse-chron feed; paginate"],
+   nfr:["Availability > consistency (~1min stale ok)","< 500ms; 2B users; unlimited follows"],
+   api:"POST /posts · PUT /users/:id/follow · GET /feed?cursor=ts",
+   tech:[["DynamoDB posts + Follow table w/ GSI","reverse lookups"],["Fan-out workers + precomputed feed","~200 ids/user (~cheap)"],["Feed + post cache","hot reads"]],
+   got:["Hybrid fan-out: push normal users, pull celebrities, merge","Redundant cache for hot posts (Dynamo hates hot keys)","Cursor (timestamp) pagination; don't support 100-pages-deep"]},
+
+  {icon:"💬", name:"WhatsApp / Chat", scope:"realtime messaging, offline delivery", tags:["WebSocket","pub/sub","inbox"],
+   fr:["Group chats (≤100); send/receive","Offline delivery (~30d); media"],
+   nfr:["< 500ms; guaranteed deliverability","Billions of users"],
+   api:"WebSocket (TLS): sendMessage, newMessage, ack; L4 LB",
+   tech:[["WebSocket servers + L4 LB","persistent conns; L4 suffices"],["Redis Pub/Sub (topic per user)","route to the server holding the recipient"],["Inbox table","undelivered messages, delete on ack, TTL"]],
+   got:["Pub/Sub at-most-once → Inbox + acks + per-chat seq numbers (gap detect)","App-level heartbeats (TCP keepalive too slow)","NTP server-receipt timestamps for order; client sorts","Per-user channels; switch per-chat for big groups"]},
+
+  {icon:"🚗", name:"Uber / Ride-sharing", scope:"location, matching, dispatch", tags:["geospatial","lock","durable-exec"],
+   fr:["Fare estimate; request ride","Match nearby driver; accept/decline"],
+   nfr:["Match < 1min; STRONG consistency in matching","100k requests in one location"],
+   api:"POST /fare · POST /rides{fareId} · POST /drivers/location · PATCH /rides/:id",
+   tech:[["Redis geohashing (in-memory)","~2M loc writes/s; DynamoDB too costly; B-tree can't do 2D"],["Matching svc + Redis lock TTL","no double-dispatch (~10s to accept)"],["Maps/ETA API; APNs/FCM","fares + notifications"]],
+   got:["Durable execution (Temporal/Cadence) for driver-timeout flow","Adaptive client location-update intervals","Never trust client (userId/fare/ts from server/session)","Geo-sharding + read replicas to scale"]},
+
+  {icon:"📊", name:"Ad Click Aggregator", scope:"near-realtime analytics over clicks", tags:["stream","Flink","OLAP","lambda"],
+   fr:["Click → redirect to advertiser","Advertisers query metrics ≥1-min granularity"],
+   nfr:["10k clicks/s peak; sub-second queries","No data loss; idempotent tracking"],
+   api:"GET /click → server-side redirect",
+   tech:[["Kafka/Kinesis → Flink → OLAP (ClickHouse/Druid)","stream-aggregate; not one DB for ingest+query"],["S3 data lake + nightly Spark","batch source of truth (Lambda arch)"]],
+   got:["Hot ad → random suffix on partition key (aggregator SUMs)","Reconcile stream (speed) vs batch (truth)","Unique impression id for dedup","Pre-aggregate rollups for fast queries"]},
+
+  {icon:"🕷️", name:"Web Crawler", scope:"crawl + extract text at scale", tags:["SQS","S3","politeness"],
+   fr:["Crawl from seed URLs","Extract + store page text"],
+   nfr:["Fault tolerant (resume); polite (robots.txt)","10B pages < 5 days"],
+   api:"frontier queue → fetch → S3 → extract",
+   tech:[["SQS frontier","visibility timeout → backoff + DLQ; store URL ptr, not HTML"],["Fetch/extract workers + S3","raw HTML / text"],["Metadata DB + DNS cache","dedup; DNS is a bottleneck"]],
+   got:["~1 req/s per domain (Redis SET NX) + jitter; respect Crawl-delay","DNS ~70% of thread time → cache + multiple providers","Content-hash dedup (not just URL); max depth ~15–20"]},
+
+  {icon:"🔥", name:"Top-K (YouTube)", scope:"top-K most-viewed in a window", tags:["stream","CMS","shard+merge"],
+   fr:["Ingest VideoID view stream","Query top-K (hour/day/month/all)"],
+   nfr:["Tumbling windows; K ~1k","Precise unless explicitly relaxed"],
+   api:"ingest views → query top-K per window",
+   tech:[["Kafka ingest + sharded counters","700k TPS exceeds one DB"],["OLAP / cache for top-K","precompute per window (cron)"]],
+   got:["Shard counts + merge per-shard top-K = exact","Count-Min Sketch when approximate is allowed","Tumbling (not sliding) keeps aggregation tractable"]},
+
+  {icon:"🚦", name:"Distributed Rate Limiter", scope:"limit requests per client", tags:["token-bucket","Redis","gateway"],
+   fr:["Limit requests per user/IP/API-key","Return 429 when over limit"],
+   nfr:["< 10ms overhead; eventual consistency ok","1M req/s"],
+   api:"isAllowed(clientId,rule) → {pass, remaining, reset}",
+   tech:[["Token bucket","allows bursts up to bucket size"],["Centralized Redis (sharded by client)","per-instance counters fail (LB spreads traffic)"]],
+   got:["Atomic check/refill via MULTI or Lua; EXPIRE avoids leak","Fail-closed for social (failures coincide with spikes)","Fixed-window has 2× burst at the boundary"]},
+
+  {icon:"📝", name:"Google Docs", scope:"realtime collaborative editing", tags:["WebSocket","OT","Cassandra","ZooKeeper"],
+   fr:["Concurrent multi-user edit; realtime view","Cursors / presence"],
+   nfr:["Eventually consistent; < 100ms","≤ 100 concurrent editors/doc (extras read-only)"],
+   api:"WebSocket: send edits as operations (insert/delete @pos)",
+   tech:[["WebSocket doc servers","persistent edit channel"],["Operational Transformation (OT)","converge concurrent edits (CRDT = P2P/larger)"],["Cassandra ops store; ZooKeeper hash ring","append-only ops; route editors of a doc to one server"]],
+   got:["Send ops, not the whole doc","Consistent hashing by documentId","Snapshot/compact operations to bound storage/join cost"]},
+
+  {icon:"💳", name:"Payment System (Stripe)", scope:"charge cards, durable + auditable", tags:["idempotency","event-sourcing","PCI"],
+   fr:["Merchant initiates charge; user pays by card","Merchant views status (pending/success/failed)"],
+   nfr:["Highly secure; durable/auditable (never lose data)","Transaction-safe over async networks; 10k+ TPS"],
+   api:"POST /payment-intents · POST /…/transactions · GET /…/:id",
+   tech:[["API gateway (API keys + request signing)","secure entry"],["Payment-intent svc + DB; transaction svc → networks","HSMs, ISO 8583, PCI"],["Kafka event log (event sourcing)","append-only audit trail"]],
+   got:["Idempotency keys + reconciliation (timeout ≠ failure)","Event sourcing for audit / chargebacks","Tokenize card data (raw PAN never hits backend)","Webhooks: idempotent, exactly-once"]},
+];
+
+const listEl = document.getElementById("list");
+const li = a => a.map(x=>`<li>${x}</li>`).join("");
+const techli = a => a.map(([t,why])=>`<li><b>${t}</b> <span class="why">— ${why}</span></li>`).join("");
+
+function render(filter=""){
+  const f = filter.trim().toLowerCase();
+  let shown=0;
+  listEl.innerHTML = DESIGNS.map((d,idx)=>{
+    const hay = (d.name+" "+d.scope+" "+d.tags.join(" ")+" "+d.tech.map(t=>t[0]).join(" ")+" "+[...d.fr,...d.nfr,...d.got].join(" ")).toLowerCase();
+    if(f && !hay.includes(f)) return "";
+    shown++;
+    return `<div class="cs" data-i="${idx}">
+      <div class="cs-head">
+        <span class="ic">${d.icon}</span>
+        <div><div class="nm">${d.name}</div><div class="scope">${d.scope}</div></div>
+        <span class="chev">▶</span>
+      </div>
+      <div class="recall-hint">Recall: functional + non-functional reqs, tech &amp; why, the "great" moves… then click to reveal.</div>
+      <div class="cs-body">
+        <div class="cs-tags">${d.tags.map(t=>`<span class="tag accent">${t}</span>`).join("")}</div>
+        <div class="grid2">
+          <div class="blk"><h4>Functional</h4><ul>${li(d.fr)}</ul></div>
+          <div class="blk nfr"><h4>Non-functional</h4><ul>${li(d.nfr)}</ul></div>
+        </div>
+        <div class="blk"><h4>Core API</h4><span class="api">${d.api}</span></div>
+        <div class="blk tech"><h4>Tech &amp; why</h4><ul>${techli(d.tech)}</ul></div>
+        <div class="blk got"><h4>Deep dives / "great" moves</h4><ul>${li(d.got)}</ul></div>
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("count").textContent = `${shown} of ${DESIGNS.length} systems`;
+  wire();
+}
+function wire(){
+  document.querySelectorAll(".cs-head").forEach(h=>{
+    h.onclick=()=>h.parentElement.classList.toggle("open");
+  });
+}
+document.getElementById("search").oninput = e => render(e.target.value);
+document.getElementById("expandAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.add("open"));
+document.getElementById("collapseAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.remove("open"));
+document.getElementById("recallChk").onchange = e=>{
+  document.body.classList.toggle("recall", e.target.checked);
+  if(e.target.checked) document.querySelectorAll(".cs").forEach(c=>c.classList.remove("open"));
+};
+render();
+</script>
+</body>
+</html>
