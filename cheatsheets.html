@@ -70,7 +70,7 @@ const DESIGNS = [
    nfr:["Availability > consistency","Files up to ~50GB","Durable, recoverable"],
    api:"presigned PUT to S3 · GET via CDN signed URL · /files/changes?since=",
    tech:[["S3 (blob) + metadata DB","bytes in S3, only URL/refs in DB"],["Presigned URLs","client uploads/downloads direct to S3, bypassing app servers"],["CDN signed URLs","fast global download"]],
-   got:["Chunk on the CLIENT + S3 multipart (resumable)","SHA-256 fingerprint → dedup + resume (not filename)","Content-defined chunking (rolling hash) for delta sync","Last-write-wins; short-lived signed URLs"]},
+   got:["Chunk on the CLIENT + S3 multipart (resumable)","SHA-256 fingerprint → dedup + resume (not filename)","Content-defined chunking (rolling hash) for delta sync","Version vectors → keep both as conflicted copies (LWW silently loses edits); short-lived signed URLs"]},
 
   {icon:"🎫", name:"Ticketmaster", scope:"browse + book, no double-booking", tags:["ACID","lock","search"],
    fr:["View + search events","Book tickets without double-booking"],
@@ -83,7 +83,7 @@ const DESIGNS = [
    fr:["Create posts; follow users","View reverse-chron feed; paginate"],
    nfr:["Availability > consistency (~1min stale ok)","< 500ms; 2B users; unlimited follows"],
    api:"POST /posts · PUT /users/:id/follow · GET /feed?cursor=ts",
-   tech:[["DynamoDB posts + Follow table w/ GSI","reverse lookups"],["Fan-out workers + precomputed feed","~200 ids/user (~cheap)"],["Feed + post cache","hot reads"]],
+   tech:[["DynamoDB posts + Follow table w/ GSI","reverse lookups"],["Fan-out-on-write workers + precomputed feed","push post-id to each follower's feed; cap each feed at ~hundreds of entries. Cost scales with follower count → hybrid for celebrities"],["Feed + post cache","hot reads"]],
    got:["Hybrid fan-out: push normal users, pull celebrities, merge","Redundant cache for hot posts (Dynamo hates hot keys)","Cursor (timestamp) pagination; don't support 100-pages-deep"]},
 
   {icon:"💬", name:"WhatsApp / Chat", scope:"realtime messaging, offline delivery", tags:["WebSocket","pub/sub","inbox"],
@@ -104,7 +104,7 @@ const DESIGNS = [
    fr:["Click → redirect to advertiser","Advertisers query metrics ≥1-min granularity"],
    nfr:["10k clicks/s peak; sub-second queries","No data loss; idempotent tracking"],
    api:"GET /click → server-side redirect",
-   tech:[["Kafka/Kinesis → Flink → OLAP (ClickHouse/Druid)","stream-aggregate; not one DB for ingest+query"],["S3 data lake + nightly Spark","batch source of truth (Lambda arch)"]],
+   tech:[["Kafka/Kinesis → Flink → OLAP (ClickHouse/Druid)","stream-aggregate; not one DB for ingest+query"],["S3 data lake + nightly Spark","batch source of truth (Lambda arch) (or Kappa: reprocess from the Kafka log, skipping a separate batch layer)"]],
    got:["Hot ad → random suffix on partition key (aggregator SUMs)","Reconcile stream (speed) vs batch (truth)","Unique impression id for dedup","Pre-aggregate rollups for fast queries"]},
 
   {icon:"🕷️", name:"Web Crawler", scope:"crawl + extract text at scale", tags:["SQS","S3","politeness"],
