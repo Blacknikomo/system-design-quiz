@@ -17,7 +17,7 @@ interactive/
 ├── index.html           # hub: links every simulator + the quiz
 ├── style.css            # SHARED theme + visual primitives (all pages link it)
 ├── system-design-quiz.html   # the quiz (single self-contained file)
-├── walkthroughs.html    # 40 step-by-step design "decision chains" (Reveal + Quiz-me modes); data in const APPS
+├── walkthroughs.html    # 42 step-by-step design "decision chains" (Reveal + Quiz-me modes); data in const APPS
 ├── cheatsheets.html     # terse FR/NFR/tech-why recall cards per HI design problem
 ├── redis.html           # 9 technology simulators, one file each:
 ├── kafka.html
@@ -94,7 +94,7 @@ IDs are a short stable hash of the question text (djb2 → base36, prefixed `q`,
 
 `const SOURCES = { topic: url, ... }` maps **every topic** to its HelloInterview page (`B` is the base URL). `sourceFor(q)` returns `q.src || SOURCES[q.topic] || <intro>`. `sourceLabel(url)` derives a readable label from the path (e.g. `HelloInterview · Key Technology: Redis`).
 
-**Rule:** if you add a new `topic`, you MUST add a `SOURCES[topic]` entry. Validation flags any topic without one.
+**Rule:** if you add a new `topic`, you MUST add a `SOURCES[topic]` entry. Validation flags any topic without one — *except* data-structure `DS: *` questions and any question that sets its own `q.src` (these resolve via `q.src`, which the validator now treats as satisfying the source requirement). `SOURCES` values may be either `B+"path"` (HelloInterview) or a full external URL (e.g. `grpc.io`, `docs.vllm.ai`); `sourceLabel()` renders a non-HI URL as its hostname.
 
 ### 3.4 Storage schema (`localStorage["sdq_history_v1"]`)
 
@@ -227,7 +227,7 @@ Question-bank integrity + length-balance metric:
 ```bash
 node -e 'const fs=require("fs");let h=fs.readFileSync("system-design-quiz.html","utf8");
 const m=h.match(/const QUESTIONS = (\[[\s\S]*?\n\];)/);let arr;eval("arr="+m[1].replace(/;$/,""));
-const keys=new Set([...h.match(/const SOURCES = \{([\s\S]*?)\n\};/)[1].matchAll(/"([^"]+)":B\+/g)].map(x=>x[1]));
+const keys=new Set([...h.match(/const SOURCES = \{([\s\S]*?)\n\};/)[1].matchAll(/"([^"]+)":/g)].map(x=>x[1]));  // ALL source keys (B+… HI links AND full external URLs)
 let errs=0,seen=new Set();
 arr.forEach(q=>{
   if(!q.id||!q.topic||!q.q||!q.options||!q.correct||!q.why)errs++;
@@ -238,7 +238,7 @@ arr.forEach(q=>{
   if(q.type==="multi"&&q.correct.length<2)errs++;
   if(new Set(q.options).size!==q.options.length)errs++;
   if(seen.has(q.id))errs++; seen.add(q.id);
-  if(!keys.has(q.topic))errs++;            // every topic needs a SOURCES entry
+  if(!q.src&&!keys.has(q.topic))errs++;    // topic needs a SOURCES entry, UNLESS the question carries its own q.src (e.g. DS:* → ds-*.html)
 });
 // length-balance: flag guessable single-answer questions
 let flagged=0;
@@ -284,7 +284,7 @@ Temp files for this go in `_patches/` (git-ignored).
 ## 10. How this service was built (process history)
 
 1. **Research first.** Read HelloInterview *System Design in a Hurry* (Core Concepts, Key Technologies, Patterns) and 12 Question Breakdowns via a logged-in browser; distilled them into `hi-knowledge/` notes — facts before format.
-2. **Quiz** built from the notes: started ~60 Qs, grew to 262 across ~50 topics (core concepts, key-tech deep dives, patterns, breakdowns, architecture/decomposition). Added seniority levels, stable IDs, per-answer source links, and the "which subsystems are required" decomposition style.
+2. **Quiz** built from the notes: started ~60 Qs, grew to 262, then **341 across ~70 topics** (core concepts, key-tech deep dives, patterns, breakdowns, architecture/decomposition, plus modern-infra topics: gRPC/Protobuf, Vector DBs, LLM Serving, Cell-based Arch, CDC/Outbox, Geospatial). Added seniority levels, stable IDs, per-answer source links, and the "which subsystems are required" decomposition style.
 3. **Simulators**: defined a shared `style.css` design system + page contract, built `redis.html` as the reference, then the other 8 via parallel subagents following the contract.
 4. **Quality passes**: rebalanced answer options bank-wide (§4) using the bulk-edit pattern (§8); added the weak-topics export (§3.5) to drive future targeted question generation.
 5. **Validation** at every step (§7); **git** with scoped, detailed commits (§9).
