@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stacks — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .stk-wrap{display:flex;gap:40px;justify-content:center;align-items:flex-end;flex-wrap:wrap}
+  .stk{display:flex;flex-direction:column-reverse;align-items:center;gap:6px;min-width:120px;
+    border-left:3px solid var(--line);border-right:3px solid var(--line);border-bottom:3px solid var(--line);
+    border-radius:0 0 10px 10px;padding:10px;min-height:200px;justify-content:flex-start}
+  .frame{width:90px;padding:12px 0;text-align:center;border:2px solid var(--line);border-radius:8px;
+    background:var(--panel);font-family:ui-monospace,Menlo,monospace;font-weight:700;transition:.2s;position:relative}
+  .frame.top{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,156,249,.35)}
+  .frame.pushing{animation:pushin .35s ease}
+  .frame.flash-ok{box-shadow:0 0 0 3px rgba(46,204,113,.5);border-color:var(--ok)}
+  .frame.flash-bad{box-shadow:0 0 0 3px rgba(255,92,92,.5);border-color:var(--bad)}
+  .frame.match{border-color:var(--ok);box-shadow:0 0 0 3px rgba(46,204,113,.5)}
+  @keyframes pushin{0%{transform:translateY(-30px);opacity:0}100%{transform:translateY(0);opacity:1}}
+  .top-label{font-size:11px;color:var(--accent);font-weight:700;margin-bottom:4px;text-align:center;font-family:ui-monospace,Menlo,monospace}
+  .stk-title{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;text-align:center;margin-bottom:8px}
+  .scan{font-family:ui-monospace,Menlo,monospace;font-size:22px;letter-spacing:4px;text-align:center;margin-bottom:6px}
+  .scan span{padding:2px 4px;border-radius:5px}
+  .scan span.cur{background:var(--accent);color:#fff}
+  .scan span.done{color:var(--muted)}
+  .scan span.bad{background:var(--bad);color:#fff}
+  table.cx{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  table.cx th,table.cx td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line)}
+  table.cx th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.04em}
+  table.cx code{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🥞 Stacks — LIFO in action</h1>
+      <div class="sub">Last-in, first-out. Push, pop and peek are all O(1) at the top. Watch the valid-parentheses algorithm run on the stack, and see why recursion <i>is</i> a stack.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">LIFO</span>
+      <span class="tag">O(1) push / pop / peek</span>
+      <span class="tag">top-only access</span>
+      <span class="tag">call stack = a stack</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A stack only lets you touch the <b>top</b>. <code>push</code> adds, <code>pop</code> removes, <code>peek</code> reads — all <b>O(1)</b> (it's just an array with a moving top index, no shifting). The discipline (last-in-first-out) is exactly what you need for nesting: matching brackets, undo/redo, expression evaluation, DFS, and backtracking.</p>
+    <div class="note gotcha"><b>The gotcha:</b> <b>recursion IS a stack</b> — every call frame (locals + return address) is pushed onto the program's <i>call stack</i>, and deep recursion overflows it (<code>StackOverflowError</code> / segfault). The fix is to convert recursion to an <b>explicit stack</b> on the heap, which is far larger. Also know the <b>monotonic-stack</b> pattern: keep the stack sorted (e.g. decreasing) to solve next-greater-element / daily-temperatures in O(n) instead of O(n²).</div>
+    <table class="cx">
+      <tr><th>Operation</th><th>Time</th><th>Why</th></tr>
+      <tr><td><code>push(x)</code></td><td>O(1)</td><td>write at top, top++</td></tr>
+      <tr><td><code>pop()</code></td><td>O(1)</td><td>read top, top--</td></tr>
+      <tr><td><code>peek()</code></td><td>O(1)</td><td>read top, no removal</td></tr>
+      <tr><td>valid parens</td><td>O(n)</td><td>one pass, each char pushed/popped once</td></tr>
+    </table>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Stack operations</h3>
+    <div class="row">
+      <label class="fld">value<input type="text" id="val" value="A" size="5"></label>
+      <button class="btn" id="pushBtn">Push</button>
+      <button class="btn sec" id="popBtn">Pop</button>
+      <button class="btn sec" id="peekBtn">Peek</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <h3 style="margin-top:18px">Demo: valid parentheses</h3>
+    <div class="row">
+      <label class="fld">brackets<input type="text" id="parens" value="([{}])" size="14"></label>
+      <button class="btn" id="checkBtn">▶ Check (step by step)</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="scan" id="scan"></div>
+      <div class="stk-wrap">
+        <div>
+          <div class="top-label" id="topLabel">top →</div>
+          <div class="stk" id="stk"></div>
+          <div class="stk-title">stack (top at top)</div>
+        </div>
+      </div>
+    </div>
+    <div class="explain" id="explain">Push a few values and notice only the <b>top</b> ever moves. Then type a bracket string and click Check to watch the stack validate nesting.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Operation log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>Push</b> adds a frame on top and bumps the top index — <b>O(1)</b>.</li>
+        <li><b>Pop</b> removes the top frame; <b>Peek</b> reads it without removing — both <b>O(1)</b>.</li>
+        <li><b>Valid parens</b>: scan left→right. An <i>opening</i> bracket is <span style="color:var(--accent)">pushed</span>.</li>
+        <li>A <i>closing</i> bracket must match the <span style="color:var(--ok)">top</span> — if so, <b>pop</b>; if not (or stack empty), it's <span style="color:var(--bad)">invalid</span>.</li>
+        <li>Valid ⇔ every close matched and the stack ends <b>empty</b> — O(n), each char touched once.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+let stack;      // array; index 0 = bottom, last = top
+let busy=false;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+function reset(){
+  stack=['A','B'];busy=false;
+  document.getElementById('log').innerHTML='';
+  document.getElementById('scan').innerHTML='';
+  logLine('info','New stack with bottom→top: A, B (top = B).');
+  render();
+  explain('The <b>top</b> is the most-recently pushed item. Every operation only touches it — that constraint is what makes a stack a stack.');
+}
+
+// ---------- rendering ----------
+function render(){
+  const el=document.getElementById('stk');
+  if(stack.length===0){el.innerHTML='<div class="small muted" style="padding:10px">(empty)</div>';document.getElementById('topLabel').style.opacity=.3;return;}
+  document.getElementById('topLabel').style.opacity=1;
+  // column-reverse: render bottom first, CSS flips so last (top) appears on top
+  el.innerHTML=stack.map((v,i)=>`<div class="frame ${i===stack.length-1?'top':''}" id="f${i}">${v}</div>`).join('');
+}
+
+function logLine(cls,msg){
+  const t=new Date().toLocaleTimeString();
+  const el=document.getElementById('log');
+  el.innerHTML+=`<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop=el.scrollHeight;
+}
+function explain(html){document.getElementById('explain').innerHTML=html;}
+
+// ---------- operations ----------
+async function push(){
+  if(busy)return;const v=document.getElementById('val').value.trim()||'?';
+  busy=true;logLine('cmd',`> push(${v})`);
+  stack.push(v);render();
+  const top=document.getElementById('f'+(stack.length-1));
+  if(top){top.classList.add('pushing','flash-ok');}
+  logLine('ok',`pushed ${v}; top is now ${v} (size ${stack.length}) — O(1)`);
+  explain(`Wrote <b>${v}</b> at the top and advanced the top index. No existing element moved — <b>O(1)</b>. New top: <b>${v}</b>.`);
+  await sleep(450);if(top)top.classList.remove('flash-ok');busy=false;
+}
+
+async function pop(){
+  if(busy)return;
+  if(stack.length===0){logLine('err','pop() on empty stack — underflow');explain('Nothing to pop: the stack is <b>empty</b>. Popping an empty stack is an underflow error.');return;}
+  busy=true;
+  const top=document.getElementById('f'+(stack.length-1));
+  if(top)top.classList.add('flash-bad');
+  await sleep(300);
+  const v=stack.pop();render();
+  logLine('cmd',`> pop()`);
+  logLine('ok',`popped ${v}; ${stack.length?('new top '+stack[stack.length-1]):'stack now empty'} — O(1)`);
+  explain(`Removed the top item <b>${v}</b> and stepped the top index back. ${stack.length?('New top: <b>'+stack[stack.length-1]+'</b>.'):'The stack is now <b>empty</b>.'} <b>O(1)</b>.`);
+  busy=false;
+}
+
+async function peek(){
+  if(busy)return;
+  if(stack.length===0){logLine('err','peek() on empty stack');explain('Nothing to peek: the stack is <b>empty</b>.');return;}
+  busy=true;
+  const top=document.getElementById('f'+(stack.length-1));
+  if(top)top.classList.add('flash-ok');
+  const v=stack[stack.length-1];
+  logLine('cmd',`> peek()`);
+  logLine('ok',`peek → ${v} (read only, not removed) — O(1)`);
+  explain(`Read the top value <b>${v}</b> <i>without</i> removing it — <b>O(1)</b>. Peek is how you inspect the stack mid-algorithm (e.g. comparing against the next bracket).`);
+  await sleep(500);if(top)top.classList.remove('flash-ok');busy=false;
+}
+
+// ---------- valid parentheses demo ----------
+const PAIRS={')':'(',']':'[','}':'{'};
+const OPEN=new Set(['(','[','{']);
+
+function renderScan(s,cur,status){
+  // status: array same length, 'done'|'cur'|'bad'|''
+  document.getElementById('scan').innerHTML=s.split('').map((ch,i)=>{
+    let c=i<cur?'done':(i===cur?(status==='bad'?'bad':'cur'):'');
+    return `<span class="${c}">${ch}</span>`;
+  }).join('');
+}
+
+async function checkParens(){
+  if(busy)return;
+  const s=document.getElementById('parens').value.trim();
+  if(!s){logLine('err','enter a bracket string first');return;}
+  busy=true;
+  stack=[];render();
+  logLine('cmd',`> isValid("${s}")`);
+  explain(`Scanning <b>"${s}"</b> left to right. Opening brackets get <b>pushed</b>; each closing bracket must match the current <b>top</b>.`);
+  for(let i=0;i<s.length;i++){
+    const ch=s[i];renderScan(s,i,'cur');await sleep(550);
+    if(OPEN.has(ch)){
+      stack.push(ch);render();
+      const top=document.getElementById('f'+(stack.length-1));if(top)top.classList.add('pushing','flash-ok');
+      logLine('info',`'${ch}' is opening → push (stack: ${stack.join('')})`);
+      await sleep(350);if(top)top.classList.remove('flash-ok');
+    } else if(PAIRS[ch]){
+      const want=PAIRS[ch];
+      if(stack.length===0){
+        renderScan(s,i,'bad');logLine('err',`'${ch}' but stack empty → no opener to match → INVALID`);
+        explain(`Hit a closing <b>'${ch}'</b> with an <b>empty stack</b> — there's no opening bracket waiting for it. <span style="color:var(--bad)">Invalid</span>.`);
+        busy=false;return;
+      }
+      const topIdx=stack.length-1;const topVal=stack[topIdx];
+      const topEl=document.getElementById('f'+topIdx);
+      if(topVal===want){
+        if(topEl)topEl.classList.add('match');await sleep(350);
+        stack.pop();render();
+        logLine('ok',`'${ch}' matches top '${topVal}' → pop (stack: ${stack.join('')||'∅'})`);
+      }else{
+        if(topEl)topEl.classList.add('flash-bad');renderScan(s,i,'bad');
+        logLine('err',`'${ch}' expects '${want}' but top is '${topVal}' → mismatch → INVALID`);
+        explain(`Closing <b>'${ch}'</b> needs <b>'${want}'</b> on top, but the top is <b>'${topVal}'</b> — wrong nesting. <span style="color:var(--bad)">Invalid</span>.`);
+        busy=false;return;
+      }
+    } else {
+      logLine('warn',`'${ch}' is not a bracket → ignored`);
+    }
+  }
+  renderScan(s,s.length,'');
+  if(stack.length===0){
+    logLine('ok','end of string and stack EMPTY → VALID ✓');
+    explain(`Reached the end with an <b>empty stack</b> — every opener was closed in the right order. <span style="color:var(--ok)">Valid</span>. One pass, each char pushed/popped at most once → <b>O(n)</b>.`);
+  }else{
+    document.querySelectorAll('.frame').forEach(e=>e.classList.add('flash-bad'));
+    logLine('err',`end of string but ${stack.length} unclosed opener(s) left (${stack.join('')}) → INVALID`);
+    explain(`Scan finished but the stack still holds <b>${stack.length}</b> unmatched opener(s): <b>${stack.join('')}</b>. Leftover openers mean unclosed brackets → <span style="color:var(--bad)">invalid</span>.`);
+  }
+  busy=false;
+}
+
+// ---------- wire up ----------
+document.getElementById('pushBtn').onclick=push;
+document.getElementById('popBtn').onclick=pop;
+document.getElementById('peekBtn').onclick=peek;
+document.getElementById('checkBtn').onclick=checkParens;
+document.getElementById('resetBtn').onclick=reset;
+reset();
+</script>
+</body>
+</html>

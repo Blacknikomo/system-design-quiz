@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skip Lists — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  #stage{min-height:280px}
+  .sl{display:flex;flex-direction:column-reverse;gap:14px}
+  .sl-level{display:flex;align-items:center;gap:0;position:relative}
+  .sl-label{position:absolute;left:0;font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;width:64px}
+  .sl-track{display:flex;align-items:center;gap:0;margin-left:70px}
+  .sl-cell{display:flex;align-items:center}
+  .sl-box{min-width:40px;height:34px;padding:0 8px;border:2px solid var(--line);border-radius:8px;
+    background:var(--panel);display:flex;align-items:center;justify-content:center;
+    font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:13px;transition:.2s}
+  .sl-box.head{background:var(--panel2);color:var(--muted);min-width:30px;border-style:dashed}
+  .sl-box.visit{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,156,249,.4)}
+  .sl-box.hit{border-color:var(--ok);box-shadow:0 0 0 3px rgba(46,204,113,.5)}
+  .sl-box.newnode{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(124,92,255,.45)}
+  .sl-box.gone{opacity:.25;text-decoration:line-through;border-color:var(--bad)}
+  .sl-arrow{width:22px;height:2px;background:var(--line);position:relative}
+  .sl-arrow::after{content:'';position:absolute;right:0;top:-3px;border:4px solid transparent;border-left-color:var(--line)}
+  .ctable{border-collapse:collapse;font-size:12.5px;margin-top:10px}
+  .ctable th,.ctable td{border:1px solid var(--line);padding:5px 10px;text-align:left}
+  .ctable th{color:var(--muted);font-weight:600;background:var(--panel2)}
+  .ctable code{color:var(--accent)}
+  .resbox{font-family:ui-monospace,Menlo,monospace;font-size:13px;margin-top:8px;color:var(--ok)}
+  .coin{display:inline-block;font-size:13px;margin-left:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🪜 Skip Lists</h1>
+      <div class="sub">A sorted linked list with randomized "express lanes" on top. Search starts at the top-left, skips far ahead, and drops down — giving <i>O(log n) expected</i> search without any tree rotations.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">probabilistic</span>
+      <span class="tag">O(log n) expected</span>
+      <span class="tag">~50% promotion</span>
+      <span class="tag">Redis ZSET</span>
+      <span class="tag">LSM memtable</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A skip list is several sorted linked lists stacked up. <b>Level 0</b> contains every key. Each higher level is a sparser "express lane": a node appears on level k+1 only if a coin flip promotes it. <b>Search</b> starts top-left and moves right while the next key ≤ target, otherwise drops down a level — so the express lanes skip over big chunks of the list. <b>Insert</b> finds the spot, then flips coins to decide how tall the new node is.</p>
+    <div class="note gotcha"><b>The gotcha:</b> skip lists are <b>probabilistic</b> — O(log n) is the <b>expected</b> height/cost, not a worst-case guarantee (a pathological run of coin flips could make it tall and thin). The ~50% promotion probability gives expected height ≈ log₂ n and ~2 nodes per level on average. This is how <b>Redis sorted sets (ZSET)</b> are implemented and how the in-memory <b>memtable</b> works in LSM-tree stores (LevelDB / RocksDB / Cassandra) — easier to make concurrent than a balanced tree.</div>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Operations</h3>
+    <div class="row">
+      <label class="fld">key<input type="number" id="key" value="42" style="width:90px"></label>
+      <button class="btn" id="insBtn">Insert</button>
+      <button class="btn sec" id="srchBtn">Search</button>
+      <button class="btn bad" id="delBtn">Delete</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn ghost" id="seedBtn">🌱 Seed a sample list</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="sl" id="sl"></div>
+    </div>
+    <div class="explain" id="explain">Seed a sample list, then <b>Search</b> to watch the path skip right and drop down. <b>Insert</b> shows the coin-flip promotion that assigns a random level.</div>
+    <div class="resbox" id="res"></div>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <h3>Log</h3><div class="log" id="log"></div>
+      <table class="ctable">
+        <tr><th>Operation</th><th>Expected</th><th>Worst case</th></tr>
+        <tr><td>Search</td><td><code>O(log n)</code></td><td><code>O(n)</code></td></tr>
+        <tr><td>Insert</td><td><code>O(log n)</code></td><td><code>O(n)</code></td></tr>
+        <tr><td>Delete</td><td><code>O(log n)</code></td><td><code>O(n)</code></td></tr>
+        <tr><td>Range / ordered scan</td><td colspan="2"><code>O(log n + k)</code> via level-0 chain</td></tr>
+        <tr><td>Space</td><td colspan="2"><code>O(n)</code> expected (~2n pointers)</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li>Each node lives on <b>level 0</b> and, by coin flips, on some higher <b>express lanes</b>.</li>
+        <li><b>Search</b> starts at the top-left head. Move <b>right</b> while next ≤ target; else <b>drop down</b> one level.</li>
+        <li>Express lanes let you skip many nodes at once → <b>O(log n)</b> expected hops.</li>
+        <li><b>Insert</b>: find the position on each level, then flip a coin (~50%) repeatedly to set the new node's <b>random height</b>.</li>
+        <li><b>Delete</b>: unlink the node from every level it appears on.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+// node: {key, level}  (level = top index it reaches, levels 0..level)
+// We store nodes sorted by key; head is a sentinel reaching max level.
+const P = 0.5;          // promotion probability
+let nodes = [];         // sorted array of {key, level}
+let topLevel = 0;       // current max level among real nodes
+let busy = false;
+
+function reset(){
+  nodes = []; topLevel = 0; busy = false;
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('res').textContent = '';
+  logLine('info','Empty skip list. Insert keys (or seed a sample).');
+  render();
+  explain('Seed a sample list, then <b>Search</b> to watch the express lanes in action.');
+}
+
+// ---------- helpers ----------
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+function showRes(html){ document.getElementById('res').innerHTML = html; }
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+// random level via repeated coin flips, capped to topLevel+1
+function randomLevel(flipsLog){
+  let lvl = 0;
+  while(Math.random() < P && lvl < 16){
+    if(flipsLog) flipsLog.push('heads → promote');
+    lvl++;
+  }
+  if(flipsLog) flipsLog.push('tails → stop at level '+lvl);
+  return lvl;
+}
+
+// nodes present at a given level, in key order (with head sentinel handled in render)
+function nodesAtLevel(L){ return nodes.filter(n=>n.level >= L); }
+
+// ---------- render ----------
+// Build a grid: each level row shows head + boxes aligned to level-0 columns.
+function render(hl){
+  hl = hl || {}; // {level, key, cls}  highlight one box; or sets
+  const wrap = document.getElementById('sl');
+  if(nodes.length === 0){
+    wrap.innerHTML = '<div class="empty-msg" style="color:var(--muted);padding:20px">(empty — insert keys)</div>';
+    return;
+  }
+  const maxL = topLevel;
+  let html = '';
+  for(let L = maxL; L >= 0; L--){
+    html += `<div class="sl-level"><span class="sl-label">level ${L}</span><div class="sl-track">`;
+    // head sentinel
+    let hcls = '';
+    if(hl.visit && hl.visit.has('head:'+L)) hcls = ' visit';
+    html += `<div class="sl-cell"><div class="sl-box head${hcls}">H</div>`;
+    // walk every level-0 column; render a box if this node reaches level L
+    nodes.forEach((n,i)=>{
+      const present = n.level >= L;
+      html += `<div class="sl-arrow" style="${present?'':'opacity:.15'}"></div>`;
+      if(present){
+        let cls = '';
+        const tag = 'k'+n.key+':'+L;
+        if(hl.visit && hl.visit.has(tag)) cls = ' visit';
+        if(hl.hit === n.key && L===0) cls = ' hit';
+        if(hl.newKey === n.key) cls = ' newnode';
+        if(hl.gone === n.key) cls = ' gone';
+        html += `<div class="sl-box${cls}">${n.key}</div>`;
+      } else {
+        // spacer to keep columns aligned
+        html += `<div class="sl-box" style="visibility:hidden">${n.key}</div>`;
+      }
+    });
+    html += `</div></div>`;
+  }
+  wrap.innerHTML = html;
+}
+
+// ---------- search (returns index where key is / would go) ----------
+async function searchPath(target, animate){
+  // returns {found, visited:Set, idx}
+  const visited = new Set();
+  // simulate walking levels from top
+  let pos = -1; // index into nodes; -1 == head
+  for(let L = topLevel; L >= 0; L--){
+    visited.add(pos<0 ? 'head:'+L : 'k'+nodes[pos].key+':'+L);
+    if(animate){ render({visit:new Set(visited)}); await sleep(420); }
+    // move right while next node exists at level L and its key <= target
+    while(true){
+      // next node at level L after pos
+      let nx = -1;
+      for(let j=pos+1;j<nodes.length;j++){ if(nodes[j].level>=L){ nx=j; break; } }
+      if(nx===-1) break;
+      if(nodes[nx].key < target || (nodes[nx].key===target)){
+        if(nodes[nx].key <= target){
+          pos = nx;
+          visited.add('k'+nodes[pos].key+':'+L);
+          if(animate){
+            logLine('t',`level ${L}: ${nodes[pos].key} ≤ ${target} → move right`);
+            render({visit:new Set(visited)}); await sleep(420);
+          }
+          if(nodes[pos].key === target){
+            return {found:true, visited, idx:pos};
+          }
+          continue;
+        }
+      }
+      // next key > target → can't go right here
+      if(animate && L>0) logLine('t',`level ${L}: next > ${target} → drop down`);
+      break;
+    }
+  }
+  // at level 0, check if pos is the target
+  const found = pos>=0 && nodes[pos].key === target;
+  return {found, visited, idx: pos};
+}
+
+async function search(target){
+  if(busy) return; busy=true; showRes('');
+  if(nodes.length===0){ logLine('err','list is empty'); busy=false; return; }
+  logLine('cmd',`> search ${target}`);
+  const {found, visited, idx} = await searchPath(target, true);
+  if(found){
+    render({visit:visited, hit:target});
+    logLine('ok',`found ${target} — ${visited.size} node-visit(s)`);
+    explain(`Found <b>${target}</b>. The path used the express lanes to skip ahead, then dropped to level 0. Expected hops ≈ O(log n) for n=${nodes.length}.`);
+    showRes(`search(${target}) = FOUND`);
+  } else {
+    render({visit:visited});
+    logLine('warn',`${target} not found`);
+    explain(`<b>${target}</b> is not in the list. The walk skipped right and dropped down but never landed on it.`);
+    showRes(`search(${target}) = NOT FOUND`);
+  }
+  busy=false;
+}
+
+// ---------- insert ----------
+async function insert(key, quiet){
+  // already present?
+  if(nodes.some(n=>n.key===key)){
+    if(!quiet) logLine('warn',`${key} already present — sets are unique, no-op`);
+    return false;
+  }
+  // coin flips for level
+  const flips = [];
+  const lvl = randomLevel(flips);
+  if(!quiet){
+    logLine('cmd',`> insert ${key}`);
+    flips.forEach(f=>logLine('t','  coin: '+f));
+    logLine('info',`${key} assigned random level ${lvl} (reaches levels 0..${lvl})`);
+  }
+  if(lvl > topLevel) topLevel = lvl;
+  nodes.push({key, level:lvl});
+  nodes.sort((a,b)=>a.key-b.key);
+  if(!quiet){
+    render({newKey:key});
+    explain(`Inserted <b>${key}</b> at <b>level ${lvl}</b>. Each coin flip had a ~50% chance to promote it one level higher — that's the randomized balancing. New node is highlighted in purple.`);
+    await sleep(200);
+    render({newKey:key});
+  }
+  return true;
+}
+
+// ---------- delete ----------
+async function del(key){
+  if(busy) return; busy=true; showRes('');
+  const i = nodes.findIndex(n=>n.key===key);
+  if(i===-1){ logLine('err',`${key} not in list`); busy=false; return; }
+  logLine('cmd',`> delete ${key}`);
+  const {visited} = await searchPath(key, true);
+  render({visit:visited, gone:key});
+  await sleep(500);
+  const lvl = nodes[i].level;
+  nodes.splice(i,1);
+  // recompute topLevel
+  topLevel = nodes.reduce((m,n)=>Math.max(m,n.level), 0);
+  render();
+  logLine('ok',`deleted ${key} — unlinked from ${lvl+1} level(s)`);
+  explain(`Deleted <b>${key}</b>: it was unlinked from every level it appeared on (levels 0..${lvl}). O(log n) expected.`);
+  showRes(`delete(${key}) = OK`);
+  busy=false;
+}
+
+// ---------- demo ----------
+async function seed(){
+  if(busy) return; busy=true;
+  nodes=[]; topLevel=0; render();
+  // deterministic-ish heights for a clean teaching picture
+  const seedData = [[3,0],[6,2],[9,0],[12,1],[17,0],[19,3],[21,0],[25,1],[26,0]];
+  logLine('info','seeding a sample skip list with mixed levels');
+  for(const [k,l] of seedData){ nodes.push({key:k,level:l}); topLevel=Math.max(topLevel,l); }
+  nodes.sort((a,b)=>a.key-b.key);
+  render();
+  logLine('ok',`seeded ${nodes.length} keys, top level ${topLevel}`);
+  explain(`Sample list seeded. Notice the <b>express lanes</b>: only some nodes reach the higher levels. Try <b>Search 21</b> to watch the path skip and drop.`);
+  busy=false;
+}
+
+// ---------- wire up ----------
+function getInt(id){ const v = parseInt(document.getElementById(id).value,10); return Number.isNaN(v)?null:v; }
+document.getElementById('insBtn').onclick = async ()=>{ const k=getInt('key'); if(k===null||busy)return; busy=true; await insert(k); busy=false; };
+document.getElementById('srchBtn').onclick = ()=>{ const k=getInt('key'); if(k!==null) search(k); };
+document.getElementById('delBtn').onclick = ()=>{ const k=getInt('key'); if(k!==null) del(k); };
+document.getElementById('seedBtn').onclick = seed;
+document.getElementById('resetBtn').onclick = reset;
+reset();
+</script>
+</body>
+</html>

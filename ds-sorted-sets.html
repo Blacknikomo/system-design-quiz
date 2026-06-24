@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sorted Sets, BST & Balanced Trees — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* page-specific tree layout */
+  #stage{min-height:300px}
+  .treewrap{position:relative;width:100%;min-height:260px}
+  .tnode{position:absolute;width:42px;height:42px;border-radius:50%;
+    background:var(--panel);border:2px solid var(--line);display:flex;align-items:center;justify-content:center;
+    font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:14px;transition:.25s;transform:translate(-50%,-50%);z-index:2}
+  .tnode.active{box-shadow:0 0 0 3px rgba(79,156,249,.45);border-color:var(--accent)}
+  .tnode.hit{box-shadow:0 0 0 3px rgba(46,204,113,.55);border-color:var(--ok)}
+  .tnode.inrange{border-color:var(--accent2);background:var(--panel2)}
+  .tnode.pick{border-color:var(--warn);color:var(--warn)}
+  .tedge{position:absolute;height:2px;background:var(--line);transform-origin:0 0;z-index:1}
+  .empty-msg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--muted);font-size:13px}
+  .ctable{border-collapse:collapse;font-size:12.5px;margin-top:10px}
+  .ctable th,.ctable td{border:1px solid var(--line);padding:5px 10px;text-align:left}
+  .ctable th{color:var(--muted);font-weight:600;background:var(--panel2)}
+  .ctable code{color:var(--accent)}
+  .resbox{font-family:ui-monospace,Menlo,monospace;font-size:13px;margin-top:8px;color:var(--ok)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🌲 Sorted Sets, BST & Balanced Trees</h1>
+      <div class="sub">A binary search tree keeps keys ordered so you get <i>O(log n)</i> search plus range queries, min/max, floor/ceiling — but only if it stays balanced. Watch a naive BST degenerate into a linked list.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">ordered</span>
+      <span class="tag">O(log n) if balanced</span>
+      <span class="tag">range queries</span>
+      <span class="tag">floor / ceiling</span>
+      <span class="tag">red-black in prod</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A <b>binary search tree</b> stores keys so that for every node, the left subtree is smaller and the right subtree is larger. That ordering buys you operations a hash map can't do: <b>range queries</b>, <b>min/max</b>, <b>floor/ceiling</b>, and ordered iteration — each in <b>O(log n)</b> when the tree is balanced. Search walks down comparing one node per level.</p>
+    <div class="note gotcha"><b>The gotcha:</b> a plain BST is <b>not</b> self-balancing. Inserting keys in sorted order (1,2,3,…) creates a one-sided chain — effectively a linked list with <b>O(n)</b> operations. Production "sorted sets" use a <b>self-balancing tree (red-black / AVL)</b> to guarantee O(log n). The key design judgment: a <b>hash map</b> gives O(1) but is <b>unordered</b>; a <b>sorted set</b> costs O(log n) but gives you <b>order + ranges</b>. Pick based on whether you need range/ordering.</div>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Operations</h3>
+    <div class="row">
+      <label class="fld">key<input type="number" id="key" value="50" size="6" style="width:80px"></label>
+      <button class="btn" id="insBtn">Insert</button>
+      <button class="btn sec" id="srchBtn">Search</button>
+      <span style="width:10px"></span>
+      <button class="btn sec" id="minBtn">Min</button>
+      <button class="btn sec" id="maxBtn">Max</button>
+      <button class="btn sec" id="floorBtn">Floor</button>
+      <button class="btn sec" id="ceilBtn">Ceiling</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label class="fld">range lo<input type="number" id="lo" value="20" style="width:80px"></label>
+      <label class="fld">range hi<input type="number" id="hi" value="70" style="width:80px"></label>
+      <button class="btn sec" id="rangeBtn">Range query [lo,hi]</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn ghost" id="balBtn">🌲 Build a balanced tree</button>
+      <button class="btn warn" id="degenBtn">📉 Insert sorted 1..7 (degenerate!)</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="treewrap" id="tree"></div>
+    </div>
+    <div class="explain" id="explain">Insert a few keys, then try Search to watch the binary walk. Click <b>Insert sorted 1..7</b> to see a BST collapse into a chain.</div>
+    <div class="resbox" id="res"></div>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <h3>Log</h3><div class="log" id="log"></div>
+      <table class="ctable">
+        <tr><th>Operation</th><th>Balanced</th><th>Degenerate (sorted inserts)</th></tr>
+        <tr><td>Search / Insert</td><td><code>O(log n)</code></td><td><code>O(n)</code></td></tr>
+        <tr><td>Min / Max</td><td><code>O(log n)</code></td><td><code>O(n)</code></td></tr>
+        <tr><td>Floor / Ceiling</td><td><code>O(log n)</code></td><td><code>O(n)</code></td></tr>
+        <tr><td>Range query</td><td><code>O(log n + k)</code></td><td><code>O(n)</code></td></tr>
+        <tr><td>In-order traversal</td><td><code>O(n)</code></td><td><code>O(n)</code></td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>Insert</b> compares the new key at each node: go <b>left</b> if smaller, <b>right</b> if larger, until you find an empty spot.</li>
+        <li><b>Search</b> follows the same path — one comparison per level. Depth = cost.</li>
+        <li><b>Range query</b> does an in-order walk, pruning subtrees that can't contain keys in <code>[lo,hi]</code> (purple = collected).</li>
+        <li><b>Floor</b> = largest key ≤ x; <b>Ceiling</b> = smallest key ≥ x — found by tracking candidates on the walk down.</li>
+        <li><b>Sorted inserts</b> only ever go right → a chain of height n. That's why production uses self-balancing trees.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+// node: {key, left, right}
+let root = null;
+let busy = false;
+
+function reset(){
+  root = null; busy = false;
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('res').textContent = '';
+  logLine('info','Empty BST. Insert keys to build it.');
+  render();
+  explain('Insert a few keys, then try <b>Search</b>. Or jump straight to the demos below.');
+}
+
+// ---------- helpers ----------
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+function showRes(html){ document.getElementById('res').innerHTML = html; }
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+function height(n){ return n ? 1 + Math.max(height(n.left), height(n.right)) : 0; }
+function count(n){ return n ? 1 + count(n.left) + count(n.right) : 0; }
+
+// ---------- layout & render ----------
+// assign x by in-order index, y by depth
+function layout(){
+  const positions = new Map();
+  let idx = 0;
+  const W = document.getElementById('tree').clientWidth || 700;
+  const h = Math.max(height(root), 1);
+  const ySpace = Math.min(70, 240 / h);
+  (function walk(n, depth){
+    if(!n) return;
+    walk(n.left, depth+1);
+    positions.set(n, {order: idx++, depth});
+    walk(n.right, depth+1);
+  })(root, 0);
+  const total = idx;
+  positions.forEach(p=>{
+    p.x = total>1 ? 30 + (W-60) * (p.order/(total-1)) : W/2;
+    p.y = 30 + p.depth * ySpace;
+  });
+  return positions;
+}
+
+function render(extra){
+  extra = extra || {};
+  const wrap = document.getElementById('tree');
+  if(!root){ wrap.innerHTML = '<div class="empty-msg">(empty tree)</div>'; return; }
+  const pos = layout();
+  let html = '';
+  // edges first
+  (function edges(n){
+    if(!n) return;
+    const p = pos.get(n);
+    [n.left, n.right].forEach(c=>{
+      if(c){
+        const cp = pos.get(c);
+        const dx = cp.x - p.x, dy = cp.y - p.y;
+        const len = Math.sqrt(dx*dx+dy*dy);
+        const ang = Math.atan2(dy,dx) * 180/Math.PI;
+        html += `<div class="tedge" style="left:${p.x}px;top:${p.y}px;width:${len}px;transform:rotate(${ang}deg)"></div>`;
+        edges(c);
+      }
+    });
+  })(root);
+  // nodes
+  pos.forEach((p,n)=>{
+    let cls = '';
+    if(extra.active && extra.active.has(n)) cls += ' active';
+    if(extra.hit === n) cls += ' hit';
+    if(extra.inrange && extra.inrange.has(n)) cls += ' inrange';
+    if(extra.pick === n) cls += ' pick';
+    html += `<div class="tnode${cls}" style="left:${p.x}px;top:${p.y}px">${n.key}</div>`;
+  });
+  wrap.innerHTML = html;
+}
+
+// ---------- operations ----------
+async function insert(key, quiet){
+  if(root === null){
+    root = {key, left:null, right:null};
+    if(!quiet){ logLine('ok',`inserted ${key} as root`); render(); }
+    return true;
+  }
+  let n = root, steps = 0;
+  const active = new Set();
+  while(true){
+    steps++;
+    active.add(n);
+    if(!quiet){ render({active:new Set(active)}); await sleep(420); }
+    if(key === n.key){
+      if(!quiet){ logLine('warn',`${key} already present — sets hold unique keys, no-op`); render(); }
+      return false;
+    }
+    if(key < n.key){
+      if(n.left === null){ n.left = {key,left:null,right:null};
+        if(!quiet){ logLine('ok',`inserted ${key} (left child of ${n.key}, depth ${steps}) — ${steps} comparisons`); render(); }
+        return true; }
+      n = n.left;
+    } else {
+      if(n.right === null){ n.right = {key,left:null,right:null};
+        if(!quiet){ logLine('ok',`inserted ${key} (right child of ${n.key}, depth ${steps}) — ${steps} comparisons`); render(); }
+        return true; }
+      n = n.right;
+    }
+  }
+}
+
+async function search(key){
+  if(busy) return; busy = true;
+  showRes('');
+  if(!root){ logLine('err','tree is empty'); busy=false; return; }
+  logLine('cmd', `> search ${key}`);
+  const active = new Set();
+  let n = root, steps = 0;
+  while(n){
+    steps++;
+    active.add(n);
+    render({active:new Set(active)});
+    await sleep(480);
+    if(key === n.key){
+      render({active, hit:n});
+      logLine('ok',`found ${key} after ${steps} comparison(s) — depth ${steps} of height ${height(root)}`);
+      explain(`Found <b>${key}</b> in <b>${steps}</b> step(s). Each comparison drops one level. A balanced tree of n=${count(root)} would need ≤ ${Math.ceil(Math.log2(count(root)+1))} steps.`);
+      busy=false; return;
+    }
+    logLine('t', `at ${n.key}: ${key} ${key<n.key?'<':'>'} ${n.key} → go ${key<n.key?'left':'right'}`);
+    n = key < n.key ? n.left : n.right;
+  }
+  render({active});
+  logLine('warn',`${key} not found after ${steps} comparison(s)`);
+  explain(`<b>${key}</b> is not in the tree — the walk fell off after ${steps} comparison(s).`);
+  busy=false;
+}
+
+async function rangeQuery(lo, hi){
+  if(busy) return; busy = true;
+  showRes('');
+  if(!root){ logLine('err','tree is empty'); busy=false; return; }
+  logLine('cmd', `> range [${lo}, ${hi}]`);
+  const inrange = new Set();
+  const collected = [];
+  // in-order with pruning
+  async function walk(n){
+    if(!n) return;
+    // prune: only go left if there could be keys >= lo
+    if(n.key > lo) await walk(n.left);
+    if(n.key >= lo && n.key <= hi){
+      inrange.add(n); collected.push(n.key);
+      render({inrange:new Set(inrange)});
+      logLine('ok',`collected ${n.key}`);
+      await sleep(360);
+    }
+    // prune: only go right if there could be keys <= hi
+    if(n.key < hi) await walk(n.right);
+  }
+  await walk(root);
+  showRes(`range [${lo},${hi}] = { ${collected.join(', ')} }  (k=${collected.length} hits)`);
+  logLine('info',`range query returned ${collected.length} key(s): O(log n + k)`);
+  explain(`In-order traversal with <b>pruning</b>: subtrees that cannot contain keys in <code>[${lo},${hi}]</code> are skipped. Cost is <b>O(log n + k)</b> where k=${collected.length} is the number of results. A hash map could not do this without scanning everything.`);
+  busy=false;
+}
+
+async function minMax(which){
+  if(busy) return; busy = true;
+  showRes('');
+  if(!root){ logLine('err','tree is empty'); busy=false; return; }
+  logLine('cmd', `> ${which}`);
+  const active = new Set();
+  let n = root, steps=0;
+  while((which==='min'? n.left : n.right)){
+    steps++; active.add(n); render({active:new Set(active)}); await sleep(420);
+    n = which==='min'? n.left : n.right;
+  }
+  active.add(n); render({active, pick:n});
+  logLine('ok',`${which} = ${n.key} (followed ${which==='min'?'left':'right'} spine, ${steps+1} nodes)`);
+  showRes(`${which} = ${n.key}`);
+  explain(`<b>${which.toUpperCase()}</b> = ${n.key}: just follow the ${which==='min'?'leftmost':'rightmost'} path. O(log n) when balanced, O(n) on a degenerate chain.`);
+  busy=false;
+}
+
+async function floorCeil(which, x){
+  if(busy) return; busy = true;
+  showRes('');
+  if(!root){ logLine('err','tree is empty'); busy=false; return; }
+  logLine('cmd', `> ${which} ${x}`);
+  const active = new Set();
+  let n = root, best = null;
+  while(n){
+    active.add(n); render({active:new Set(active)}); await sleep(440);
+    if(n.key === x){ best = n; break; }
+    if(which==='floor'){
+      if(n.key < x){ best = n; logLine('t',`${n.key} < ${x} → candidate, go right`); n = n.right; }
+      else { logLine('t',`${n.key} > ${x} → too big, go left`); n = n.left; }
+    } else { // ceiling
+      if(n.key > x){ best = n; logLine('t',`${n.key} > ${x} → candidate, go left`); n = n.left; }
+      else { logLine('t',`${n.key} < ${x} → too small, go right`); n = n.right; }
+    }
+  }
+  if(best){
+    render({active, pick:best});
+    logLine('ok',`${which}(${x}) = ${best.key}`);
+    showRes(`${which}(${x}) = ${best.key}`);
+    explain(`<b>${which}(${x})</b> = ${best.key}. ${which==='floor'?'Largest key ≤':'Smallest key ≥'} ${x}, found by tracking the best candidate while walking down. O(log n) balanced.`);
+  } else {
+    render({active});
+    logLine('warn',`${which}(${x}) = none`);
+    showRes(`${which}(${x}) = (none)`);
+    explain(`No ${which} exists for ${x} — every key is on the wrong side.`);
+  }
+  busy=false;
+}
+
+// ---------- demos ----------
+async function buildBalanced(){
+  if(busy) return; busy = true;
+  root = null; render();
+  // insert in an order that yields a balanced tree
+  const order = [50,25,75,12,37,62,87];
+  logLine('info','building a balanced tree: insert 50,25,75,12,37,62,87');
+  for(const k of order){ await insert(k); await sleep(140); }
+  logLine('ok',`done. n=${count(root)}, height=${height(root)} (perfectly balanced — log2(7)≈3)`);
+  explain(`A balanced BST of 7 keys has height <b>3</b>: search/insert touch ≤3 nodes. Compare this to the degenerate demo. This balance is what red-black/AVL trees enforce automatically.`);
+  busy=false;
+}
+
+async function degenerate(){
+  if(busy) return; busy = true;
+  root = null; render();
+  logLine('warn','inserting in SORTED order: 1,2,3,4,5,6,7 …');
+  for(let k=1;k<=7;k++){
+    await insert(k);
+    await sleep(220);
+  }
+  logLine('err',`DEGENERATE: n=${count(root)} but height=${height(root)} — every key went RIGHT. This is a linked list!`);
+  explain(`💥 <b>Degenerate BST.</b> Sorted inserts only ever go right, so the tree is a chain of height <b>${height(root)}</b>. Search is now <b>O(n)</b>, not O(log n). Try Search on key 7 — it touches every node. <b>This is exactly why production sorted sets self-balance</b> (red-black trees rotate to keep height ≈ log n).`);
+  busy=false;
+}
+
+// ---------- wire up ----------
+function getInt(id){ const v = parseInt(document.getElementById(id).value,10); return Number.isNaN(v)?null:v; }
+document.getElementById('insBtn').onclick = async ()=>{ const k=getInt('key'); if(k===null||busy)return; busy=true; logLine('cmd',`> insert ${k}`); await insert(k); busy=false; };
+document.getElementById('srchBtn').onclick = ()=>{ const k=getInt('key'); if(k!==null) search(k); };
+document.getElementById('minBtn').onclick = ()=>minMax('min');
+document.getElementById('maxBtn').onclick = ()=>minMax('max');
+document.getElementById('floorBtn').onclick = ()=>{ const k=getInt('key'); if(k!==null) floorCeil('floor',k); };
+document.getElementById('ceilBtn').onclick = ()=>{ const k=getInt('key'); if(k!==null) floorCeil('ceiling',k); };
+document.getElementById('rangeBtn').onclick = ()=>{ const lo=getInt('lo'), hi=getInt('hi'); if(lo!==null&&hi!==null) rangeQuery(Math.min(lo,hi),Math.max(lo,hi)); };
+document.getElementById('balBtn').onclick = buildBalanced;
+document.getElementById('degenBtn').onclick = degenerate;
+document.getElementById('resetBtn').onclick = reset;
+window.addEventListener('resize', ()=>{ if(!busy) render(); });
+reset();
+</script>
+</body>
+</html>

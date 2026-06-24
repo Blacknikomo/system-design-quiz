@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arrays & Dynamic Arrays — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .cells{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;align-items:flex-end}
+  .cell{position:relative;width:54px;min-height:54px;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;border:2px solid var(--line);border-radius:8px;background:var(--panel);
+    font-family:ui-monospace,Menlo,monospace;font-weight:700;transition:.25s}
+  .cell.empty{border-style:dashed;color:var(--muted);font-weight:400;opacity:.55;background:transparent}
+  .cell.active{box-shadow:0 0 0 3px rgba(79,156,249,.45);border-color:var(--accent)}
+  .cell.flash-ok{box-shadow:0 0 0 3px rgba(46,204,113,.5);border-color:var(--ok)}
+  .cell.flash-bad{box-shadow:0 0 0 3px rgba(255,92,92,.5);border-color:var(--bad)}
+  .cell.moving{border-color:var(--accent2);color:var(--accent2)}
+  .cell .idx{position:absolute;top:-18px;font-size:10px;color:var(--muted);font-weight:400}
+  .buf-label{font-size:12px;color:var(--muted);margin:0 0 18px;text-align:center}
+  .buf-label b{color:var(--accent)}
+  .legend{display:flex;gap:16px;justify-content:center;font-size:12px;color:var(--muted);margin-top:14px;flex-wrap:wrap}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .swatch{width:14px;height:14px;border-radius:4px;border:2px solid var(--line)}
+  table.cx{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  table.cx th,table.cx td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line)}
+  table.cx th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.04em}
+  table.cx code{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>📊 Arrays & Dynamic Arrays — size vs. capacity</h1>
+      <div class="sub">Contiguous, index-addressable memory. Watch the backing buffer double on overflow, see why <i>append</i> is amortized O(1), and feel the O(n) cost of shifting on insert/delete.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">contiguous memory</span>
+      <span class="tag">O(1) random access</span>
+      <span class="tag">amortized O(1) append</span>
+      <span class="tag">cache-friendly</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A dynamic array (Go slice, C++ <code>vector</code>, Java <code>ArrayList</code>, Python <code>list</code>) stores elements in one contiguous block. It tracks two numbers: <b>size</b> (logical count) and <b>capacity</b> (slots in the backing buffer). Indexing is O(1) pointer arithmetic. When <code>size == capacity</code>, append allocates a larger buffer (typically <b>2×</b>) and copies everything over.</p>
+    <div class="note gotcha"><b>The gotcha:</b> append is <b>amortized</b> O(1) — most appends are O(1), but the occasional resize is O(n); doubling makes the copies sum to a geometric series, so n appends cost O(n) total. Insert/delete at the <b>front or middle</b> is always O(n) because every following element must shift. The win is <b>cache locality</b>: contiguous layout means a linear scan streams through cache lines — usually beating a linked list in practice.</div>
+    <table class="cx">
+      <tr><th>Operation</th><th>Time</th><th>Why</th></tr>
+      <tr><td><code>access(i)</code></td><td>O(1)</td><td>base + i × elemSize</td></tr>
+      <tr><td><code>append</code></td><td>O(1) amortized</td><td>O(n) on resize, but rare (doubling)</td></tr>
+      <tr><td><code>insert(i)</code></td><td>O(n)</td><td>shift elements i..n-1 right</td></tr>
+      <tr><td><code>delete(i)</code></td><td>O(n)</td><td>shift elements i+1..n-1 left</td></tr>
+    </table>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Run an operation</h3>
+    <div class="row">
+      <label class="fld">index<input type="number" id="idx" value="0" min="0" style="width:70px"></label>
+      <label class="fld">value<input type="text" id="val" value="42" size="6"></label>
+      <button class="btn sec" id="accessBtn">Access [i]</button>
+      <button class="btn" id="appendBtn">Append</button>
+      <button class="btn sec" id="insertBtn">Insert @ i</button>
+      <button class="btn sec" id="deleteBtn">Delete @ i</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="buf-label" id="bufLabel"></div>
+      <div class="cells" id="cells"></div>
+      <div class="legend">
+        <span><span class="swatch" style="border-color:var(--line);background:var(--panel)"></span> used (size)</span>
+        <span><span class="swatch" style="border-style:dashed;background:transparent"></span> spare capacity</span>
+        <span><span class="swatch" style="border-color:var(--accent2)"></span> being shifted/copied</span>
+      </div>
+    </div>
+    <div class="explain" id="explain">Click <b>Append</b> a few times and watch capacity. When size hits capacity, the buffer doubles and every element is copied to a new block.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Operation log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>Access [i]</b> jumps straight to a cell via address math — <b>O(1)</b>, no scan.</li>
+        <li><b>Append</b> drops into the next free slot — <b>O(1)</b>… until the buffer is full.</li>
+        <li>On overflow, a <b>2× buffer</b> is allocated and all elements are <span style="color:var(--accent2)">copied</span> — that one append is <b>O(n)</b>.</li>
+        <li><b>Insert @ i</b> shifts elements i..end one slot <span style="color:var(--accent2)">right</span> — <b>O(n)</b>.</li>
+        <li><b>Delete @ i</b> shifts elements after i one slot <span style="color:var(--accent2)">left</span> — <b>O(n)</b>.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+let arr;        // logical elements (length === size)
+let cap;        // backing-buffer capacity
+let busy=false;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+function reset(){
+  arr=[10,20,30];
+  cap=4;
+  busy=false;
+  document.getElementById('log').innerHTML='';
+  logLine('info','New dynamic array: size 3, capacity 4 (one spare slot).');
+  render();
+  explain('Run an operation. Notice the dashed cells: that is <b>spare capacity</b> — allocated but unused. Append fills it; when it runs out the buffer doubles.');
+}
+
+// ---------- rendering ----------
+function render(){
+  document.getElementById('bufLabel').innerHTML =
+    `backing buffer &nbsp; <b>size = ${arr.length}</b> &nbsp;·&nbsp; <b>capacity = ${cap}</b> &nbsp;·&nbsp; load = ${(arr.length/cap*100|0)}%`;
+  let html='';
+  for(let i=0;i<cap;i++){
+    if(i<arr.length){
+      html += `<div class="cell" id="c${i}"><span class="idx">${i}</span>${arr[i]}</div>`;
+    } else {
+      html += `<div class="cell empty" id="c${i}"><span class="idx">${i}</span>·</div>`;
+    }
+  }
+  document.getElementById('cells').innerHTML=html;
+}
+
+function logLine(cls,msg){
+  const t=new Date().toLocaleTimeString();
+  const el=document.getElementById('log');
+  el.innerHTML+=`<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop=el.scrollHeight;
+}
+function explain(html){document.getElementById('explain').innerHTML=html;}
+function cls(i,c){const e=document.getElementById('c'+i);if(e)e.classList.add(c);}
+function uncls(i,c){const e=document.getElementById('c'+i);if(e)e.classList.remove(c);}
+
+// ---------- operations ----------
+async function doAccess(){
+  if(busy)return;
+  const i=parseInt(document.getElementById('idx').value,10);
+  if(isNaN(i)||i<0||i>=arr.length){logLine('err',`access(${i}) → out of bounds (size ${arr.length})`);explain(`Index <b>${i}</b> is out of range [0, ${arr.length-1}]. A real array would read garbage or throw.`);return;}
+  busy=true;
+  logLine('cmd',`> access(${i})`);
+  cls(i,'active');
+  await sleep(450);
+  logLine('ok',`arr[${i}] = ${arr[i]}  —  O(1) via base_addr + ${i}×elemSize, no scan`);
+  explain(`Read <b>arr[${i}] = ${arr[i]}</b> by computing its address directly — <b>O(1)</b>. This constant-time random access is the array's superpower (linked lists can't do it).`);
+  await sleep(250);
+  uncls(i,'active');cls(i,'flash-ok');await sleep(400);uncls(i,'flash-ok');
+  busy=false;
+}
+
+async function grow(){
+  const newCap=cap*2;
+  logLine('warn',`size (${arr.length}) == capacity (${cap}) → allocate ${newCap}-slot buffer & copy (this append is O(n))`);
+  explain(`Buffer full. Allocating a <b>2× buffer (${cap} → ${newCap})</b> and copying all ${arr.length} elements over — this single append costs <b>O(n)</b>. Doubling keeps the amortized cost O(1).`);
+  cap=newCap;render();
+  for(let i=0;i<arr.length;i++){cls(i,'moving');await sleep(120);}
+  await sleep(250);
+  for(let i=0;i<arr.length;i++)uncls(i,'moving');
+}
+
+async function doAppend(){
+  if(busy)return;
+  const v=document.getElementById('val').value.trim()||'?';
+  busy=true;
+  logLine('cmd',`> append(${v})`);
+  if(arr.length===cap){await grow();}
+  const i=arr.length;
+  arr.push(v);
+  render();
+  cls(i,'flash-ok');
+  logLine('ok',`wrote ${v} at index ${i} — O(1) amortized (size now ${arr.length}/${cap})`);
+  if(!document.getElementById('explain').innerHTML.includes('2× buffer'))
+    explain(`Dropped <b>${v}</b> into the next free slot (index ${i}) — <b>O(1)</b>. Spare capacity remaining: ${cap-arr.length}.`);
+  await sleep(450);uncls(i,'flash-ok');
+  busy=false;
+}
+
+async function doInsert(){
+  if(busy)return;
+  const i=parseInt(document.getElementById('idx').value,10);
+  const v=document.getElementById('val').value.trim()||'?';
+  if(isNaN(i)||i<0||i>arr.length){logLine('err',`insert(${i}) → index must be in [0, ${arr.length}]`);return;}
+  busy=true;
+  logLine('cmd',`> insert(${i}, ${v})`);
+  if(arr.length===cap){await grow();}
+  // shift right from end down to i
+  arr.push(null);render();
+  const moved=arr.length-1-i;
+  for(let j=arr.length-1;j>i;j--){
+    arr[j]=arr[j-1];render();cls(j,'moving');await sleep(130);uncls(j,'moving');
+  }
+  arr[i]=v;render();cls(i,'flash-ok');
+  logLine('ok',`inserted ${v} at ${i}; shifted ${moved} element(s) right — O(n)`);
+  explain(`Inserting at index ${i} forced <b>${moved} element(s)</b> to slide one slot right to make room — <b>O(n)</b>. Inserting at the front (i=0) is the worst case: every element moves.`);
+  await sleep(450);uncls(i,'flash-ok');
+  busy=false;
+}
+
+async function doDelete(){
+  if(busy)return;
+  const i=parseInt(document.getElementById('idx').value,10);
+  if(isNaN(i)||i<0||i>=arr.length){logLine('err',`delete(${i}) → out of bounds (size ${arr.length})`);return;}
+  busy=true;
+  const removed=arr[i];
+  logLine('cmd',`> delete(${i})`);
+  cls(i,'flash-bad');await sleep(350);uncls(i,'flash-bad');
+  const moved=arr.length-1-i;
+  for(let j=i;j<arr.length-1;j++){
+    arr[j]=arr[j+1];render();cls(j,'moving');await sleep(130);uncls(j,'moving');
+  }
+  arr.pop();render();
+  logLine('ok',`deleted ${removed} at ${i}; shifted ${moved} element(s) left — O(n) (size now ${arr.length}, capacity unchanged ${cap})`);
+  explain(`Removed <b>${removed}</b> and slid the <b>${moved}</b> trailing element(s) one slot left to close the gap — <b>O(n)</b>. Capacity stays ${cap}: most dynamic arrays do not shrink the buffer on delete.`);
+  busy=false;
+}
+
+// ---------- wire up ----------
+document.getElementById('accessBtn').onclick=doAccess;
+document.getElementById('appendBtn').onclick=doAppend;
+document.getElementById('insertBtn').onclick=doInsert;
+document.getElementById('deleteBtn').onclick=doDelete;
+document.getElementById('resetBtn').onclick=reset;
+reset();
+</script>
+</body>
+</html>

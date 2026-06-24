@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LRU & LFU Caches — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  #stage{min-height:300px}
+  .cache-cols{display:grid;grid-template-columns:1fr 1.4fr;gap:24px;width:100%}
+  @media(max-width:680px){.cache-cols{grid-template-columns:1fr}}
+  .col-h{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:8px}
+  /* hash map */
+  .hmap .hrow{font-family:ui-monospace,Menlo,monospace;font-size:12px;display:flex;gap:8px;align-items:center;
+    background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:4px 8px;margin:4px 0}
+  .hmap .hk{color:var(--accent);min-width:42px}
+  .hmap .harrow{color:var(--muted)}
+  .hmap .hp{color:var(--muted)}
+  /* DLL */
+  .dll{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .dnode{position:relative;background:var(--panel);border:2px solid var(--line);border-radius:10px;
+    padding:8px 10px;min-width:62px;text-align:center;transition:.25s}
+  .dnode .dk{font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:13px}
+  .dnode .dv{font-size:11px;color:var(--muted)}
+  .dnode .dfreq{position:absolute;top:-9px;right:-9px;background:var(--accent2);color:#fff;font-size:10px;
+    border-radius:10px;padding:1px 6px;font-weight:700}
+  .dnode.head{border-color:var(--ok)}
+  .dnode.tail{border-color:var(--warn)}
+  .dnode.flash-ok{box-shadow:0 0 0 3px rgba(46,204,113,.5)}
+  .dnode.flash-bad{box-shadow:0 0 0 3px rgba(255,92,92,.5)}
+  .darrow{color:var(--muted);font-size:18px}
+  .endcap{font-size:10px;color:var(--muted);align-self:center;text-transform:uppercase;letter-spacing:.04em}
+  /* LFU buckets */
+  .buckets{display:flex;flex-direction:column;gap:10px}
+  .bucket{border:1px dashed var(--line);border-radius:10px;padding:8px}
+  .bucket .blabel{font-size:11px;color:var(--muted);margin-bottom:6px;font-family:ui-monospace,Menlo,monospace}
+  .bucket.minfreq{border-color:var(--warn)}
+  .bucket.minfreq .blabel{color:var(--warn)}
+  .brow{display:flex;gap:6px;flex-wrap:wrap}
+  .toggle{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .toggle button{background:var(--panel2);color:var(--muted);border:none;padding:8px 16px;font-size:14px;
+    font-weight:600;cursor:pointer}
+  .toggle button.on{background:var(--accent);color:#fff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>♻️ LRU & LFU Caches</h1>
+      <div class="sub">A cache with a bound: when it's full, something has to go. <b>LRU</b> evicts the <i>least-recently-used</i> entry; <b>LFU</b> evicts the <i>least-frequently-used</i>. Watch the hash map + doubly linked list keep every op O(1).</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">O(1) get / put</span>
+      <span class="tag">hash map + doubly linked list</span>
+      <span class="tag">eviction policy</span>
+      <span class="tag">bounded memory</span>
+    </div>
+    <p class="small" style="margin-bottom:6px"><b>LRU</b> = a hash map (key → node) plus a <b>doubly</b> linked list ordered most-recently-used at the head, least at the tail. <code>get</code>/<code>put</code> splice the touched node to the head; when over capacity you drop the tail. <b>LFU</b> instead groups nodes into <b>frequency buckets</b> and tracks <code>minFreq</code> — on access a node moves to the next-higher bucket, and eviction takes the oldest node from the lowest non-empty bucket.</p>
+    <div class="note gotcha"><b>The gotcha:</b> the list must be <b>doubly</b> linked so you can unlink a known node in <b>O(1)</b> (a singly linked list forces an O(n) scan to find its predecessor — and "scan to find the oldest" misses the whole point). LRU's weakness is <b>cache pollution</b>: one big sequential scan of cold keys evicts your hot working set. LFU resists scan pollution but is more complex and can <b>cling to stale once-popular items</b> (needs aging / decay to fix).</p>
+    <table class="small" style="border-collapse:collapse;margin-top:10px">
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Get(k)</td><td style="padding:2px 0"><code>O(1)</code> — map lookup + splice node to head (LRU) / bump bucket (LFU)</td></tr>
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Put(k,v)</td><td style="padding:2px 0"><code>O(1)</code> — insert at head; if full, unlink tail / min-bucket node</td></tr>
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Evict</td><td style="padding:2px 0"><code>O(1)</code> — drop a node whose position is already known</td></tr>
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Space</td><td style="padding:2px 0"><code>O(capacity)</code></td></tr>
+    </table>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Policy & operations</h3>
+    <div class="row" style="margin-bottom:12px">
+      <span class="toggle" id="toggle">
+        <button id="lruBtn" class="on">LRU</button><button id="lfuBtn">LFU</button>
+      </span>
+      <label class="fld">capacity
+        <input type="number" id="cap" value="3" min="1" max="6" style="width:62px">
+      </label>
+      <button class="btn ghost" id="applyCap">apply capacity</button>
+    </div>
+    <div class="row">
+      <label class="fld">key<input type="text" id="k" value="A" size="6"></label>
+      <label class="fld">value<input type="text" id="v" value="1" size="6"></label>
+      <button class="btn" id="putBtn">Put(k, v)</button>
+      <button class="btn sec" id="getBtn">Get(k)</button>
+      <span style="width:14px"></span>
+      <button class="btn ghost" id="seqBtn">Demo: scan pollution</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <span class="pill">size: <b id="sizeP">0</b>/<b id="capP">3</b></span>
+      <span class="pill">hits: <b id="hitP" style="color:var(--ok)">0</b></span>
+      <span class="pill">misses: <b id="missP" style="color:var(--bad)">0</b></span>
+      <span class="pill">evictions: <b id="evP" style="color:var(--warn)">0</b></span>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="cache-cols">
+        <div class="hmap">
+          <div class="col-h">Hash map (key → node)</div>
+          <div id="hmapBody"></div>
+        </div>
+        <div>
+          <div class="col-h" id="listHdr">Doubly linked list · head = MRU, tail = LRU</div>
+          <div id="listBody"></div>
+        </div>
+      </div>
+    </div>
+    <div class="explain" id="explain">Default policy is <b>LRU</b>, capacity 3. <code>Put</code> a few keys, then <code>Get</code> an old one to move it to the head — and watch the tail get evicted when you overflow.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>Get(k)</b>: hash-map lookup is O(1). Hit → move that node toward MRU; miss → nothing changes.</li>
+        <li><b>Put(k,v)</b>: existing key updates in place; new key inserts at the front (LRU) or freq-1 bucket (LFU).</li>
+        <li>When <b>size &gt; capacity</b>, evict the <span style="color:var(--warn)">LRU tail</span> (LRU) or the oldest node in the <span style="color:var(--warn)">minFreq bucket</span> (LFU).</li>
+        <li>Because the node's position is already known, unlinking it is <b>O(1)</b> — that's why the list is doubly linked.</li>
+        <li>Run <b>scan pollution</b> to see a one-shot sequential scan flush an LRU's hot keys (LFU survives it).</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+// Doubly linked list node: {key, val, prev, next, freq}
+let policy='LRU';
+let cap=3;
+let map;            // key -> node
+let head, tail;     // LRU sentinels (head=MRU side)
+let minFreq;        // LFU
+let stats, busy=false;
+
+function reset(){
+  cap = clampCap(parseInt(document.getElementById('cap').value,10));
+  map = new Map();
+  head = {key:'__h', sentinel:true}; tail = {key:'__t', sentinel:true};
+  head.next=tail; tail.prev=head; head.prev=null; tail.next=null;
+  minFreq = 0;
+  stats = {hits:0, misses:0, evicts:0};
+  busy=false;
+  document.getElementById('log').innerHTML='';
+  logLine('info', `${policy} cache ready, capacity ${cap}, empty.`);
+  render();
+  explain(policy==='LRU'
+    ? 'Default policy is <b>LRU</b>. <code>Put</code> a few keys, then <code>Get</code> an old one to move it to the head — and watch the tail get evicted when you overflow.'
+    : '<b>LFU</b> mode: each node carries a <b>frequency</b>. Access bumps it to the next bucket; eviction removes the oldest node from the lowest non-empty bucket (minFreq).');
+}
+function clampCap(c){ if(isNaN(c)||c<1) return 1; if(c>6) return 6; return c; }
+
+// ---------- helpers (contract) ----------
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function fly(fromSel, toSel, label, cls){
+  return new Promise(res=>{
+    const stage = document.getElementById('stage');
+    const sr = stage.getBoundingClientRect();
+    const fromEl = typeof fromSel==='string'?document.querySelector(fromSel):fromSel;
+    const toEl   = typeof toSel==='string'?document.querySelector(toSel):toSel;
+    if(!fromEl||!toEl){res();return;}
+    const a = fromEl.getBoundingClientRect();
+    const b = toEl.getBoundingClientRect();
+    const p = document.createElement('div');
+    p.className = 'packet '+(cls||'');
+    p.textContent = label;
+    p.style.left = (a.left - sr.left + a.width/2 - 16)+'px';
+    p.style.top  = (a.top  - sr.top  + a.height/2 - 10)+'px';
+    stage.appendChild(p);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      p.style.left = (b.left - sr.left + b.width/2 - 16)+'px';
+      p.style.top  = (b.top  - sr.top  + b.height/2 - 10)+'px';
+    }));
+    setTimeout(()=>{ p.style.opacity=0; setTimeout(()=>{p.remove();res();},250); }, 720);
+  });
+}
+function flash(key,cls){ const e=document.getElementById('dn_'+cssId(key)); if(e){e.classList.add(cls);setTimeout(()=>e.classList.remove(cls),650);} }
+function cssId(k){ return String(k).replace(/[^a-zA-Z0-9_-]/g,'_'); }
+
+// ---------- DLL ops (LRU) ----------
+function unlink(node){ node.prev.next=node.next; node.next.prev=node.prev; }
+function insertHead(node){ node.next=head.next; node.prev=head; head.next.prev=node; head.next=node; }
+function orderedNodes(){ // head -> tail order
+  const arr=[]; let c=head.next; while(c && !c.sentinel){ arr.push(c); c=c.next; } return arr;
+}
+
+// ---------- rendering ----------
+function renderMap(){
+  const body=document.getElementById('hmapBody');
+  const nodes = orderedNodes();
+  if(nodes.length===0){ body.innerHTML='<div class="small muted">(empty)</div>'; return; }
+  // sort by key for stable map display
+  const sorted = [...nodes].sort((a,b)=>String(a.key)<String(b.key)?-1:1);
+  body.innerHTML = sorted.map(n=>`<div class="hrow"><span class="hk">${n.key}</span><span class="harrow">→</span><span class="hp">node@${cssId(n.key)}${policy==='LFU'?' · f'+n.freq:''}</span></div>`).join('');
+}
+function renderListLRU(){
+  document.getElementById('listHdr').textContent='Doubly linked list · head = MRU, tail = LRU';
+  const nodes=orderedNodes();
+  const body=document.getElementById('listBody');
+  if(nodes.length===0){ body.innerHTML='<div class="small muted">(empty)</div>'; return; }
+  let html='<div class="dll"><span class="endcap">head→</span>';
+  nodes.forEach((n,i)=>{
+    const cls = i===0?'head':(i===nodes.length-1?'tail':'');
+    html += `<div class="dnode ${cls}" id="dn_${cssId(n.key)}"><div class="dk">${n.key}</div><div class="dv">= ${n.val}</div></div>`;
+    if(i<nodes.length-1) html+='<span class="darrow">⇄</span>';
+  });
+  html+='<span class="endcap">←tail</span></div>';
+  body.innerHTML=html;
+}
+function renderListLFU(){
+  document.getElementById('listHdr').textContent='Frequency buckets · minFreq bucket is evicted first';
+  const nodes=orderedNodes();
+  const body=document.getElementById('listBody');
+  if(nodes.length===0){ body.innerHTML='<div class="small muted">(empty)</div>'; return; }
+  // group by freq; within a bucket keep insertion order (head->tail = newest->oldest of that freq)
+  const byFreq=new Map();
+  nodes.forEach(n=>{ if(!byFreq.has(n.freq)) byFreq.set(n.freq,[]); byFreq.get(n.freq).push(n); });
+  const freqs=[...byFreq.keys()].sort((a,b)=>a-b);
+  let html='<div class="buckets">';
+  freqs.forEach(f=>{
+    const isMin = f===minFreq;
+    html+=`<div class="bucket ${isMin?'minfreq':''}"><div class="blabel">freq ${f}${isMin?'  ← minFreq (evict from here)':''}</div><div class="brow">`;
+    // oldest of this freq is the one nearest tail; show newest→oldest, mark oldest
+    byFreq.get(f).forEach((n,i,arr)=>{
+      const tailish = isMin && i===arr.length-1 ? 'tail':'';
+      html+=`<div class="dnode ${tailish}" id="dn_${cssId(n.key)}"><span class="dfreq">${n.freq}</span><div class="dk">${n.key}</div><div class="dv">= ${n.val}</div></div>`;
+    });
+    html+='</div></div>';
+  });
+  html+='</div>';
+  body.innerHTML=html;
+}
+function render(){
+  renderMap();
+  if(policy==='LRU') renderListLRU(); else renderListLFU();
+  document.getElementById('sizeP').textContent=map.size;
+  document.getElementById('capP').textContent=cap;
+  document.getElementById('capP'); // noop
+  document.getElementById('hitP').textContent=stats.hits;
+  document.getElementById('missP').textContent=stats.misses;
+  document.getElementById('evP').textContent=stats.evicts;
+}
+
+// ---------- evict ----------
+async function evictLRU(){
+  const victim=tail.prev;
+  if(victim.sentinel) return;
+  await fly('#dn_'+cssId(victim.key), '#dn_'+cssId(victim.key), '✖', 'bad');
+  flash(victim.key,'flash-bad');
+  unlink(victim); map.delete(victim.key);
+  stats.evicts++;
+  logLine('warn', `EVICT (LRU): tail key "${victim.key}" was least-recently-used → dropped.`);
+  explain(`Cache was full, so the <b>tail</b> — least-recently-used key <b>${victim.key}</b> — is unlinked in O(1) (we already hold the node). Make room, then insert.`);
+}
+async function evictLFU(){
+  // oldest node in the minFreq bucket = the one nearest the tail among that freq
+  const nodes=orderedNodes().filter(n=>n.freq===minFreq);
+  const victim=nodes[nodes.length-1];
+  if(!victim) return;
+  await fly('#dn_'+cssId(victim.key), '#dn_'+cssId(victim.key), '✖', 'bad');
+  flash(victim.key,'flash-bad');
+  unlink(victim); map.delete(victim.key);
+  stats.evicts++;
+  logLine('warn', `EVICT (LFU): from minFreq=${minFreq} bucket, oldest key "${victim.key}" → dropped.`);
+  explain(`Full cache: LFU evicts from the <b>lowest-frequency bucket</b> (minFreq=${minFreq}), taking its <b>oldest</b> entry — key <b>${victim.key}</b>.`);
+}
+
+// ---------- operations ----------
+async function doPut(){
+  if(busy) return; busy=true;
+  const k=document.getElementById('k').value.trim(); const v=document.getElementById('v').value.trim();
+  if(!k){ busy=false; return; }
+  logLine('cmd', `> Put(${k}, ${v})`);
+  if(map.has(k)){
+    const node=map.get(k); node.val=v;
+    if(policy==='LRU'){ unlink(node); insertHead(node); render(); flash(k,'flash-ok');
+      logLine('ok', `Updated existing key "${k}" and moved it to MRU (head).`);
+      explain(`Key <b>${k}</b> already present — value updated and the node spliced to the <b>head</b> (most-recently-used).`);
+    } else { await bumpFreq(node); render(); flash(k,'flash-ok');
+      logLine('ok', `Updated key "${k}"; frequency bumped to ${node.freq}.`);
+      explain(`Key <b>${k}</b> updated; its access frequency rose to <b>${node.freq}</b>, moving it to a higher bucket.`);
+    }
+    busy=false; return;
+  }
+  // new key — evict if at capacity
+  if(map.size>=cap){
+    if(policy==='LRU') await evictLRU(); else await evictLFU();
+    await sleep(250);
+  }
+  const node={key:k, val:v, freq:1};
+  map.set(k,node);
+  insertHead(node);          // append at head; for LFU it slots into freq-1 group via render
+  if(policy==='LFU') minFreq=1;
+  render(); flash(k,'flash-ok');
+  if(policy==='LRU'){
+    logLine('ok', `Inserted "${k}" at head (MRU). size ${map.size}/${cap}.`);
+    explain(`New key <b>${k}</b> inserted at the <b>head</b>. The hash map points to the node so future ops are O(1).`);
+  } else {
+    logLine('ok', `Inserted "${k}" into freq-1 bucket; minFreq reset to 1. size ${map.size}/${cap}.`);
+    explain(`New key <b>${k}</b> enters the <b>freq-1 bucket</b>, so <b>minFreq</b> resets to 1 — a brand-new entry is the easiest to evict next.`);
+  }
+  busy=false;
+}
+
+async function bumpFreq(node){
+  node.freq++;
+  // re-position so it sits as the newest of its new freq bucket (head keeps insertion recency)
+  unlink(node); insertHead(node);
+  // minFreq = the lowest frequency still present in the cache
+  const all=orderedNodes();
+  minFreq = all.length ? Math.min(...all.map(n=>n.freq)) : 0;
+}
+
+async function doGet(){
+  if(busy) return; busy=true;
+  const k=document.getElementById('k').value.trim();
+  if(!k){ busy=false; return; }
+  logLine('cmd', `> Get(${k})`);
+  if(!map.has(k)){
+    stats.misses++; render();
+    logLine('err', `Get(${k}) → MISS. Key not in cache; nothing moves.`);
+    explain(`<b>${k}</b> isn't in the cache — a <span style="color:var(--bad)">miss</span>. The order/frequency structure is untouched.`);
+    busy=false; return;
+  }
+  const node=map.get(k);
+  stats.hits++;
+  await fly('#dn_'+cssId(k), '#dn_'+cssId(k), 'hit', 'read');
+  if(policy==='LRU'){
+    unlink(node); insertHead(node); render(); flash(k,'flash-ok');
+    logLine('ok', `Get(${k}) → "${node.val}"  HIT. Moved to MRU (head).`);
+    explain(`<b>Hit</b>: returned <b>${node.val}</b> and spliced node <b>${k}</b> to the head — it's now the most-recently-used, so it's evicted last.`);
+  } else {
+    await bumpFreq(node); render(); flash(k,'flash-ok');
+    logLine('ok', `Get(${k}) → "${node.val}"  HIT. freq → ${node.freq} (minFreq now ${minFreq}).`);
+    explain(`<b>Hit</b>: returned <b>${node.val}</b>; <b>${k}</b>'s frequency rose to <b>${node.freq}</b>, promoting it to a higher bucket and away from eviction.`);
+  }
+  busy=false;
+}
+
+// scan-pollution demo: warm A,B,C as hot, hit them, then scan many cold keys
+async function demoScan(){
+  if(busy) return;
+  reset();
+  await sleep(150);
+  busy=true;
+  logLine('info', `DEMO: capacity ${cap}. Warming a hot working set, then doing a one-shot cold scan.`);
+  const hot=['A','B','C'].slice(0,cap);
+  for(const h of hot){ document.getElementById('k').value=h; document.getElementById('v').value='hot'; busy=false; await doPut(); await sleep(250); }
+  // touch them so they're "hot" in both policies
+  for(const h of hot){ document.getElementById('k').value=h; busy=false; await doGet(); await sleep(250); }
+  if(policy==='LFU'){ for(const h of hot){ document.getElementById('k').value=h; busy=false; await doGet(); await sleep(200);} }
+  logLine('info', `Now scanning cold keys X1, X2, X3, X4 once each…`);
+  busy=true;
+  for(const c of ['X1','X2','X3','X4']){ document.getElementById('k').value=c; document.getElementById('v').value='cold'; busy=false; await doPut(); await sleep(300); }
+  busy=false;
+  const hotLeft=hot.filter(h=>map.has(h));
+  if(policy==='LRU'){
+    logLine('err', `Result: LRU evicted the hot set — only [${hotLeft.join(', ')||'none'}] survived. Cache POLLUTED by the scan.`);
+    explain(`<b>Scan pollution</b>: each cold key became the new MRU and pushed a hot key off the tail. LRU can't tell a one-shot scan from real reuse, so the hot working set [A,B,C] got flushed.`);
+  } else {
+    logLine('ok', `Result: LFU kept the hot set — [${hotLeft.join(', ')}] survived; cold keys (freq 1) were evicted instead.`);
+    explain(`<b>LFU resists scan pollution</b>: the hot keys had high frequency, so the freq-1 cold scan keys were evicted first. The trade-off is more bookkeeping and a risk of clinging to stale once-popular keys.`);
+  }
+}
+
+// ---------- policy toggle ----------
+function setPolicy(p){
+  if(p===policy) return;
+  policy=p;
+  document.getElementById('lruBtn').classList.toggle('on', p==='LRU');
+  document.getElementById('lfuBtn').classList.toggle('on', p==='LFU');
+  reset();
+}
+
+// ---------- wire up ----------
+document.getElementById('lruBtn').onclick=()=>setPolicy('LRU');
+document.getElementById('lfuBtn').onclick=()=>setPolicy('LFU');
+document.getElementById('applyCap').onclick=reset;
+document.getElementById('putBtn').onclick=doPut;
+document.getElementById('getBtn').onclick=doGet;
+document.getElementById('seqBtn').onclick=demoScan;
+document.getElementById('resetBtn').onclick=reset;
+reset();
+</script>
+</body>
+</html>

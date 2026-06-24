@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Union-Find — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* page-specific layout for the forest of trees */
+  #stage{min-height:300px}
+  .forest{display:flex;gap:34px;flex-wrap:wrap;justify-content:center;align-items:flex-start;width:100%}
+  svg.tree{overflow:visible}
+  .uf-node circle{transition:.25s}
+  .uf-label{font-family:ui-monospace,Menlo,monospace;font-size:13px;font-weight:700;fill:var(--txt)}
+  .uf-rank{font-family:ui-monospace,Menlo,monospace;font-size:10px;fill:var(--muted)}
+  .tree-cap{font-size:11px;color:var(--muted);text-align:center;margin-top:4px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}
+  .legend span b{color:var(--txt)}
+  .swatch{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🔗 Union-Find — disjoint sets</h1>
+      <div class="sub">Track which elements belong to the same group as a <i>forest of trees</i>. Watch <b>union by rank</b> keep trees flat, <b>path compression</b> flatten them further on every find, and <b>cycle detection</b> when two already-connected nodes are unioned.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">amortized O(α(n))</span>
+      <span class="tag">union by rank</span>
+      <span class="tag">path compression</span>
+      <span class="tag">connectivity / cycle detection</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A disjoint-set structure answers "are <i>a</i> and <i>b</i> in the same group?" in near-constant time. Each element points to a <b>parent</b>; the <b>root</b> of a tree is the group's representative. <b>Union</b> merges two groups by hanging the shorter tree's root under the taller's. <b>Find</b> walks parents to the root, then rewires every node it touched to point straight at the root.</p>
+    <div class="note gotcha"><b>The gotcha:</b> you need <b>both</b> path compression <i>and</i> union by rank to reach near-constant O(α(n)); either alone is worse. It's <b>add-and-merge only</b> — there's no efficient delete or split. For <b>undirected</b> cycle detection it's the perfect tool, but <b>directed</b> cycles need DFS (back-edge / recursion-stack), not union-find.</p></div>
+    <table class="small" style="border-collapse:collapse;margin-top:10px">
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Find(x)</td><td style="padding:2px 0"><code>O(α(n))</code> amortized — α grows slower than log; effectively constant</td></tr>
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Union(a,b)</td><td style="padding:2px 0"><code>O(α(n))</code> amortized — two finds + one pointer flip</td></tr>
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Connected(a,b)</td><td style="padding:2px 0"><code>O(α(n))</code> — find(a) === find(b)</td></tr>
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Space</td><td style="padding:2px 0"><code>O(n)</code> — parent[] + rank[]</td></tr>
+    </table>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Operations</h3>
+    <div class="row">
+      <label class="fld">a
+        <select id="selA"></select>
+      </label>
+      <label class="fld">b
+        <select id="selB"></select>
+      </label>
+      <button class="btn" id="unionBtn">Union(a, b)</button>
+      <button class="btn sec" id="connBtn">Connected?(a, b)</button>
+      <span style="width:14px"></span>
+      <label class="fld">x
+        <select id="selX"></select>
+      </label>
+      <button class="btn sec" id="findBtn">Find(x)</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <span class="pill">elements: <b id="nCount">8</b></span>
+      <span class="pill">distinct groups: <b id="grpCount" style="color:var(--accent)">8</b></span>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--accent)"></i>root</span>
+      <span><i class="swatch" style="background:var(--panel)"></i>child</span>
+      <span><i class="swatch" style="background:var(--ok)"></i>on the find path / just compressed</span>
+      <span><i class="swatch" style="background:var(--bad)"></i>cycle detected</span>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="forest" id="forest"></div>
+    </div>
+    <div class="explain" id="explain">Pick two elements and click <b>Union</b> to merge their groups. Then run <b>Find</b> on a deep node to watch path compression flatten the tree.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li>Each element starts as its own root — <b id="s0">8</b> singleton trees.</li>
+        <li><b>Union(a,b)</b> finds both roots; if different, the <b>lower-rank</b> root hangs under the higher-rank root (tie → rank++).</li>
+        <li><b>Find(x)</b> walks parent pointers up to the root (highlighted), then <b>compresses</b> the path so every visited node points directly at the root.</li>
+        <li>Group count drops by one on each <i>real</i> merge.</li>
+        <li>If <b>Union</b> finds <span style="color:var(--bad)">a and b already share a root</span>, that's a <b>cycle</b> — the edge would close a loop.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+const N = 8;
+let parent, rank_, busy=false;
+
+function reset(){
+  parent = Array.from({length:N}, (_,i)=>i);
+  rank_  = new Array(N).fill(0);
+  busy=false;
+  document.getElementById('log').innerHTML='';
+  logLine('info', `Initialized ${N} singleton sets {0},{1},…,{${N-1}}.`);
+  render();
+  explain('Pick two elements and click <b>Union</b> to merge their groups. Then run <b>Find</b> on a deep node to watch path compression flatten the tree.');
+}
+
+// pure find (no compression) — used for rendering / queries
+function findRoot(x){
+  while(parent[x]!==x) x=parent[x];
+  return x;
+}
+function groupCount(){
+  let c=0; for(let i=0;i<N;i++) if(parent[i]===i) c++; return c;
+}
+
+// ---------- helpers (contract) ----------
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+// fly a packet between two rendered node elements inside #stage
+function fly(fromSel, toSel, label, cls){
+  return new Promise(res=>{
+    const stage = document.getElementById('stage');
+    const sr = stage.getBoundingClientRect();
+    const fromEl = typeof fromSel==='string'?document.querySelector(fromSel):fromSel;
+    const toEl   = typeof toSel==='string'?document.querySelector(toSel):toSel;
+    if(!fromEl||!toEl){res();return;}
+    const a = fromEl.getBoundingClientRect();
+    const b = toEl.getBoundingClientRect();
+    const p = document.createElement('div');
+    p.className = 'packet '+(cls||'');
+    p.textContent = label;
+    p.style.left = (a.left - sr.left + a.width/2 - 16)+'px';
+    p.style.top  = (a.top  - sr.top  + a.height/2 - 10)+'px';
+    stage.appendChild(p);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      p.style.left = (b.left - sr.left + b.width/2 - 16)+'px';
+      p.style.top  = (b.top  - sr.top  + b.height/2 - 10)+'px';
+    }));
+    setTimeout(()=>{ p.style.opacity=0; setTimeout(()=>{p.remove();res();},250); }, 720);
+  });
+}
+
+// ---------- rendering ----------
+// build a {root: [members]} grouping, then lay each tree out as nested SVG
+function children(){
+  const kids = Array.from({length:N},()=>[]);
+  for(let i=0;i<N;i++){ if(parent[i]!==i) kids[parent[i]].push(i); }
+  return kids;
+}
+// compute layout (x,y per node) for one tree rooted at r
+function layoutTree(r, kids){
+  const pos={}, levels=[];
+  // BFS to assign depth, then position by subtree leaf count
+  let leafIndex=0;
+  function place(node, depth){
+    levels[depth]=levels[depth]||[];
+    const ch = kids[node];
+    if(ch.length===0){
+      pos[node]={x:leafIndex++, d:depth};
+    } else {
+      let sx=0;
+      for(const c of ch){ place(c, depth+1); sx+=pos[c].x; }
+      pos[node]={x:sx/ch.length, d:depth};
+    }
+    levels[depth].push(node);
+  }
+  place(r,0);
+  let maxD=0; Object.values(pos).forEach(p=>maxD=Math.max(maxD,p.d));
+  return {pos, maxD, leaves:Math.max(1,leafIndex)};
+}
+function svgForTree(r, kids, highlight, cyclePair){
+  const {pos, maxD, leaves} = layoutTree(r, kids);
+  const colW=58, rowH=64, pad=26, rad=18;
+  const w = Math.max(colW, leaves*colW), h=(maxD+1)*rowH;
+  const cx = x => pad + x*colW + colW/2;
+  const cy = d => pad + d*rowH;
+  let edges='', circles='';
+  for(let i=0;i<N;i++){
+    if(pos[i]===undefined) continue;
+    if(parent[i]!==i){
+      const p=parent[i];
+      const onPath = highlight.has(i) && highlight.has(p);
+      edges += `<line x1="${cx(pos[i].x)}" y1="${cy(pos[i].d)}" x2="${cx(pos[p].x)}" y2="${cy(pos[p].d)}" stroke="${onPath?'var(--ok)':'var(--line)'}" stroke-width="${onPath?3:2}" />`;
+    }
+  }
+  for(let i=0;i<N;i++){
+    if(pos[i]===undefined) continue;
+    const isRoot = parent[i]===i;
+    let fill='var(--panel)', stroke='var(--line)';
+    if(isRoot){ fill='var(--accent)'; stroke='var(--accent)'; }
+    if(highlight.has(i)){ stroke='var(--ok)'; if(!isRoot) fill='var(--okbg)'; }
+    if(cyclePair && cyclePair.includes(i)){ stroke='var(--bad)'; fill='var(--badbg)'; }
+    circles += `<g class="uf-node" id="ufn${i}">
+      <circle cx="${cx(pos[i].x)}" cy="${cy(pos[i].d)}" r="${rad}" fill="${fill}" stroke="${stroke}" stroke-width="3"/>
+      <text class="uf-label" x="${cx(pos[i].x)}" y="${cy(pos[i].d)+4}" text-anchor="middle">${i}</text>
+      ${isRoot?`<text class="uf-rank" x="${cx(pos[i].x)}" y="${cy(pos[i].d)-rad-4}" text-anchor="middle">rank ${rank_[i]}</text>`:''}
+    </g>`;
+  }
+  const members=[]; for(let i=0;i<N;i++) if(findRoot(i)===r) members.push(i);
+  return `<div><svg class="tree" width="${w+pad}" height="${h+pad}" viewBox="0 0 ${w+pad} ${h+pad}">${edges}${circles}</svg>
+    <div class="tree-cap">root ${r} · {${members.join(',')}}</div></div>`;
+}
+function render(highlight, cyclePair){
+  highlight = highlight || new Set();
+  const kids = children();
+  const roots=[]; for(let i=0;i<N;i++) if(parent[i]===i) roots.push(i);
+  document.getElementById('forest').innerHTML = roots.map(r=>svgForTree(r, kids, highlight, cyclePair)).join('');
+  document.getElementById('grpCount').textContent = groupCount();
+}
+
+// ---------- operations ----------
+async function doFind(){
+  if(busy) return; busy=true;
+  const x = parseInt(document.getElementById('selX').value,10);
+  logLine('cmd', `> Find(${x})`);
+  // collect path to root
+  const path=[]; let cur=x;
+  while(parent[cur]!==cur){ path.push(cur); cur=parent[cur]; }
+  const root=cur; path.push(root);
+  // animate the walk up
+  const hi=new Set();
+  for(let i=0;i<path.length;i++){
+    hi.add(path[i]); render(hi);
+    if(i<path.length-1){ await fly('#ufn'+path[i], '#ufn'+path[i+1], '↑', 'read'); }
+    await sleep(180);
+  }
+  if(path.length<=1){
+    logLine('ok', `Find(${x}) → root ${root}. ${x} is already a root; nothing to compress.`);
+    explain(`<b>${x}</b> is its own root (a singleton or top of its tree). Find returns <b>${root}</b> in one step.`);
+    busy=false; return;
+  }
+  logLine('ok', `Find(${x}) → root ${root}. Walked ${path.length-1} edge(s).`);
+  explain(`Walked from <b>${x}</b> up to root <b>${root}</b>. Now <b>path compression</b> repoints every node on that path directly at the root.`);
+  await sleep(350);
+  // path compression: every non-root node on path points straight to root
+  let changed=0;
+  for(const node of path){ if(node!==root && parent[node]!==root){ parent[node]=root; changed++; } }
+  render(hi);
+  await sleep(250);
+  render(); // settle without highlight
+  logLine('info', changed? `Path compression: repointed ${changed} node(s) straight to root ${root}. Future finds are O(1).`
+                         : `Path already flat — nothing to compress.`);
+  busy=false;
+}
+
+async function doUnion(){
+  if(busy) return; busy=true;
+  const a = parseInt(document.getElementById('selA').value,10);
+  const b = parseInt(document.getElementById('selB').value,10);
+  logLine('cmd', `> Union(${a}, ${b})`);
+  const ra=findRoot(a), rb=findRoot(b);
+  render(new Set([ra,rb]));
+  await fly('#ufn'+ra, '#ufn'+rb, 'find', 'read');
+  if(ra===rb){
+    // CYCLE
+    logLine('err', `⚠ CYCLE: ${a} and ${b} already share root ${ra} — this edge would close a loop. No merge.`);
+    explain(`Both <b>${a}</b> and <b>${b}</b> already resolve to root <b>${ra}</b>, so they're in the same group. In an undirected graph, adding edge (${a},${b}) now would create a <span style="color:var(--bad)">cycle</span> — union-find detects it without a traversal.`);
+    render(new Set(), [ra,rb]);
+    await sleep(900);
+    render();
+    busy=false; return;
+  }
+  // UNION BY RANK
+  let lo, hi;
+  if(rank_[ra] < rank_[rb]){ lo=ra; hi=rb; }
+  else if(rank_[rb] < rank_[ra]){ lo=rb; hi=ra; }
+  else { lo=ra; hi=rb; } // tie → attach ra under rb, bump rb's rank
+  const tie = rank_[ra]===rank_[rb];
+  parent[lo]=hi;
+  if(tie) rank_[hi]++;
+  await fly('#ufn'+lo, '#ufn'+hi, 'attach', 'repl');
+  render(new Set([lo,hi]));
+  await sleep(300);
+  render();
+  if(tie){
+    logLine('ok', `Union: equal ranks → hung root ${lo} under root ${hi}; rank[${hi}] now ${rank_[hi]}.`);
+    explain(`Roots <b>${ra}</b> and <b>${rb}</b> had <b>equal rank</b>, so we hang one under the other and <b>bump the new root's rank</b> to ${rank_[hi]}. Groups: ${groupCount()}.`);
+  } else {
+    logLine('ok', `Union by rank: hung shorter root ${lo} (rank ${rank_[lo]}) under taller root ${hi} (rank ${rank_[hi]}). Tree stays flat.`);
+    explain(`<b>Union by rank</b>: the lower-rank root <b>${lo}</b> hangs under the higher-rank root <b>${hi}</b>, so the tree height doesn't grow. Distinct groups: ${groupCount()}.`);
+  }
+  busy=false;
+}
+
+async function doConnected(){
+  if(busy) return; busy=true;
+  const a = parseInt(document.getElementById('selA').value,10);
+  const b = parseInt(document.getElementById('selB').value,10);
+  logLine('cmd', `> Connected?(${a}, ${b})`);
+  const ra=findRoot(a), rb=findRoot(b);
+  render(new Set([ra,rb]));
+  await fly('#ufn'+ra, '#ufn'+rb, 'cmp', 'read');
+  await sleep(200);
+  if(ra===rb){
+    logLine('ok', `Connected(${a},${b}) → TRUE — same root ${ra}.`);
+    explain(`<b>${a}</b> and <b>${b}</b> both resolve to root <b>${ra}</b> → they're in the <b>same group</b>.`);
+  } else {
+    logLine('warn', `Connected(${a},${b}) → FALSE — roots ${ra} ≠ ${rb}.`);
+    explain(`<b>${a}</b> resolves to root <b>${ra}</b>, <b>${b}</b> to root <b>${rb}</b> — different groups, so <b>not connected</b>.`);
+  }
+  await sleep(500);
+  render();
+  busy=false;
+}
+
+// ---------- wire up ----------
+function fillSelect(sel){
+  sel.innerHTML='';
+  for(let i=0;i<N;i++){ const o=document.createElement('option'); o.value=i; o.textContent=i; sel.appendChild(o); }
+}
+['selA','selB','selX'].forEach(id=>fillSelect(document.getElementById(id)));
+document.getElementById('selB').value=1;
+document.getElementById('nCount').textContent=N;
+document.getElementById('s0').textContent=N;
+document.getElementById('unionBtn').onclick=doUnion;
+document.getElementById('connBtn').onclick=doConnected;
+document.getElementById('findBtn').onclick=doFind;
+document.getElementById('resetBtn').onclick=reset;
+reset();
+</script>
+</body>
+</html>

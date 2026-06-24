@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B-Trees & B+Trees — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* page-specific layout for the tree levels */
+  .levels{display:flex;flex-direction:column;gap:30px;align-items:center;width:100%}
+  .lvl{display:flex;gap:18px;justify-content:center;flex-wrap:wrap;width:100%}
+  .bnode{display:flex;gap:2px;background:var(--panel);border:2px solid var(--line);border-radius:10px;
+    padding:5px;transition:.25s;position:relative}
+  .bnode.leaf{border-color:var(--accent2)}
+  .bnode.internal{border-color:var(--accent)}
+  .bnode.active{box-shadow:0 0 0 3px rgba(79,156,249,.4);border-color:var(--accent)}
+  .bnode.hit{box-shadow:0 0 0 3px rgba(46,204,113,.55);border-color:var(--ok)}
+  .bnode.over{box-shadow:0 0 0 3px rgba(255,184,77,.55);border-color:var(--warn)}
+  .cell{font-family:ui-monospace,Menlo,monospace;font-size:13px;font-weight:700;padding:5px 9px;
+    border-radius:6px;background:var(--panel2);border:1px solid var(--line);min-width:26px;text-align:center}
+  .cell.key{color:var(--txt)}
+  .cell.scan{background:var(--okbg);border-color:var(--ok);color:var(--ok)}
+  .cell.medup{background:var(--warnbg);border-color:var(--warn);color:var(--warn)}
+  .bnode .nlabel{position:absolute;top:-16px;left:0;font-size:9px;color:var(--muted);white-space:nowrap}
+  .leafchain{position:absolute;right:-15px;top:50%;transform:translateY(-50%);color:var(--accent2);font-weight:700;font-size:14px}
+  .depthbar{display:flex;gap:14px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .depthbar .pill.big{font-size:13px;padding:4px 12px;color:var(--accent);border-color:#2c4a6e}
+  table.cx{border-collapse:collapse;font-size:12.5px;margin-top:8px}
+  table.cx td,table.cx th{border:1px solid var(--line);padding:5px 10px;text-align:left}
+  table.cx th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:10.5px;letter-spacing:.04em}
+  table.cx td code{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🗃️ B-Trees & B+Trees — how DB indexes stay shallow</h1>
+      <div class="sub">A balanced, high-fan-out tree built to <i>minimize disk I/O</i>. Watch keys route down, nodes <b>split</b> on overflow (median pushed up), and range scans walk the <b>linked leaf chain</b>.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">B+tree</span>
+      <span class="tag">high fan-out</span>
+      <span class="tag">always balanced</span>
+      <span class="tag">data only in leaves</span>
+      <span class="tag">linked leaves</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A B+tree is the data structure behind almost every relational <b>database index</b> (Postgres, MySQL/InnoDB). Each node holds <b>many sorted keys</b> (here: order 4 → up to <b>3 keys</b> per node, 4 children). Internal nodes are pure <b>signposts</b>; the actual data/row-pointers live <b>only in leaves</b>, and the leaves are <b>linked left→right</b> so a range scan is a single sequential walk. High fan-out keeps the tree just a few levels deep, so a lookup is only a handful of block reads.</p>
+    <div class="note gotcha"><b>The gotcha:</b> a binary tree on disk is too <b>tall</b> — depth ≈ log₂(N) means many random I/Os, and each hop is a separate disk seek. B-trees trade cheap in-RAM key comparisons for far fewer <b>block reads</b> (depth ≈ log_fanout(N)) — that's the whole point: <b>minimize disk I/O</b>. Most things called "B-tree indexes" are really <b>B+trees</b> (data in leaves + linked leaves). Contrast with an <b>LSM-tree</b> (Cassandra/RocksDB): write-optimized via append + background compaction, vs the B+tree's read-friendly, in-place-update layout.</div>
+    <table class="cx">
+      <tr><th>Operation</th><th>Cost</th><th>Disk reads</th></tr>
+      <tr><td><code>Search</code> (point lookup)</td><td>O(log_f N)</td><td>≈ tree height (one block per level)</td></tr>
+      <tr><td><code>Insert</code> (may split)</td><td>O(log_f N)</td><td>height down + a few nodes rewritten on split</td></tr>
+      <tr><td><code>Range scan</code> [lo, hi]</td><td>O(log_f N + k)</td><td>find lo, then walk linked leaves (sequential)</td></tr>
+    </table>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Operations</h3>
+    <div class="row">
+      <label class="fld">key<input type="number" id="ins" value="42" size="6" style="width:80px"></label>
+      <button class="btn" id="insBtn">Insert</button>
+      <button class="btn sec" id="randBtn">Insert random</button>
+      <span style="width:14px"></span>
+      <label class="fld">find<input type="number" id="srch" value="25" size="6" style="width:80px"></label>
+      <button class="btn sec" id="srchBtn">Search</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label class="fld">range lo<input type="number" id="lo" value="20" size="6" style="width:80px"></label>
+      <label class="fld">range hi<input type="number" id="hi" value="70" size="6" style="width:80px"></label>
+      <button class="btn sec" id="rangeBtn">Range scan</button>
+      <span style="width:14px"></span>
+      <button class="btn ghost" id="demoBtn">▶ Build sample index</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="depthbar">
+      <span class="pill big" id="depthPill">height: 1 level</span>
+      <span class="pill" id="readsPill">point lookup ≈ 1 disk read</span>
+      <span class="pill" id="cntPill">0 keys</span>
+    </div>
+    <div class="stage" id="stage">
+      <div class="levels" id="levels"></div>
+    </div>
+    <div class="explain" id="explain">Insert keys to watch the B+tree grow. With only 3 keys per node, the <b>root splits</b> fast — yet the tree stays just a few levels deep thanks to high fan-out.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>Insert</b>: route from the root down to a leaf, comparing keys at each level.</li>
+        <li>If a leaf overflows (>3 keys), it <b>splits</b>; the <span style="color:var(--warn)">median</span> is copied/pushed up to the parent.</li>
+        <li>Splits cascade upward; if the <b>root</b> splits, the tree grows <b>one level taller</b> — rarely.</li>
+        <li><b>Search</b> follows the same route to a single leaf — visited nodes = disk reads ≈ tree height.</li>
+        <li><b>Range scan</b>: find <code>lo</code>, then walk the <span style="color:var(--accent2)">linked leaf chain</span> →→ until <code>hi</code>. No re-descending the tree.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+// B+tree, order = 4 -> max 3 keys per node, max 4 children.
+const ORDER = 4;            // max children
+const MAXKEYS = ORDER - 1;  // max keys per node = 3
+let root = null;
+let busy = false;
+let seq = 0;
+
+// node: {id, leaf:bool, keys:[], children:[], next:node|null (leaf chain)}
+function makeNode(leaf){ return {id:++seq, leaf, keys:[], children:[], next:null}; }
+
+function reset(){
+  busy = false; seq = 0;
+  root = makeNode(true);
+  document.getElementById('log').innerHTML='';
+  logLine('info','Empty B+tree created (order 4 → up to 3 keys / node). Root is a single leaf.');
+  render();
+  explain('Insert keys to watch the B+tree grow. With only 3 keys per node, the <b>root splits</b> fast — yet the tree stays just a few levels deep thanks to high fan-out.');
+}
+
+// ---------- tree helpers ----------
+function treeHeight(n){
+  let h = 1;
+  while(n && !n.leaf){ h++; n = n.children[0]; }
+  return h;
+}
+function allLeaves(){
+  let n = root; while(n && !n.leaf) n = n.children[0];
+  const out = []; while(n){ out.push(n); n = n.next; } return out;
+}
+function keyCount(){
+  return allLeaves().reduce((a,l)=>a+l.keys.length,0);
+}
+// levels[i] = array of nodes at depth i (root = level 0)
+function levelsOf(){
+  const out = []; let cur = [root];
+  while(cur.length){
+    out.push(cur);
+    if(cur[0].leaf) break;
+    const nxt = []; cur.forEach(n=>n.children.forEach(c=>nxt.push(c)));
+    cur = nxt;
+  }
+  return out;
+}
+
+// ---------- rendering ----------
+function nodeHTML(n, hi){
+  const cls = n.leaf ? 'leaf' : 'internal';
+  const cells = n.keys.map((k,i)=>{
+    let extra = '';
+    if(hi && hi.scanKeys && hi.scanKeys.has(n.id+':'+k)) extra=' scan';
+    if(hi && hi.medUp && hi.medNode===n.id && hi.medUp===k) extra=' medup';
+    return `<div class="cell key${extra}">${k}</div>`;
+  }).join('');
+  const active = hi && hi.active && hi.active.has(n.id);
+  const hit = hi && hi.hit===n.id;
+  const over = hi && hi.over===n.id;
+  const stateCls = (over?' over':'') + (hit?' hit':'') + (active && !hit && !over?' active':'');
+  const label = n.leaf ? 'leaf' : 'internal';
+  const chain = (n.leaf && n.next) ? `<span class="leafchain">→</span>` : '';
+  return `<div class="bnode ${cls}${stateCls}" id="bn${n.id}">
+      <span class="nlabel">${label}</span>${cells || '<div class="cell muted">∅</div>'}${chain}
+    </div>`;
+}
+function render(hi){
+  const lv = levelsOf();
+  document.getElementById('levels').innerHTML = lv.map(level=>
+    `<div class="lvl">${level.map(n=>nodeHTML(n,hi)).join('')}</div>`
+  ).join('');
+  const h = treeHeight(root);
+  const cnt = keyCount();
+  document.getElementById('depthPill').textContent = `height: ${h} level${h>1?'s':''}`;
+  document.getElementById('readsPill').textContent = `point lookup ≈ ${h} disk read${h>1?'s':''}`;
+  document.getElementById('cntPill').textContent = `${cnt} key${cnt!==1?'s':''}`;
+}
+
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+function flash(id, cls){
+  const e = document.getElementById('bn'+id);
+  if(e){ e.classList.add(cls); setTimeout(()=>e.classList.remove(cls),650); }
+}
+
+// child index to descend for key k in internal node
+function childIndex(node, k){
+  let i = 0;
+  while(i < node.keys.length && k >= node.keys[i]) i++;
+  return i;
+}
+
+// ---------- insert ----------
+async function insert(k){
+  if(busy) return; busy = true;
+  logLine('cmd', `> INSERT ${k}`);
+  // route down, tracking the path
+  const path = [];
+  let n = root;
+  render({active:new Set([n.id])});
+  while(!n.leaf){
+    path.push(n);
+    flash(n.id,'active'); await sleep(420);
+    const ci = childIndex(n, k);
+    logLine('info', `at internal [${n.keys.join(', ')}] → key ${k} routes to child #${ci}`);
+    n = n.children[ci];
+    render({active:new Set([...path.map(p=>p.id), n.id])});
+  }
+  // leaf reached
+  flash(n.id,'active'); await sleep(380);
+  if(n.keys.includes(k)){
+    logLine('warn', `key ${k} already present — B+tree keys are unique here, ignoring`);
+    explain(`Key <b>${k}</b> is already in the leaf. No change.`);
+    render(); busy=false; return;
+  }
+  n.keys.push(k); n.keys.sort((a,b)=>a-b);
+  render({active:new Set([n.id])}); flash(n.id,'hit');
+  logLine('ok', `placed ${k} into leaf → [${n.keys.join(', ')}]`);
+
+  if(n.keys.length <= MAXKEYS){
+    explain(`Routed <b>${k}</b> down to a leaf and inserted it in sorted order. Leaf has ${n.keys.length}/${MAXKEYS} keys — no split needed. Total path = <b>${treeHeight(root)}</b> node(s) read.`);
+    busy=false; return;
+  }
+
+  // OVERFLOW -> split, cascading up
+  logLine('warn', `leaf overflow (${n.keys.length} > ${MAXKEYS}) — SPLIT`);
+  render({over:n.id}); await sleep(550);
+  await splitNode(n, path);
+  busy=false;
+}
+
+// split a node; path = ancestors from root down (excluding node)
+async function splitNode(node, path){
+  const mid = Math.floor(node.keys.length / 2);
+  const medianKey = node.keys[mid];
+
+  let upKey, right;
+  if(node.leaf){
+    // B+tree leaf split: median key is COPIED up; it stays in the right leaf
+    right = makeNode(true);
+    right.keys = node.keys.slice(mid);
+    node.keys  = node.keys.slice(0, mid);
+    // maintain linked leaf chain
+    right.next = node.next; node.next = right;
+    upKey = right.keys[0];
+    logLine('warn', `leaf split → left [${node.keys.join(', ')}]  |  right [${right.keys.join(', ')}]; copy separator ${upKey} up; relink leaves left→right`);
+  } else {
+    // internal split: median key MOVES up (not kept below)
+    right = makeNode(false);
+    upKey = node.keys[mid];
+    right.keys = node.keys.slice(mid+1);
+    right.children = node.children.slice(mid+1);
+    node.keys  = node.keys.slice(0, mid);
+    node.children = node.children.slice(0, mid+1);
+    logLine('warn', `internal split → left [${node.keys.join(', ')}]  |  right [${right.keys.join(', ')}]; push median ${upKey} up`);
+  }
+
+  render({medUp:upKey, medNode:right.id, over:node.id});
+  await sleep(550);
+
+  const parent = path[path.length-1];
+  if(!parent){
+    // node was the root -> new root, tree grows taller
+    const nr = makeNode(false);
+    nr.keys = [upKey];
+    nr.children = [node, right];
+    root = nr;
+    render({active:new Set([nr.id]), medUp:upKey, medNode:nr.id});
+    flash(nr.id,'hit');
+    logLine('ok', `root split → tree grew to height ${treeHeight(root)}. New root [${nr.keys.join(', ')}].`);
+    explain(`The split reached the <b>root</b>, so a new root was created and the tree grew to <b>${treeHeight(root)} levels</b>. Even after many inserts this happens rarely — high fan-out keeps it shallow, so a lookup is only <b>${treeHeight(root)}</b> disk read(s).`);
+    return;
+  }
+
+  // insert separator + right child into parent
+  const ci = childIndex(parent, upKey);
+  parent.keys.splice(ci, 0, upKey);
+  parent.children.splice(ci+1, 0, right);
+  render({active:new Set([parent.id]), medUp:upKey, medNode:parent.id});
+  flash(parent.id,'active'); await sleep(450);
+  logLine('info', `inserted separator ${upKey} into parent → [${parent.keys.join(', ')}]`);
+
+  if(parent.keys.length > MAXKEYS){
+    logLine('warn', `parent overflow (${parent.keys.length} > ${MAXKEYS}) — SPLIT cascades up`);
+    render({over:parent.id}); await sleep(500);
+    await splitNode(parent, path.slice(0,-1));
+  } else {
+    flash(parent.id,'hit');
+    explain(`Leaf overflowed, so it <b>split</b> and the separator <b>${upKey}</b> was pushed up into the parent (now ${parent.keys.length}/${MAXKEYS} keys). Tree height stayed <b>${treeHeight(root)}</b> — the parent absorbed the split.`);
+  }
+}
+
+// ---------- search ----------
+async function search(k){
+  if(busy) return; busy=true;
+  logLine('cmd', `> SEARCH ${k}`);
+  let n = root; let reads = 0; const path=[];
+  while(true){
+    reads++;
+    flash(n.id,'active'); render({active:new Set([...path.map(p=>p.id), n.id])});
+    await sleep(480);
+    if(n.leaf){
+      const found = n.keys.includes(k);
+      flash(n.id, found?'hit':'over');
+      if(found){
+        logLine('ok', `FOUND ${k} in leaf [${n.keys.join(', ')}] after ${reads} node read(s)`);
+        explain(`Routed straight down to one leaf and found <b>${k}</b>. That cost <b>${reads}</b> block read(s) = the tree height — vs ~log₂(N) for a binary tree. This is why DB indexes stay shallow.`);
+      } else {
+        logLine('err', `${k} NOT found (would live in leaf [${n.keys.join(', ')}]) — ${reads} node read(s)`);
+        explain(`Followed the route to the only leaf that could hold <b>${k}</b>; it isn't there. Still only <b>${reads}</b> block read(s).`);
+      }
+      break;
+    }
+    path.push(n);
+    const ci = childIndex(n, k);
+    logLine('info', `internal [${n.keys.join(', ')}] → go to child #${ci}`);
+    n = n.children[ci];
+  }
+  busy=false;
+}
+
+// ---------- range scan ----------
+async function rangeScan(lo, hi){
+  if(busy) return; busy=true;
+  if(lo > hi){ [lo,hi]=[hi,lo]; }
+  logLine('cmd', `> RANGE SCAN [${lo}, ${hi}]`);
+  // 1. descend to the leaf that could contain lo
+  let n = root; const path=[];
+  while(!n.leaf){
+    flash(n.id,'active'); render({active:new Set([...path.map(p=>p.id),n.id])});
+    await sleep(380);
+    path.push(n);
+    const ci = childIndex(n, lo);
+    n = n.children[ci];
+  }
+  flash(n.id,'active'); render({active:new Set([n.id])}); await sleep(380);
+  logLine('info', `descended to start leaf for lo=${lo}; now walk the LINKED LEAF CHAIN →→`);
+  explain(`Found the leaf where <b>${lo}</b> begins. Now instead of re-descending the tree for each key, we just follow the <span style="color:var(--accent2)">leaf→leaf links</span> rightward — a sequential scan.`);
+  await sleep(450);
+
+  // 2. walk leaf chain collecting keys in [lo,hi]
+  const found = []; const scanSet = new Set();
+  while(n){
+    let any=false;
+    for(const k of n.keys){
+      if(k >= lo && k <= hi){ found.push(k); scanSet.add(n.id+':'+k); any=true; }
+    }
+    flash(n.id, any?'hit':'active');
+    render({active:new Set([n.id]), scanKeys:new Set(scanSet)});
+    await sleep(520);
+    // stop once this leaf's largest key passes hi
+    if(n.keys.length && n.keys[n.keys.length-1] > hi) break;
+    if(n.next) logLine('info', `→ follow leaf link to next leaf`);
+    n = n.next;
+  }
+  render({scanKeys:new Set(scanSet)});
+  if(found.length){
+    logLine('ok', `range result: ${found.join(', ')}  (${found.length} keys)`);
+    explain(`Collected <b>${found.join(', ')}</b> by walking the linked leaves. A B+tree range scan is <b>O(height + k)</b>: one descent, then a cheap sequential leaf walk — exactly why B+trees beat plain binary trees for <code>WHERE x BETWEEN lo AND hi</code> and <code>ORDER BY</code>.`);
+  } else {
+    logLine('warn', `no keys in [${lo}, ${hi}]`);
+    explain(`No keys fell in [${lo}, ${hi}], but the walk still showed the mechanic: descend once, then follow the leaf chain.`);
+  }
+  busy=false;
+}
+
+// ---------- demo ----------
+async function buildSample(){
+  if(busy) return;
+  reset();
+  const seqKeys = [50,25,75,10,40,60,90,30,45,55,80,5,15,35,65,95,20,70];
+  for(const k of seqKeys){
+    await insert(k);
+    await sleep(120);
+  }
+  logLine('ok', `sample index built: ${seqKeys.length} keys, height ${treeHeight(root)} — note how shallow it stays.`);
+}
+
+// ---------- wire up ----------
+document.getElementById('insBtn').onclick = ()=>{ const v=parseInt(document.getElementById('ins').value,10); if(!isNaN(v)) insert(v); };
+document.getElementById('randBtn').onclick = ()=>{ const v=Math.floor(Math.random()*100); document.getElementById('ins').value=v; insert(v); };
+document.getElementById('srchBtn').onclick = ()=>{ const v=parseInt(document.getElementById('srch').value,10); if(!isNaN(v)) search(v); };
+document.getElementById('rangeBtn').onclick = ()=>{ const lo=parseInt(document.getElementById('lo').value,10), hi=parseInt(document.getElementById('hi').value,10); if(!isNaN(lo)&&!isNaN(hi)) rangeScan(lo,hi); };
+document.getElementById('demoBtn').onclick = buildSample;
+document.getElementById('resetBtn').onclick = reset;
+reset();
+</script>
+</body>
+</html>

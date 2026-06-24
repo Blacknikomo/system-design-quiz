@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hash Tables, Maps & Sets — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .buckets{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+  .bk{display:flex;align-items:stretch;gap:8px}
+  .bk .num{width:64px;flex:none;display:flex;align-items:center;justify-content:center;
+    font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted);
+    background:var(--panel);border:1px solid var(--line);border-radius:8px}
+  .bk .chain{flex:1;display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-height:36px;
+    background:var(--panel);border:1px dashed var(--line);border-radius:8px;padding:5px 8px}
+  .bk.target .num{border-color:var(--accent);color:var(--accent)}
+  .bk.target .chain{border-color:var(--accent);border-style:solid}
+  .entry{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#15233a;border:1px solid #2c4a6e;
+    border-radius:6px;padding:3px 8px;display:flex;gap:4px;align-items:center}
+  .entry .ek{color:var(--accent)}
+  .entry.new{animation:pop .5s ease}
+  .entry.hit{border-color:var(--ok);background:var(--okbg)}
+  .entry.collide{border-color:var(--warn);background:var(--warnbg)}
+  .entry .arrow{color:var(--muted)}
+  .chain .empty{color:var(--muted);font-size:11px}
+  .lf{display:flex;gap:18px;align-items:center;margin-top:10px;flex-wrap:wrap}
+  .lfbar{flex:1;min-width:160px;height:14px;border-radius:8px;background:var(--panel);border:1px solid var(--line);overflow:hidden;position:relative}
+  .lfbar .fill{height:100%;background:var(--ok);transition:.3s}
+  .lfbar.hot .fill{background:var(--warn)}
+  .lfbar .mark{position:absolute;top:-3px;bottom:-3px;left:75%;width:2px;background:var(--bad)}
+  table.cx{border-collapse:collapse;font-size:12.5px;margin-top:10px;width:100%}
+  table.cx td,table.cx th{border:1px solid var(--line);padding:5px 9px;text-align:left}
+  table.cx th{color:var(--muted);font-weight:600;background:var(--panel2)}
+  table.cx code{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🗂️ Hash Tables, Maps &amp; Sets</h1>
+      <div class="sub">A string <i>hash</i> maps each key to a bucket index. Insert, look up, and delete; watch two keys <i>collide</i> into one bucket's chain, and the table <i>resize + rehash</i> when the load factor crosses 0.75.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">O(1) average</span>
+      <span class="tag">separate chaining</span>
+      <span class="tag">load factor → resize</span>
+      <span class="tag">unordered</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A hash table stores entries in an array of <b>buckets</b>. A hash function turns a key into an integer; <code>bucket = hash(key) % numBuckets</code>. Two keys can land in the same bucket — a <b>collision</b> — so each bucket holds a small list (a <b>chain</b>). As entries pile up, the <b>load factor</b> = entries ÷ buckets rises; when it crosses ~0.75 we <b>resize</b> (double the buckets) and <b>rehash</b> every entry into the bigger array.</p>
+    <div class="note gotcha"><b>The gotcha:</b> O(1) is <i>average / amortized</i>, not guaranteed. Worst case is <b>O(n)</b> — all keys collide into one chain, or a resize rehashes every entry (that single insert is O(n), but spread out it amortizes to O(1)). Hash maps are <b>unordered</b> — if you need sorted iteration or range queries, use a balanced tree / sorted set instead. And adversaries can force collisions on purpose (<b>HashDoS</b>) — production hashes are seeded/randomized to defend against it.</div>
+    <table class="cx">
+      <tr><th>Operation</th><th>Average</th><th>Worst case</th></tr>
+      <tr><td><code>insert</code></td><td>O(1) amortized</td><td>O(n) (resize / all-collide)</td></tr>
+      <tr><td><code>lookup</code></td><td>O(1)</td><td>O(n) (long chain)</td></tr>
+      <tr><td><code>delete</code></td><td>O(1)</td><td>O(n) (long chain)</td></tr>
+    </table>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Run an operation</h3>
+    <div class="row">
+      <label class="fld">key<input type="text" id="key" value="cat" size="8"></label>
+      <label class="fld">value<input type="text" id="val" value="1" size="6"></label>
+      <button class="btn" id="insBtn">Insert</button>
+      <button class="btn sec" id="lookBtn">Lookup</button>
+      <button class="btn ghost" id="delBtn">Delete</button>
+      <span style="width:10px"></span>
+      <button class="btn ghost" id="collideBtn">Demo a collision</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="row" style="margin-top:6px"><span class="small muted">Starts with 4 buckets. Insert ~3 keys to push the load factor past 0.75 and trigger a resize+rehash. The "Demo a collision" button inserts two keys that hash to the same bucket.</span></div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="buckets" id="buckets"></div>
+      <div class="lf">
+        <span class="small muted">load factor</span>
+        <div class="lfbar" id="lfbar"><div class="fill" id="lffill"></div><div class="mark" title="0.75 resize threshold"></div></div>
+        <span class="small" id="lftext"></span>
+      </div>
+    </div>
+    <div class="explain" id="explain">Insert a key — it's hashed to a bucket and appended to that bucket's chain. Keep inserting to cross the 0.75 load-factor line and trigger a resize.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Operation log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><code>hash(key)</code> → integer → <code>% numBuckets</code> → bucket index.</li>
+        <li><b>Insert</b> appends <code>{key,val}</code> to that bucket's chain (update if key exists).</li>
+        <li>Two keys in the same bucket = a <span style="color:var(--warn)">collision</span>; the chain grows, lookups walk it.</li>
+        <li>Load factor = entries ÷ buckets; crossing <b>0.75</b> triggers a resize.</li>
+        <li><b>Resize</b> doubles buckets and <span style="color:var(--accent)">rehashes</span> every entry — O(n), but amortized O(1) per insert.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+let buckets;          // array of arrays of {k,v}
+let count;            // number of entries
+const THRESHOLD = 0.75;
+
+function reset(){
+  buckets = [[],[],[],[]];   // start with 4 buckets
+  count = 0;
+  document.getElementById('log').innerHTML='';
+  logLine('info', 'Hash table ready: 4 buckets, 0 entries, separate chaining.');
+  render();
+  explain('Insert a key — it gets hashed to a bucket and appended to that bucket\'s chain. Insert a few to cross the 0.75 load factor and trigger a resize.');
+}
+
+// ---------- helpers ----------
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+// small deterministic string hash (djb2)
+function hashStr(s){
+  let h = 5381;
+  for(let i=0;i<s.length;i++){ h = ((h<<5) + h) + s.charCodeAt(i); h = h & 0xffffffff; }
+  return Math.abs(h);
+}
+function bucketOf(key, n){ return hashStr(key) % n; }
+
+// ---------- rendering ----------
+function render(highlightBucket, hitKey, collideKey){
+  const wrap = document.getElementById('buckets');
+  let html='';
+  for(let i=0;i<buckets.length;i++){
+    const tgt = (i===highlightBucket) ? 'target' : '';
+    let chain='';
+    if(buckets[i].length===0){ chain='<span class="empty">∅ empty</span>'; }
+    else {
+      chain = buckets[i].map((e,idx)=>{
+        let cls='';
+        if(e.k===hitKey) cls='hit';
+        else if(e.k===collideKey) cls='collide';
+        const arrow = idx < buckets[i].length-1 ? '<span class="arrow">→</span>' : '';
+        return `<span class="entry ${cls}"><span class="ek">${e.k}</span>:${e.v}</span>${arrow}`;
+      }).join('');
+    }
+    html += `<div class="bk ${tgt}"><div class="num">[${i}]</div><div class="chain">${chain}</div></div>`;
+  }
+  wrap.innerHTML = html;
+  const lf = count / buckets.length;
+  const fill = document.getElementById('lffill');
+  fill.style.width = Math.min(100, lf*100) + '%';
+  const bar = document.getElementById('lfbar');
+  bar.classList.toggle('hot', lf >= THRESHOLD);
+  document.getElementById('lftext').innerHTML = `<b style="color:var(--txt)">${count}</b> entries ÷ ${buckets.length} buckets = <b style="color:${lf>=THRESHOLD?'var(--warn)':'var(--txt)'}">${lf.toFixed(2)}</b> (resize at ${THRESHOLD})`;
+}
+
+// ---------- resize / rehash ----------
+async function maybeResize(){
+  const lf = count / buckets.length;
+  if(lf < THRESHOLD) return false;
+  const oldN = buckets.length, newN = oldN*2;
+  logLine('warn', `load factor ${lf.toFixed(2)} ≥ ${THRESHOLD} → RESIZE ${oldN}→${newN} buckets, rehashing all ${count} entries (O(n)).`);
+  explain(`Load factor hit <b>${lf.toFixed(2)}</b>. Resizing from ${oldN} to <b>${newN}</b> buckets and <b>rehashing</b> every entry — <code>bucket = hash(k) % ${newN}</code> moves entries around. This one insert is O(n), but it happens rarely, so inserts amortize to O(1).`);
+  const all = [];
+  buckets.forEach(b => b.forEach(e => all.push(e)));
+  const fresh = []; for(let i=0;i<newN;i++) fresh.push([]);
+  buckets = fresh;
+  for(const e of all){
+    const b = bucketOf(e.k, newN);
+    buckets[b].push(e);
+    render(b, e.k);
+    await sleep(160);
+  }
+  logLine('ok', `rehash complete: ${count} entries redistributed across ${newN} buckets.`);
+  render();
+  return true;
+}
+
+// ---------- operations ----------
+async function insert(kArg, vArg, quiet){
+  const key = (kArg!==undefined?kArg:document.getElementById('key').value.trim());
+  const val = (vArg!==undefined?vArg:document.getElementById('val').value.trim()) || '1';
+  if(!key) return;
+  const b = bucketOf(key, buckets.length);
+  const existing = buckets[b].find(e => e.k===key);
+  if(existing){
+    existing.v = val;
+    logLine('ok', `insert("${key}") → hash%${buckets.length} = [${b}]; key exists → updated value to "${val}".`);
+    if(!quiet) explain(`"${key}" already lived in bucket ${b}, so we <b>updated</b> its value to "${val}" (no new entry, no load-factor change).`);
+    render(b, key);
+    return;
+  }
+  const collision = buckets[b].length > 0;
+  buckets[b].push({k:key, v:val});
+  count++;
+  if(collision){
+    logLine('warn', `insert("${key}") → [${b}]; COLLISION — bucket already had ${buckets[b].length-1}; chain now length ${buckets[b].length}.`);
+    if(!quiet) explain(`<b>Collision!</b> "${key}" hashed to bucket ${b}, which was occupied. With <b>separate chaining</b> we just append it; lookups in this bucket now walk a chain of ${buckets[b].length}.`);
+  } else {
+    logLine('ok', `insert("${key}") → hash%${buckets.length} = [${b}]; appended; count=${count}.`);
+    if(!quiet) explain(`Hashed "${key}" to bucket <b>${b}</b> (<code>hash % ${buckets.length}</code>) and appended <code>{${key}:${val}}</code>. O(1) average.`);
+  }
+  render(b, undefined, collision?key:undefined);
+  await sleep(quiet?60:300);
+  await maybeResize();
+}
+
+async function lookup(){
+  const key = document.getElementById('key').value.trim();
+  if(!key) return;
+  const b = bucketOf(key, buckets.length);
+  const chain = buckets[b];
+  let steps=0, found=null;
+  for(const e of chain){ steps++; if(e.k===key){ found=e; break; } }
+  if(found){
+    logLine('ok', `lookup("${key}") → [${b}], walked ${steps} entr${steps===1?'y':'ies'} in chain → "${found.v}".`);
+    explain(`Hashed "${key}" to bucket ${b}, then walked the chain ${steps} step(s) to find it → <b>"${found.v}"</b>. Short chains keep this O(1); a long chain degrades toward O(n).`);
+    render(b, key);
+  } else {
+    logLine('err', `lookup("${key}") → [${b}], scanned ${chain.length} entr${chain.length===1?'y':'ies'}, not found.`);
+    explain(`"${key}" hashes to bucket ${b}, but it's not in that chain (scanned ${chain.length}). A miss still only costs the length of <i>one</i> bucket's chain.`);
+    render(b);
+  }
+}
+
+async function del(){
+  const key = document.getElementById('key').value.trim();
+  if(!key) return;
+  const b = bucketOf(key, buckets.length);
+  const idx = buckets[b].findIndex(e => e.k===key);
+  if(idx===-1){
+    logLine('err', `delete("${key}") → [${b}], not present.`);
+    explain(`Nothing to delete — "${key}" isn't in bucket ${b}.`);
+    render(b);
+    return;
+  }
+  buckets[b].splice(idx,1);
+  count--;
+  logLine('ok', `delete("${key}") → removed from [${b}]; count=${count}.`);
+  explain(`Removed "${key}" from bucket ${b}'s chain. count is now ${count}; load factor drops. (We don't shrink the array here — most implementations keep capacity to avoid thrash.)`);
+  render(b);
+}
+
+async function demoCollision(){
+  // find two distinct keys that collide in the CURRENT table
+  const n = buckets.length;
+  const pool = ['cat','dog','fox','owl','bee','ant','elk','ram','jay','hen','pig','cod','eel','yak','bat','emu','asp','gar','ide','ling','dab','tit','wren','rook'];
+  let a=null,b2=null;
+  const byBucket = {};
+  for(const w of pool){
+    const bb = bucketOf(w, n);
+    if(byBucket[bb] && !buckets.find && false){}
+    if(byBucket[bb]){ a=byBucket[bb]; b2=w; break; }
+    byBucket[bb]=w;
+  }
+  if(!a){ logLine('warn','no colliding pair found in pool for current bucket count — try inserting a couple first.'); return; }
+  logLine('info', `Demo: "${a}" and "${b2}" both hash to bucket ${bucketOf(a,n)} (mod ${n}). Inserting both…`);
+  document.getElementById('key').value=a; document.getElementById('val').value='1';
+  await insert(a,'1',true);
+  await sleep(350);
+  await insert(b2,'2',false);
+  explain(`<b>Collision demo:</b> "${a}" and "${b2}" both map to the same bucket, so they share a <b>chain</b>. This is exactly the case where separate chaining keeps the table working — and why a worst-case lookup is O(chain length).`);
+}
+
+// ---------- wire up ----------
+document.getElementById('insBtn').onclick = ()=>insert();
+document.getElementById('lookBtn').onclick = lookup;
+document.getElementById('delBtn').onclick = del;
+document.getElementById('collideBtn').onclick = demoCollision;
+document.getElementById('resetBtn').onclick = reset;
+reset();
+</script>
+</body>
+</html>

@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Graphs (BFS / DFS) — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .gstage{position:relative;height:340px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  svg.edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  svg.edges line{stroke:var(--line);stroke-width:2}
+  svg.edges line.tree{stroke:var(--accent);stroke-width:3}
+  svg.edges marker path{fill:var(--muted)}
+  .vtx{position:absolute;width:42px;height:42px;border-radius:50%;background:var(--panel);
+    border:2px solid var(--line);display:flex;align-items:center;justify-content:center;
+    font-weight:700;font-size:15px;transform:translate(-50%,-50%);transition:.25s;cursor:default;z-index:2}
+  .vtx .dist{position:absolute;top:-14px;right:-12px;font-size:10px;background:var(--accent);color:#fff;
+    border-radius:8px;padding:0 5px;font-weight:700;opacity:0;transition:.2s}
+  .vtx.start{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,156,249,.35)}
+  .vtx.frontier{border-color:var(--warn);box-shadow:0 0 0 3px rgba(255,184,77,.5)}
+  .vtx.current{border-color:var(--accent);background:var(--accent);color:#fff;box-shadow:0 0 0 4px rgba(79,156,249,.45)}
+  .vtx.visited{border-color:var(--ok);background:var(--okbg);color:var(--ok)}
+  .vtx.dist-on .dist{opacity:1}
+  .frontierbox{display:flex;flex-direction:column;gap:8px}
+  .fq{font-family:ui-monospace,Menlo,monospace;font-size:13px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;min-height:30px}
+  .fq .item{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:3px 9px;font-weight:700}
+  .fq .item.head{border-color:var(--accent);color:var(--accent)}
+  .fq .item.top{border-color:var(--accent2);color:var(--accent2)}
+  .fq .lab{color:var(--muted);font-size:11px;margin-right:4px}
+  .orderline{font-family:ui-monospace,Menlo,monospace;font-size:13px;margin-top:6px}
+  .orderline .v{display:inline-block;background:var(--okbg);border:1px solid var(--ok);color:var(--ok);
+    border-radius:6px;padding:2px 8px;margin:2px;font-weight:700}
+  table.cx{border-collapse:collapse;font-size:12.5px;margin-top:8px}
+  table.cx td,table.cx th{border:1px solid var(--line);padding:5px 10px;text-align:left}
+  table.cx th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:10.5px;letter-spacing:.04em}
+  table.cx td code{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🕸️ Graphs — BFS / DFS / Topo sort</h1>
+      <div class="sub">An adjacency-list graph. Watch <b>BFS</b> fan out level-by-level with a <b>queue</b> (shortest paths in an unweighted graph), <b>DFS</b> plunge deep with a <b>stack</b>, and <b>topological sort</b> order a DAG.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">adjacency list</span>
+      <span class="tag">BFS = queue</span>
+      <span class="tag">DFS = stack</span>
+      <span class="tag">topo = DAG only</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A graph is vertices + edges, stored as an <b>adjacency list</b> (each node → list of neighbors) — compact for <b>sparse</b> graphs. <b>BFS</b> uses a FIFO <b>queue</b> to visit in rings of increasing distance, so on an <b>unweighted</b> graph it yields the <b>shortest path</b> (fewest hops). <b>DFS</b> uses a LIFO <b>stack</b> (or recursion) to dive as deep as possible first. <b>Topological sort</b> linearizes a <b>DAG</b> so every edge points forward — the order you'd run tasks/build targets in.</p>
+    <div class="note gotcha"><b>The gotcha:</b> BFS gives the shortest path <b>only in unweighted graphs</b>; once edges have weights you need <b>Dijkstra</b> (a min-heap / priority queue). A classic error is thinking DFS finds the shortest path — it finds <b>a</b> path, not the shortest. <b>Topological sort exists only for a DAG</b>: if there's a <b>cycle</b> there is no valid ordering — which is exactly how you <b>detect a dependency cycle</b>. And <b>adjacency list (sparse)</b> vs <b>matrix (dense)</b> is a real space/lookup trade-off, not a detail.</div>
+    <table class="cx">
+      <tr><th>Operation</th><th>Time</th><th>Space</th><th>Gives you</th></tr>
+      <tr><td><code>BFS</code></td><td>O(V + E)</td><td>O(V) queue</td><td>shortest path (unweighted)</td></tr>
+      <tr><td><code>DFS</code></td><td>O(V + E)</td><td>O(V) stack</td><td>a path / connectivity / cycles</td></tr>
+      <tr><td><code>Topo sort</code></td><td>O(V + E)</td><td>O(V)</td><td>valid ordering or "cycle!"</td></tr>
+    </table>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Operations</h3>
+    <div class="row">
+      <label class="fld">graph
+        <select id="sample">
+          <option value="undirected">undirected (for BFS/DFS)</option>
+          <option value="dag">DAG (for topo sort)</option>
+          <option value="cyclic">directed with a cycle</option>
+        </select>
+      </label>
+      <label class="fld">start
+        <select id="start"></select>
+      </label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="bfsBtn">▶ BFS (queue)</button>
+      <button class="btn sec" id="dfsBtn">▶ DFS (stack)</button>
+      <button class="btn sec" id="topoBtn">▶ Topological sort</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="gstage" id="stage">
+      <svg class="edges" id="edges">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z"/>
+          </marker>
+        </defs>
+      </svg>
+      <div id="vtxs"></div>
+    </div>
+    <div class="frontierbox" style="margin-top:14px">
+      <div class="fq"><span class="lab" id="frontLab">Queue (front → back):</span><span id="frontier"><span class="muted small">— run an algorithm —</span></span></div>
+      <div class="orderline"><span class="lab">Visit order:</span> <span id="order"><span class="muted small">—</span></span></div>
+    </div>
+    <div class="explain" id="explain">Pick a graph and a start node. <b>BFS</b> fans out in rings (shortest hops); <b>DFS</b> dives deep; <b>topological sort</b> only works on a DAG.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>BFS</b>: dequeue a node, mark visited, enqueue all unseen neighbors → the <span style="color:var(--warn)">queue</span> holds the current frontier.</li>
+        <li>Because BFS expands by rings, each node's <span style="color:var(--accent)">distance</span> badge is its <b>shortest hop-count</b> from start.</li>
+        <li><b>DFS</b>: pop the <span style="color:var(--accent2)">top of the stack</span>, push its neighbors → it plunges down one branch before backtracking.</li>
+        <li><b>Topo sort</b>: repeatedly take a node with <b>in-degree 0</b> (Kahn's algorithm); the emitted order respects every edge.</li>
+        <li>If no in-degree-0 node remains but vertices are left → a <span style="color:var(--bad)">cycle</span>; a DAG has no valid topo order, so this detects dependency cycles.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- graph models ----------
+// positions are % of the stage box for layout
+const SAMPLES = {
+  undirected: {
+    directed:false,
+    pos:{ A:[12,22], B:[40,16], C:[40,60], D:[68,22], E:[68,68], F:[90,44] },
+    edges:[ ['A','B'],['A','C'],['B','D'],['C','D'],['C','E'],['D','F'],['E','F'] ]
+  },
+  dag: {
+    directed:true,
+    pos:{ A:[10,40], B:[34,18], C:[34,64], D:[58,18], E:[58,64], F:[82,40] },
+    edges:[ ['A','B'],['A','C'],['B','D'],['C','D'],['C','E'],['D','F'],['E','F'] ]
+  },
+  cyclic: {
+    directed:true,
+    pos:{ A:[14,28], B:[44,20], C:[44,66], D:[74,28], E:[74,70] },
+    edges:[ ['A','B'],['B','C'],['C','D'],['D','B'],['C','E'] ]  // B→C→D→B cycle
+  }
+};
+
+let G;          // {directed, pos, adj:{node:[neighbors]}, nodes:[]}
+let busy = false;
+
+function buildGraph(name){
+  const s = SAMPLES[name];
+  const nodes = Object.keys(s.pos);
+  const adj = {}; nodes.forEach(n=>adj[n]=[]);
+  s.edges.forEach(([u,v])=>{
+    adj[u].push(v);
+    if(!s.directed) adj[v].push(u);
+  });
+  nodes.forEach(n=>adj[n].sort());
+  return { directed:s.directed, pos:s.pos, edges:s.edges, adj, nodes };
+}
+
+function reset(){
+  busy = false;
+  const name = document.getElementById('sample').value;
+  G = buildGraph(name);
+  // populate start dropdown
+  const sel = document.getElementById('start');
+  const prev = sel.value;
+  sel.innerHTML = G.nodes.map(n=>`<option value="${n}">${n}</option>`).join('');
+  if(G.nodes.includes(prev)) sel.value = prev;
+  document.getElementById('log').innerHTML='';
+  setFrontier('Queue (front → back):', []);
+  setOrder([]);
+  render();
+  logLine('info', `loaded ${name} graph: ${G.nodes.length} vertices, ${G.edges.length} edges (${G.directed?'directed':'undirected'}). Adjacency list ready.`);
+  G.nodes.forEach(n=>logLine('t', `  adj[${n}] = [${G.adj[n].join(', ')}]`));
+  explain('Pick a graph and a start node. <b>BFS</b> fans out in rings (shortest hops); <b>DFS</b> dives deep; <b>topological sort</b> only works on a DAG.');
+  // disable topo if undirected
+  document.getElementById('topoBtn').disabled = !G.directed;
+}
+
+// ---------- rendering ----------
+function render(state){
+  state = state || {};
+  const stage = document.getElementById('stage');
+  const W = stage.clientWidth, H = stage.clientHeight;
+  const px = n => [ G.pos[n][0]/100*W, G.pos[n][1]/100*H ];
+  // edges
+  const svg = document.getElementById('edges');
+  const lines = G.edges.map(([u,v])=>{
+    const [x1,y1]=px(u), [x2,y2]=px(v);
+    // shorten toward target so arrow sits at node edge
+    const dx=x2-x1, dy=y2-y1, len=Math.hypot(dx,dy)||1, off=24;
+    const ex = x2 - dx/len*off, ey = y2 - dy/len*off;
+    const sx = x1 + dx/len*off, sy = y1 + dy/len*off;
+    const tree = state.treeEdges && state.treeEdges.has(u+'>'+v);
+    const mk = G.directed ? 'marker-end="url(#arrow)"' : '';
+    return `<line class="${tree?'tree':''}" x1="${sx}" y1="${sy}" x2="${ex}" y2="${ey}" ${mk}></line>`;
+  }).join('');
+  // keep the <defs>, replace lines
+  svg.innerHTML = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"></path></marker></defs>` + lines;
+  // vertices
+  const vt = document.getElementById('vtxs');
+  vt.innerHTML = G.nodes.map(n=>{
+    const [x,y]=px(n);
+    let cls='vtx';
+    if(state.current===n) cls+=' current';
+    else if(state.visited && state.visited.has(n)) cls+=' visited';
+    else if(state.frontier && state.frontier.includes(n)) cls+=' frontier';
+    if(state.start===n) cls+=' start';
+    const d = state.dist && state.dist[n]!=null;
+    if(d) cls+=' dist-on';
+    return `<div class="${cls}" style="left:${x}px;top:${y}px">${n}<span class="dist">${d?state.dist[n]:''}</span></div>`;
+  }).join('');
+}
+
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+function setFrontier(label, arr, kind){
+  document.getElementById('frontLab').textContent = label;
+  const el = document.getElementById('frontier');
+  if(!arr.length){ el.innerHTML = '<span class="muted small">(empty)</span>'; return; }
+  el.innerHTML = arr.map((n,i)=>{
+    let c='item';
+    if(kind==='queue' && i===0) c+=' head';        // front of queue
+    if(kind==='stack' && i===arr.length-1) c+=' top'; // top of stack
+    return `<span class="${c}">${n}</span>`;
+  }).join('<span class="muted" style="opacity:.5">·</span>');
+}
+function setOrder(arr){
+  const el = document.getElementById('order');
+  el.innerHTML = arr.length ? arr.map(n=>`<span class="v">${n}</span>`).join('') : '<span class="muted small">—</span>';
+}
+
+// ---------- BFS ----------
+async function bfs(){
+  if(busy) return; busy=true;
+  const start = document.getElementById('start').value;
+  logLine('cmd', `> BFS from ${start}  (FIFO queue → shortest paths, unweighted)`);
+  const visited = new Set([start]);
+  const dist = { [start]:0 };
+  const order = [];
+  const treeEdges = new Set();
+  let queue = [start];
+  render({start, frontier:[...queue], visited, dist});
+  setFrontier('Queue (front → back):', queue, 'queue');
+  await sleep(500);
+
+  while(queue.length){
+    const u = queue.shift();
+    order.push(u);
+    render({start, current:u, frontier:[...queue], visited, dist, treeEdges});
+    setFrontier('Queue (front → back):', queue, 'queue');
+    setOrder(order);
+    logLine('info', `dequeue ${u} (dist ${dist[u]}); scan neighbors [${G.adj[u].join(', ')}]`);
+    await sleep(560);
+    for(const v of G.adj[u]){
+      if(!visited.has(v)){
+        visited.add(v);
+        dist[v] = dist[u]+1;
+        treeEdges.add(u+'>'+v);
+        queue.push(v);
+        logLine('ok', `  enqueue ${v}, dist = ${dist[v]} (shortest hops from ${start})`);
+        render({start, current:u, frontier:[...queue], visited, dist, treeEdges});
+        setFrontier('Queue (front → back):', queue, 'queue');
+        await sleep(360);
+      }
+    }
+  }
+  render({start, visited, dist, treeEdges});
+  setFrontier('Queue (front → back):', [], 'queue');
+  setOrder(order);
+  const ds = G.nodes.map(n=>`${n}:${dist[n]==null?'∞':dist[n]}`).join('  ');
+  logLine('ok', `BFS done. Visit order: ${order.join(' → ')}`);
+  logLine('ok', `shortest distances from ${start}: ${ds}`);
+  explain(`BFS used a <b>queue</b> to expand in rings, so every distance badge is the <b>fewest hops</b> from <b>${start}</b> — the shortest path in an <b>unweighted</b> graph. Add edge weights and this breaks: you'd switch to <b>Dijkstra</b> with a min-heap.`);
+  busy=false;
+}
+
+// ---------- DFS ----------
+async function dfs(){
+  if(busy) return; busy=true;
+  const start = document.getElementById('start').value;
+  logLine('cmd', `> DFS from ${start}  (LIFO stack → dives deep first)`);
+  const visited = new Set();
+  const order = [];
+  const treeEdges = new Set();
+  const stack = [start];          // bottom → top
+  const cameFrom = {};
+  render({start, frontier:[...stack], visited});
+  setFrontier('Stack (bottom → top):', stack, 'stack');
+  await sleep(500);
+
+  while(stack.length){
+    const u = stack.pop();        // top of stack
+    if(visited.has(u)){ continue; }
+    visited.add(u);
+    order.push(u);
+    if(cameFrom[u]) treeEdges.add(cameFrom[u]+'>'+u);
+    render({start, current:u, frontier:[...stack], visited, treeEdges});
+    setFrontier('Stack (bottom → top):', stack, 'stack');
+    setOrder(order);
+    logLine('info', `pop ${u} (visit); push unseen neighbors of [${G.adj[u].join(', ')}]`);
+    await sleep(560);
+    // push neighbors in reverse so smallest is explored first (deep)
+    const nbrs = [...G.adj[u]].reverse();
+    for(const v of nbrs){
+      if(!visited.has(v)){
+        stack.push(v);
+        cameFrom[v] = u;
+        logLine('t', `  push ${v}`);
+      }
+    }
+    render({start, current:u, frontier:[...stack], visited, treeEdges});
+    setFrontier('Stack (bottom → top):', stack, 'stack');
+    await sleep(360);
+  }
+  render({start, visited, treeEdges});
+  setFrontier('Stack (bottom → top):', [], 'stack');
+  setOrder(order);
+  logLine('ok', `DFS done. Visit order: ${order.join(' → ')}`);
+  explain(`DFS used a <b>stack</b> (LIFO), so it plunged down one branch before backtracking — visit order <b>${order.join(' → ')}</b>. Note this is <b>a</b> traversal/path, <b>not the shortest path</b>: that's the classic DFS error. DFS shines for cycle detection, topo sort, and connectivity.`);
+  busy=false;
+}
+
+// ---------- Topological sort (Kahn's algorithm) ----------
+async function topo(){
+  if(busy) return; busy=true;
+  if(!G.directed){ logLine('err','topological sort needs a DIRECTED graph — pick the DAG sample'); busy=false; return; }
+  logLine('cmd', `> TOPOLOGICAL SORT (Kahn: repeatedly remove an in-degree-0 node)`);
+  const indeg = {}; G.nodes.forEach(n=>indeg[n]=0);
+  G.edges.forEach(([u,v])=>indeg[v]++);
+  logLine('info', `in-degrees: ${G.nodes.map(n=>n+':'+indeg[n]).join('  ')}`);
+  // ready queue = all in-degree-0 nodes
+  let ready = G.nodes.filter(n=>indeg[n]===0).sort();
+  const order = [];
+  const visited = new Set();
+  render({frontier:[...ready], visited});
+  setFrontier('Ready (in-degree 0):', ready, 'queue');
+  await sleep(550);
+
+  while(ready.length){
+    const u = ready.shift();
+    order.push(u); visited.add(u);
+    render({current:u, frontier:[...ready], visited});
+    setFrontier('Ready (in-degree 0):', ready, 'queue');
+    setOrder(order);
+    logLine('ok', `emit ${u}; remove its out-edges → decrement neighbors`);
+    await sleep(560);
+    for(const v of G.adj[u]){
+      indeg[v]--;
+      logLine('t', `  in-degree[${v}] → ${indeg[v]}`);
+      if(indeg[v]===0){ ready.push(v); ready.sort(); }
+    }
+    render({current:u, frontier:[...ready], visited});
+    setFrontier('Ready (in-degree 0):', ready, 'queue');
+    await sleep(360);
+  }
+  setFrontier('Ready (in-degree 0):', [], 'queue');
+  if(order.length === G.nodes.length){
+    render({visited});
+    setOrder(order);
+    logLine('ok', `topological order: ${order.join(' → ')}  (every edge points forward)`);
+    explain(`A valid topological order: <b>${order.join(' → ')}</b>. Every edge u→v has u before v, so this is a safe execution order for dependent tasks/builds. It works <b>only because the graph is a DAG</b>.`);
+  } else {
+    const left = G.nodes.filter(n=>!visited.has(n));
+    render({visited});
+    setOrder(order);
+    logLine('err', `CYCLE detected — ${left.length} node(s) never reached in-degree 0: [${left.join(', ')}]`);
+    explain(`No node with in-degree 0 remains, yet <b>${left.join(', ')}</b> are unprocessed → the graph has a <b>cycle</b>, so <b>no topological order exists</b>. This is exactly how you detect a <b>dependency cycle</b> (e.g. circular imports / deadlocked build targets).`);
+  }
+  busy=false;
+}
+
+// ---------- wire up ----------
+document.getElementById('sample').onchange = reset;
+document.getElementById('bfsBtn').onclick = bfs;
+document.getElementById('dfsBtn').onclick = dfs;
+document.getElementById('topoBtn').onclick = topo;
+document.getElementById('resetBtn').onclick = reset;
+window.addEventListener('resize', ()=>{ if(!busy) render({start:document.getElementById('start').value}); });
+reset();
+</script>
+</body>
+</html>

@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bloom Filters — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  #stage{min-height:300px}
+  .bits{display:flex;flex-wrap:wrap;gap:5px;width:100%;justify-content:center}
+  .bit{width:30px;height:30px;border:1px solid var(--line);border-radius:6px;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;font-family:ui-monospace,Menlo,monospace;font-size:13px;
+    background:var(--panel);color:var(--muted);transition:.2s;position:relative}
+  .bit.set{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .bit.touch{box-shadow:0 0 0 3px rgba(255,184,77,.6);border-color:var(--warn)}
+  .bit.checkok{box-shadow:0 0 0 3px rgba(46,204,113,.6)}
+  .bit.checkbad{box-shadow:0 0 0 3px rgba(255,92,92,.6)}
+  .bit .ix{font-size:8px;color:var(--muted);position:absolute;top:1px;left:3px}
+  .bit.set .ix{color:rgba(255,255,255,.7)}
+  .metrics{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;justify-content:center}
+  .metric{text-align:center}
+  .metric .mv{font-size:20px;font-weight:700;color:var(--accent)}
+  .metric .ml{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .hashrow{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted);margin:3px 0}
+  .hashrow b{color:var(--txt)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🌸 Bloom Filters</h1>
+      <div class="sub">A probabilistic set that answers "have I seen <i>x</i>?" in O(k) with tiny memory. It can say <b>"definitely not"</b> or <b>"possibly yes"</b> — never a false negative, but sometimes a <b>false positive</b>.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">probabilistic membership</span>
+      <span class="tag">m bits · k hashes</span>
+      <span class="tag">no false negatives</span>
+      <span class="tag">O(k) add / query</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A Bloom filter is a bit array of size <b>m</b> (all 0) plus <b>k</b> independent hash functions. <b>Add(x)</b> hashes x with all k functions and sets those k bits to 1. <b>Query(x)</b> checks the same k bits: if <b>any</b> is 0, x was <i>definitely never added</i>; if <b>all</b> are 1, x is <i>possibly</i> in the set (those bits could have been set by other elements — a false positive).</p>
+    <div class="note gotcha"><b>The gotcha:</b> a Bloom filter has <b>no false negatives, only false positives</b> — flip that in an interview and it's an instant tell. You <b>cannot delete</b> (clearing a bit could break other members → use a <i>counting</i> Bloom filter) and <b>cannot enumerate</b> members. Rule of thumb: ~<b>10 bits/element ≈ 1%</b> false-positive rate. Cousins: <b>Count-Min Sketch</b> (frequencies) and <b>HyperLogLog</b> (cardinality). Systems use: a Bloom filter sits in front of each <b>SSTable</b> in Cassandra / RocksDB / HBase / Bigtable to skip disk reads for keys that are definitely absent.</p>
+    <table class="small" style="border-collapse:collapse;margin-top:10px">
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Add(x)</td><td style="padding:2px 0"><code>O(k)</code> — set k bits</td></tr>
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Query(x)</td><td style="padding:2px 0"><code>O(k)</code> — check k bits</td></tr>
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Space</td><td style="padding:2px 0"><code>O(m)</code> bits — independent of element size</td></tr>
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">FP rate</td><td style="padding:2px 0"><code>≈ (1 − e^(−kn/m))^k</code> for n inserted</td></tr>
+    </table>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Tune & operate</h3>
+    <div class="row" style="margin-bottom:12px">
+      <label class="fld">m (bits)
+        <input type="number" id="mIn" value="24" min="8" max="48" style="width:70px">
+      </label>
+      <label class="fld">k (hashes)
+        <input type="number" id="kIn" value="3" min="1" max="5" style="width:70px">
+      </label>
+      <button class="btn ghost" id="applyBtn">apply m / k</button>
+    </div>
+    <div class="row">
+      <label class="fld">item<input type="text" id="x" value="apple" size="10"></label>
+      <button class="btn" id="addBtn">Add(x)</button>
+      <button class="btn sec" id="queryBtn">Query(x)</button>
+      <span style="width:14px"></span>
+      <button class="btn ghost" id="fpBtn">Demo: force a false positive</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <span class="pill">added: <b id="nP">0</b></span>
+      <span class="pill">m: <b id="mP">24</b></span>
+      <span class="pill">k: <b id="kP">3</b></span>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="bits" id="bits"></div>
+      <div class="metrics" id="metrics"></div>
+    </div>
+    <div class="explain" id="explain">Type an item and <b>Add</b> it — watch k bits light up. Then <b>Query</b> a different item that was never added to see "definitely not in set", and use the demo to manufacture a <b>false positive</b>.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>Add(x)</b>: k hash functions map x to k bit positions; each is set to 1 (already-1 bits just stay 1).</li>
+        <li><b>Query(x)</b>: check the same k positions. <span style="color:var(--bad)">Any 0</span> → <b>definitely NOT</b> in the set.</li>
+        <li>All k positions 1 → <b>possibly</b> in the set: x may have been added, <i>or</i> its bits were set by other items.</li>
+        <li>As you add more items the <b>fill ratio</b> climbs and the estimated <b>false-positive rate</b> rises.</li>
+        <li>The demo finds an unseen item whose k bits were <i>all</i> set by others → a true <span style="color:var(--bad)">false positive</span>.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+let m=24, k=3;
+let bits;            // Uint8Array-like via plain array of 0/1
+let added;           // Set of items actually added (for demo / honesty, NOT used by query)
+let busy=false;
+
+function reset(){
+  m = clamp(parseInt(document.getElementById('mIn').value,10), 8, 48, 24);
+  k = clamp(parseInt(document.getElementById('kIn').value,10), 1, 5, 3);
+  bits = new Array(m).fill(0);
+  added = new Set();
+  busy=false;
+  document.getElementById('log').innerHTML='';
+  logLine('info', `Bloom filter ready: m=${m} bits (all 0), k=${k} hash functions.`);
+  render();
+  explain('Type an item and <b>Add</b> it — watch k bits light up. Then <b>Query</b> a different item that was never added to see "definitely not in set", and use the demo to manufacture a <b>false positive</b>.');
+}
+function clamp(v,lo,hi,def){ if(isNaN(v)) return def; return Math.max(lo,Math.min(hi,v)); }
+
+// ---------- hashing ----------
+// k independent deterministic hashes via two base hashes (Kirsch–Mitzenmacher double hashing)
+function h1(s){ let h=2166136261; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return (h>>>0); }
+function h2(s){ let h=5381; for(let i=0;i<s.length;i++){ h=((h<<5)+h)+s.charCodeAt(i); } return (h>>>0); }
+function positions(s){
+  const a=h1(s), b=h2(s)|1, out=[];
+  for(let i=0;i<k;i++){ out.push(((a + i*b) >>> 0) % m); }
+  return out;
+}
+
+// ---------- metrics ----------
+function fillRatio(){ return bits.reduce((s,x)=>s+x,0)/m; }
+function fpEstimate(){
+  // (1 - e^(-k*n/m))^k  with n = number of distinct items added
+  const n=added.size;
+  const p=Math.pow(1 - Math.exp(-k*n/m), k);
+  return p;
+}
+
+// ---------- helpers (contract) ----------
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+// ---------- rendering ----------
+function render(touch, cls){
+  touch = touch || [];
+  const el=document.getElementById('bits');
+  el.innerHTML = bits.map((b,i)=>{
+    const t = touch.includes(i) ? (' '+(cls||'touch')) : '';
+    return `<div class="bit ${b?'set':''}${t}" id="bit${i}"><span class="ix">${i}</span>${b}</div>`;
+  }).join('');
+  const fr=fillRatio(), fp=fpEstimate();
+  document.getElementById('metrics').innerHTML=`
+    <div class="metric"><div class="mv">${(fr*100).toFixed(0)}%</div><div class="ml">fill ratio (${bits.reduce((s,x)=>s+x,0)}/${m} bits)</div></div>
+    <div class="metric"><div class="mv">${added.size}</div><div class="ml">items added (n)</div></div>
+    <div class="metric"><div class="mv">${(fp*100).toFixed(1)}%</div><div class="ml">est. false-positive rate</div></div>`;
+  document.getElementById('nP').textContent=added.size;
+  document.getElementById('mP').textContent=m;
+  document.getElementById('kP').textContent=k;
+}
+async function flashBits(idxs, cls){
+  idxs.forEach(i=>{ const e=document.getElementById('bit'+i); if(e) e.classList.add(cls); });
+  await sleep(700);
+  idxs.forEach(i=>{ const e=document.getElementById('bit'+i); if(e) e.classList.remove(cls); });
+}
+
+// ---------- operations ----------
+async function doAdd(){
+  if(busy) return; busy=true;
+  const x=document.getElementById('x').value.trim();
+  if(!x){ busy=false; return; }
+  const pos=positions(x);
+  logLine('cmd', `> Add("${x}")`);
+  logLine('info', `hashes → bit positions [${pos.join(', ')}]`);
+  // light up each target bit in sequence
+  for(const p of pos){ bits[p]=1; render(pos.slice(0,pos.indexOf(p)+1),'touch'); await sleep(220); }
+  added.add(x);
+  render(pos,'touch');
+  await flashBits(pos,'touch');
+  render();
+  logLine('ok', `Set bits [${pos.join(', ')}] for "${x}". Fill ${(fillRatio()*100).toFixed(0)}%, est. FP ${(fpEstimate()*100).toFixed(1)}%.`);
+  explain(`<b>Add("${x}")</b>: k=${k} hashes pointed to bits <b>[${pos.join(', ')}]</b>, all now 1. Note adding never clears a bit — that's why you can't delete from a plain Bloom filter.`);
+  busy=false;
+}
+
+async function doQuery(){
+  if(busy) return; busy=true;
+  const x=document.getElementById('x').value.trim();
+  if(!x){ busy=false; return; }
+  const pos=positions(x);
+  logLine('cmd', `> Query("${x}")`);
+  logLine('info', `check bits [${pos.join(', ')}]`);
+  let allSet=true, firstZero=-1;
+  for(const p of pos){
+    render(pos,'touch');
+    const set=bits[p]===1;
+    if(!set && firstZero<0){ firstZero=p; }
+    if(!set) allSet=false;
+    await sleep(220);
+  }
+  if(!allSet){
+    render(pos,'checkbad');
+    await flashBits(pos,'checkbad'); render();
+    logLine('ok', `Query("${x}") → DEFINITELY NOT in set (bit ${firstZero} is 0).`);
+    explain(`At least one of x's bits (position <b>${firstZero}</b>) is <b>0</b>. If x had ever been added, that bit would be 1 — so x is <b>definitely not</b> in the set. This is why there are <b>no false negatives</b>.`);
+    busy=false; return;
+  }
+  // all bits set → possibly in set
+  render(pos,'checkok');
+  await flashBits(pos,'checkok'); render();
+  const reallyAdded=added.has(x);
+  if(reallyAdded){
+    logLine('ok', `Query("${x}") → POSSIBLY in set (all k bits are 1). [Truly added earlier.]`);
+    explain(`All k bits for <b>${x}</b> are 1 → <b>possibly in set</b>. Here it really was added, so this is a true positive — but the filter can't prove that on its own.`);
+  } else {
+    logLine('warn', `Query("${x}") → POSSIBLY in set — but "${x}" was NEVER added. ⚠ FALSE POSITIVE.`);
+    explain(`All k bits for <b>${x}</b> are 1, so the filter reports <b>possibly in set</b> — yet ${x} was never added. Its bits were set by <i>other</i> items: a <span style="color:var(--bad)">false positive</span>. More items / smaller m raise this rate.`);
+  }
+  busy=false;
+}
+
+// demo: keep adding common words until some unseen probe word collides on all k bits
+async function demoFP(){
+  if(busy) return;
+  reset(); await sleep(150); busy=true;
+  logLine('info', `DEMO: add items until an UNADDED probe word's k bits are all set by others.`);
+  const corpus=['apple','banana','cherry','grape','melon','peach','plum','mango','lemon','kiwi','berry','fig','date','guava','olive'];
+  const probes=['dragonfruit','papaya','apricot','coconut','nectarine','quince','lychee','pomelo','tangerine','currant'];
+  for(const w of corpus){
+    document.getElementById('x').value=w;
+    busy=false; await doAdd(); busy=true; await sleep(120);
+    // after each add, look for a probe that now false-positives
+    const hit=probes.find(p=>!added.has(p) && positions(p).every(i=>bits[i]===1));
+    if(hit){
+      await sleep(350);
+      logLine('warn', `Found it: "${hit}" was never added, but all its bits [${positions(hit).join(', ')}] are now 1.`);
+      document.getElementById('x').value=hit;
+      busy=false; await doQuery();
+      return;
+    }
+    if(fillRatio()>0.92) break;
+  }
+  busy=false;
+  logLine('info', `No false positive surfaced from the probe list at this m/k — lower m or raise k and retry the demo.`);
+  explain(`At m=${m}, k=${k} the filter stayed sparse enough that no probe word collided. Shrink <b>m</b> (more crowding) or add more items, then run the demo again to force a false positive.`);
+}
+
+// ---------- wire up ----------
+document.getElementById('applyBtn').onclick=reset;
+document.getElementById('addBtn').onclick=doAdd;
+document.getElementById('queryBtn').onclick=doQuery;
+document.getElementById('fpBtn').onclick=demoFP;
+document.getElementById('resetBtn').onclick=reset;
+reset();
+</script>
+</body>
+</html>

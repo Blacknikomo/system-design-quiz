@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tries (Prefix Trees) — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  #stage{min-height:320px}
+  .triewrap{position:relative;width:100%;min-height:300px}
+  .trnode{position:absolute;width:34px;height:34px;border-radius:50%;
+    background:var(--panel);border:2px solid var(--line);display:flex;align-items:center;justify-content:center;
+    font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:14px;transition:.2s;transform:translate(-50%,-50%);z-index:2}
+  .trnode.root{background:var(--panel2);color:var(--muted);font-size:11px;border-style:dashed}
+  .trnode.end{box-shadow:0 0 0 3px rgba(46,204,113,.35)}
+  .trnode.end::after{content:'•';position:absolute;bottom:-15px;color:var(--ok);font-size:18px}
+  .trnode.visit{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,156,249,.45)}
+  .trnode.newn{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(124,92,255,.5)}
+  .trnode.collect{border-color:var(--accent2);background:var(--panel2)}
+  .tredge{position:absolute;height:2px;background:var(--line);transform-origin:0 0;z-index:1}
+  .ctable{border-collapse:collapse;font-size:12.5px;margin-top:10px}
+  .ctable th,.ctable td{border:1px solid var(--line);padding:5px 10px;text-align:left}
+  .ctable th{color:var(--muted);font-weight:600;background:var(--panel2)}
+  .ctable code{color:var(--accent)}
+  .resbox{font-family:ui-monospace,Menlo,monospace;font-size:13px;margin-top:8px;color:var(--ok)}
+  .words{font-size:12px;color:var(--muted);margin-top:6px}
+  .words b{color:var(--txt)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🌿 Tries (Prefix Trees)</h1>
+      <div class="sub">A tree keyed by characters: each edge is one letter, each path spells a prefix, and marked nodes end words. Lookups cost <i>O(L)</i> in the key length — completely independent of how many words you've stored.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">prefix tree</span>
+      <span class="tag">O(L) lookup</span>
+      <span class="tag">prefix queries</span>
+      <span class="tag">autocomplete</span>
+      <span class="tag">radix compresses it</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A <b>trie</b> stores strings by sharing common prefixes. Walking from the root, each edge consumes one character; a node flagged <b>end-of-word</b> (green dot) means the path to it spells a stored word. <b>Insert/Search</b> walk one node per character. <b>StartsWith</b> just checks a prefix path exists. <b>Autocomplete</b> walks to the prefix node, then collects every word in the subtree below it.</p>
+    <div class="note gotcha"><b>The gotcha:</b> a lookup costs <b>O(L)</b> where L = the length of the key — it is <b>independent of n</b>, the number of words stored. That's the whole point: 10 words or 10 million, finding "cat" still takes 3 hops. The trade-off is <b>memory</b> (a pointer array per node); <b>radix / Patricia tries</b> compress single-child chains to fix that. A <b>hash set</b> is faster for pure exact-membership (O(L) to hash, but no tree walk) — but a hash set <b>cannot do prefix queries at all</b>. For real autocomplete you also <b>augment each node with a cached top-K</b> list of completions so you don't walk the whole subtree on every keystroke.</div>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Operations</h3>
+    <div class="row">
+      <label class="fld">word / prefix<input type="text" id="word" value="cat" size="12" style="width:120px"></label>
+      <button class="btn" id="insBtn">Insert</button>
+      <button class="btn sec" id="srchBtn">Search exact</button>
+      <button class="btn sec" id="prefBtn">StartsWith</button>
+      <button class="btn sec" id="acBtn">Autocomplete</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn ghost" id="seedBtn">🌱 Seed: car, card, care, cat, dog, do</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="words" id="wordlist"></div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="triewrap" id="trie"></div>
+    </div>
+    <div class="explain" id="explain">Seed the sample words, then try <b>StartsWith "ca"</b> or <b>Autocomplete "car"</b>. Notice how "car/card/care" share the same path.</div>
+    <div class="resbox" id="res"></div>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <h3>Log</h3><div class="log" id="log"></div>
+      <table class="ctable">
+        <tr><th>Operation</th><th>Cost</th><th>Note</th></tr>
+        <tr><td>Insert(word)</td><td><code>O(L)</code></td><td>L = word length</td></tr>
+        <tr><td>Search exact</td><td><code>O(L)</code></td><td>independent of n</td></tr>
+        <tr><td>StartsWith(prefix)</td><td><code>O(L)</code></td><td>hash set can't do this</td></tr>
+        <tr><td>Autocomplete</td><td><code>O(L + total chars)</code></td><td>cache top-K to speed up</td></tr>
+        <tr><td>Space</td><td colspan="2"><code>O(total chars × alphabet)</code> — radix compresses</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li>The <b>root</b> is empty; every edge below it is one <b>character</b>.</li>
+        <li><b>Insert</b> walks the word char-by-char, creating nodes as needed, then marks the last node <b>end-of-word</b> (green dot).</li>
+        <li><b>Search exact</b> walks the chars and checks the final node is an end mark.</li>
+        <li><b>StartsWith</b> only checks the prefix path exists — no end mark required.</li>
+        <li><b>Autocomplete</b> walks to the prefix node, then collects every end-marked word in the subtree below (purple).</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+// node: {ch, children:Map<char,node>, end:bool}
+let root;
+let busy = false;
+
+function newNode(ch){ return {ch:ch||'', children:new Map(), end:false}; }
+
+function reset(){
+  root = newNode(''); busy = false;
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('res').textContent = '';
+  updateWordList();
+  logLine('info','Empty trie. Insert words to build it.');
+  render();
+  explain('Seed the sample words, then try <b>StartsWith</b> or <b>Autocomplete</b>.');
+}
+
+// ---------- helpers ----------
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+function showRes(html){ document.getElementById('res').innerHTML = html; }
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+// collect all words (for the word-list display)
+function allWords(){
+  const out = [];
+  (function walk(n, pre){
+    if(n.end) out.push(pre);
+    [...n.children.keys()].sort().forEach(c=>walk(n.children.get(c), pre+c));
+  })(root, '');
+  return out;
+}
+function updateWordList(){
+  const w = allWords();
+  document.getElementById('wordlist').innerHTML = w.length
+    ? `stored words (n=${w.length}): <b>${w.join(', ')}</b>`
+    : '(no words stored yet)';
+}
+
+// collect words under a node (for autocomplete)
+function wordsUnder(n, prefix){
+  const out = [];
+  (function walk(m, pre){
+    if(m.end) out.push(pre);
+    [...m.children.keys()].sort().forEach(c=>walk(m.children.get(c), pre+c));
+  })(n, prefix);
+  return out;
+}
+
+// ---------- layout & render ----------
+// pre-order assign x by leaf order, y by depth.
+function layout(){
+  const pos = new Map();
+  let leafX = 0;
+  const W = document.getElementById('trie').clientWidth || 700;
+  // count leaves to spread horizontally
+  let order = 0;
+  const doms = [];
+  (function walk(n, depth){
+    const kids = [...n.children.keys()].sort();
+    const childPos = [];
+    kids.forEach(c=>childPos.push(walk(n.children.get(c), depth+1)));
+    let x;
+    if(childPos.length===0){ x = order++; }
+    else { x = childPos.reduce((a,b)=>a+b,0)/childPos.length; }
+    pos.set(n, {ox:x, depth});
+    return x;
+  })(root, 0);
+  const maxOx = Math.max(order-1, 1);
+  const ySpace = 56;
+  pos.forEach(p=>{
+    p.x = 30 + (W-60) * (maxOx>0 ? p.ox/maxOx : 0.5);
+    p.y = 28 + p.depth * ySpace;
+  });
+  return pos;
+}
+
+function render(hl){
+  hl = hl || {};
+  const wrap = document.getElementById('trie');
+  if(root.children.size===0){
+    wrap.innerHTML = '<div class="empty-msg" style="position:absolute;top:40%;left:50%;transform:translate(-50%,-50%);color:var(--muted)">(empty trie)</div>';
+    return;
+  }
+  const pos = layout();
+  let html = '';
+  // edges
+  (function walk(n){
+    const p = pos.get(n);
+    n.children.forEach(c=>{
+      const cp = pos.get(c);
+      const dx = cp.x-p.x, dy = cp.y-p.y;
+      const len = Math.sqrt(dx*dx+dy*dy);
+      const ang = Math.atan2(dy,dx)*180/Math.PI;
+      html += `<div class="tredge" style="left:${p.x}px;top:${p.y}px;width:${len}px;transform:rotate(${ang}deg)"></div>`;
+      walk(c);
+    });
+  })(root);
+  // nodes
+  pos.forEach((p,n)=>{
+    let cls = '';
+    if(n===root) cls += ' root';
+    if(n.end) cls += ' end';
+    if(hl.visit && hl.visit.has(n)) cls += ' visit';
+    if(hl.collect && hl.collect.has(n)) cls += ' collect';
+    if(hl.newn && hl.newn.has(n)) cls += ' newn';
+    const label = n===root ? 'root' : n.ch;
+    html += `<div class="trnode${cls}" style="left:${p.x}px;top:${p.y}px">${label}</div>`;
+  });
+  wrap.innerHTML = html;
+}
+
+// ---------- operations ----------
+async function insert(word, quiet){
+  word = word.toLowerCase();
+  if(!word) return;
+  let n = root;
+  const visit = new Set([root]);
+  const created = new Set();
+  for(const ch of word){
+    if(!n.children.has(ch)){ n.children.set(ch, newNode(ch)); created.add(n.children.get(ch)); }
+    n = n.children.get(ch);
+    visit.add(n);
+    if(!quiet){ render({visit:new Set(visit), newn:new Set(created)}); await sleep(360); }
+  }
+  const wasNew = !n.end;
+  n.end = true;
+  if(!quiet){
+    render({visit, newn:created});
+    logLine(wasNew?'ok':'warn', wasNew
+      ? `inserted "${word}" — ${word.length} node walk (O(L), L=${word.length}); ${created.size} new node(s)`
+      : `"${word}" already present — marked end again, no-op`);
+    explain(`Inserted <b>"${word}"</b> by walking ${word.length} character node(s) and marking the last one end-of-word. Cost is <b>O(L)</b> = O(${word.length}) — it does <b>not</b> depend on how many words are stored.`);
+  }
+  updateWordList();
+  return wasNew;
+}
+
+// walk a string; return {node|null, visited}
+async function walkPath(s, animate){
+  let n = root;
+  const visit = new Set([root]);
+  if(animate){ render({visit:new Set(visit)}); await sleep(300); }
+  for(const ch of s.toLowerCase()){
+    if(!n.children.has(ch)){
+      return {node:null, visited:visit, failChar:ch};
+    }
+    n = n.children.get(ch);
+    visit.add(n);
+    if(animate){
+      logLine('t',`match '${ch}' → descend`);
+      render({visit:new Set(visit)}); await sleep(360);
+    }
+  }
+  return {node:n, visited:visit};
+}
+
+async function search(word){
+  if(busy) return; busy=true; showRes('');
+  word = word.toLowerCase();
+  logLine('cmd',`> search "${word}"`);
+  const {node, visited, failChar} = await walkPath(word, true);
+  if(node && node.end){
+    render({visit:visited});
+    logLine('ok',`"${word}" FOUND (path exists AND end-of-word) — O(${word.length})`);
+    explain(`<b>"${word}"</b> is stored: the full path exists and the last node is end-of-word. ${word.length} hops, independent of n.`);
+    showRes(`search("${word}") = TRUE`);
+  } else if(node && !node.end){
+    render({visit:visited});
+    logLine('warn',`"${word}" is a PREFIX but not a stored word (no end mark)`);
+    explain(`The path for <b>"${word}"</b> exists, but its last node is <b>not</b> end-of-word — so it's only a prefix of stored words, not a word itself. (StartsWith would return true.)`);
+    showRes(`search("${word}") = FALSE (prefix only)`);
+  } else {
+    render({visit:visited});
+    logLine('err',`"${word}" not found — no edge for '${failChar}'`);
+    explain(`No path for <b>"${word}"</b> — the walk stopped at '${failChar}'.`);
+    showRes(`search("${word}") = FALSE`);
+  }
+  busy=false;
+}
+
+async function startsWith(prefix){
+  if(busy) return; busy=true; showRes('');
+  prefix = prefix.toLowerCase();
+  logLine('cmd',`> startsWith "${prefix}"`);
+  const {node, visited, failChar} = await walkPath(prefix, true);
+  if(node){
+    render({visit:visited});
+    const cnt = wordsUnder(node, prefix).length;
+    logLine('ok',`prefix "${prefix}" exists — ${cnt} word(s) below it. O(${prefix.length})`);
+    explain(`<b>startsWith("${prefix}")</b> = true: the prefix path exists (end-of-word not required). ${cnt} stored word(s) share this prefix. <b>A hash set cannot answer this</b> — it has no notion of prefixes.`);
+    showRes(`startsWith("${prefix}") = TRUE`);
+  } else {
+    render({visit:visited});
+    logLine('warn',`prefix "${prefix}" does not exist — stopped at '${failChar}'`);
+    explain(`No node has the prefix <b>"${prefix}"</b>.`);
+    showRes(`startsWith("${prefix}") = FALSE`);
+  }
+  busy=false;
+}
+
+async function autocomplete(prefix){
+  if(busy) return; busy=true; showRes('');
+  prefix = prefix.toLowerCase();
+  logLine('cmd',`> autocomplete "${prefix}"`);
+  const {node, visited, failChar} = await walkPath(prefix, true);
+  if(!node){
+    render({visit:visited});
+    logLine('warn',`no completions — prefix "${prefix}" stopped at '${failChar}'`);
+    explain(`No words start with <b>"${prefix}"</b>.`);
+    showRes(`autocomplete("${prefix}") = [ ]`);
+    busy=false; return;
+  }
+  // collect subtree, animating the collected nodes
+  const collect = new Set();
+  const results = [];
+  async function gather(m, pre){
+    collect.add(m);
+    render({visit:visited, collect:new Set(collect)});
+    await sleep(220);
+    if(m.end){ results.push(pre); logLine('ok',`  ✓ "${pre}"`); }
+    for(const c of [...m.children.keys()].sort()){ await gather(m.children.get(c), pre+c); }
+  }
+  await gather(node, prefix);
+  render({visit:visited, collect});
+  logLine('info',`autocomplete("${prefix}") → ${results.length} word(s): ${results.join(', ')}`);
+  explain(`<b>autocomplete("${prefix}")</b>: walk to the prefix node (O(${prefix.length})), then collect every end-marked word in the subtree → <b>${results.join(', ') || 'none'}</b>. Real systems <b>cache a top-K list per node</b> so they don't re-walk the subtree on every keystroke.`);
+  showRes(`autocomplete("${prefix}") = [ ${results.join(', ')} ]`);
+  busy=false;
+}
+
+// ---------- demo ----------
+async function seed(){
+  if(busy) return; busy=true;
+  root = newNode(''); render();
+  const ws = ['car','card','care','cat','dog','do'];
+  logLine('info','seeding: '+ws.join(', '));
+  for(const w of ws){ await insert(w, true); }
+  render();
+  updateWordList();
+  logLine('ok',`seeded ${ws.length} words. Notice car/card/care/cat share the "ca" path.`);
+  explain(`Sample trie built. The words <b>car, card, care, cat</b> all share the prefix path <code>c→a</code>; <b>do, dog</b> share <code>d→o</code>. Try <b>Autocomplete "ca"</b>.`);
+  busy=false;
+}
+
+// ---------- wire up ----------
+function getWord(){ return document.getElementById('word').value.trim(); }
+document.getElementById('insBtn').onclick = async ()=>{ const w=getWord(); if(!w||busy)return; busy=true; logLine('cmd',`> insert "${w.toLowerCase()}"`); await insert(w); busy=false; };
+document.getElementById('srchBtn').onclick = ()=>{ const w=getWord(); if(w) search(w); };
+document.getElementById('prefBtn').onclick = ()=>{ const w=getWord(); if(w) startsWith(w); };
+document.getElementById('acBtn').onclick = ()=>{ const w=getWord(); if(w) autocomplete(w); };
+document.getElementById('seedBtn').onclick = seed;
+document.getElementById('resetBtn').onclick = reset;
+window.addEventListener('resize', ()=>{ if(!busy) render(); });
+reset();
+</script>
+</body>
+</html>

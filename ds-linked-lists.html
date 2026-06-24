@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Linked Lists — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .lstage{display:flex;gap:0;flex-wrap:wrap;justify-content:center;align-items:center;row-gap:34px}
+  .lnode{position:relative;display:flex;align-items:center;border:2px solid var(--line);border-radius:10px;
+    background:var(--panel);font-family:ui-monospace,Menlo,monospace;font-weight:700;transition:.25s}
+  .lnode .val{padding:12px 14px;min-width:30px;text-align:center}
+  .lnode .nptr{padding:12px 8px;border-left:1px solid var(--line);font-size:11px;color:var(--muted);font-weight:400}
+  .lnode .pptr{padding:12px 8px;border-right:1px solid var(--line);font-size:11px;color:var(--muted);font-weight:400}
+  .lnode.active{box-shadow:0 0 0 3px rgba(79,156,249,.45);border-color:var(--accent)}
+  .lnode.slow{box-shadow:0 0 0 3px rgba(46,204,113,.55);border-color:var(--ok)}
+  .lnode.fast{box-shadow:0 0 0 3px rgba(255,184,77,.55);border-color:var(--warn)}
+  .lnode.both{box-shadow:0 0 0 3px rgba(255,92,92,.6);border-color:var(--bad)}
+  .lnode.flash-ok{box-shadow:0 0 0 3px rgba(46,204,113,.5);border-color:var(--ok)}
+  .lnode.flash-bad{box-shadow:0 0 0 3px rgba(255,92,92,.5);border-color:var(--bad)}
+  .lnode .ptag{position:absolute;top:-22px;left:50%;transform:translateX(-50%);font-size:10px;
+    white-space:nowrap;font-weight:700;font-family:inherit}
+  .arrow{font-size:20px;color:var(--accent);padding:0 6px;user-select:none}
+  .arrow.dbl{color:var(--accent2)}
+  .term{color:var(--muted);font-family:ui-monospace,Menlo,monospace;font-size:13px;padding:0 6px}
+  .head-tag{font-size:10px;color:var(--accent);font-weight:700;margin-right:4px;font-family:inherit}
+  .legend{display:flex;gap:16px;justify-content:center;font-size:12px;color:var(--muted);margin-top:18px;flex-wrap:wrap}
+  table.cx{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  table.cx th,table.cx td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line)}
+  table.cx th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.04em}
+  table.cx code{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🔗 Linked Lists — nodes & pointers</h1>
+      <div class="sub">Nodes scattered in memory, chained by <code>next</code> pointers. Insert/delete at a known node is O(1); finding it is O(n). Toggle doubly-linked, reverse the list, and run Floyd's cycle detection.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">pointer-chained</span>
+      <span class="tag">O(1) splice at a known node</span>
+      <span class="tag">O(n) search</span>
+      <span class="tag">no random access</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">Each node holds a value and a pointer to the <code>next</code> node (a <b>doubly</b>-linked node also keeps a <code>prev</code> pointer). Nodes live anywhere in memory — there's no contiguity, so you <b>cannot</b> jump to index <i>i</i>; you must walk from the head. The payoff: inserting or deleting at a node you already hold is O(1) pointer rewiring, no shifting.</p>
+    <div class="note gotcha"><b>The gotcha:</b> O(1) insert/delete only holds when you <b>already have a pointer to the node</b> (or its predecessor). If you must first <i>find</i> the node, that's an O(n) search and the operation is O(n) overall. And despite the better Big-O on splices, <b>arrays usually win in practice</b>: pointer-chasing scatters cache misses, while contiguous arrays stream through cache. Reach for a linked list when you need stable O(1) splicing with held node references (LRU cache, intrusive lists), not for general iteration.</div>
+    <table class="cx">
+      <tr><th>Operation</th><th>Time</th><th>Why</th></tr>
+      <tr><td>insert head</td><td>O(1)</td><td>point new node at old head</td></tr>
+      <tr><td>insert tail</td><td>O(1)*</td><td>O(1) with a tail pointer; else O(n) to walk</td></tr>
+      <tr><td>delete known node</td><td>O(1)</td><td>rewire neighbours' pointers</td></tr>
+      <tr><td>search(v)</td><td>O(n)</td><td>walk node by node</td></tr>
+      <tr><td>reverse</td><td>O(n)</td><td>flip every next pointer once</td></tr>
+      <tr><td>detect cycle</td><td>O(n)</td><td>Floyd's slow/fast, O(1) space</td></tr>
+    </table>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Run an operation</h3>
+    <div class="row">
+      <label class="fld">value<input type="text" id="val" value="7" size="5"></label>
+      <button class="btn" id="headBtn">Insert head</button>
+      <button class="btn" id="tailBtn">Insert tail</button>
+      <button class="btn sec" id="delBtn">Delete value</button>
+      <button class="btn sec" id="searchBtn">Search</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn sec" id="reverseBtn">⇄ Reverse</button>
+      <button class="btn warn" id="cycleBtn">↺ Make tail → head (cycle)</button>
+      <button class="btn warn" id="floydBtn">🐢🐇 Detect cycle (Floyd)</button>
+      <button class="btn ghost" id="dblBtn">Toggle doubly</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="lstage" id="nodes"></div>
+      <div class="legend">
+        <span style="color:var(--ok)">🐢 slow (1 step)</span>
+        <span style="color:var(--warn)">🐇 fast (2 steps)</span>
+        <span style="color:var(--bad)">they meet → cycle</span>
+      </div>
+    </div>
+    <div class="explain" id="explain">Insert nodes at head or tail, then try Search to watch the O(n) walk. Make a cycle and run Floyd's algorithm to see the tortoise and hare meet.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Operation log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>Insert head</b>: new node's <code>next</code> = old head, head = new — <b>O(1)</b>.</li>
+        <li><b>Insert tail</b>: with a tail pointer it's <b>O(1)</b>; otherwise you walk to the end (O(n)).</li>
+        <li><b>Delete</b>: find the node (O(n) search), then <span style="color:var(--accent2)">rewire</span> its neighbours — the splice itself is O(1).</li>
+        <li><b>Search / Reverse</b>: touch every node once — <b>O(n)</b>.</li>
+        <li><b>Floyd</b>: slow moves 1, fast moves 2; if they ever land on the same node there's a <b>cycle</b> — O(n) time, O(1) space.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+// nodes: array of {id, val, next: id|null}; head = id of first node; cycle handled via next pointing back
+let nodes;      // Map id -> node
+let order;      // id used to assign stable ids
+let head;       // head id
+let doubly=false;
+let busy=false;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+function reset(){
+  nodes=new Map();order=0;head=null;busy=false;
+  [3,8,5].forEach(v=>appendTail(v));
+  document.getElementById('log').innerHTML='';
+  logLine('info','New singly-linked list: head → 3 → 8 → 5 → null');
+  render();
+  explain('A linked list: each box is a node with a value and a <code>next</code> arrow. There is no index — to reach the k-th node you must walk k hops from the head.');
+}
+
+function appendTail(v){
+  const id=order++;const n={id,val:v,next:null};
+  if(head===null){head=id;}
+  else{let cur=nodes.get(head);while(cur.next!==null)cur=nodes.get(cur.next);cur.next=id;}
+  nodes.set(id,n);
+}
+
+// linear order of node ids by walking next; stops on cycle (returns {ids, cyclesTo})
+function walk(){
+  const ids=[];const seen=new Set();let cur=head;let cyclesTo=null;
+  while(cur!==null){
+    if(seen.has(cur)){cyclesTo=cur;break;}
+    seen.add(cur);ids.push(cur);cur=nodes.get(cur).next;
+  }
+  return {ids,cyclesTo};
+}
+
+// ---------- rendering ----------
+function render(){
+  const {ids,cyclesTo}=walk();
+  if(head===null){document.getElementById('nodes').innerHTML='<span class="term">head → null (empty)</span>';return;}
+  let html='<span class="head-tag">head →</span>';
+  ids.forEach((id,i)=>{
+    const n=nodes.get(id);
+    const prevCell=doubly?`<span class="pptr">${i===0&&cyclesTo===null?'⌀':'prev'}</span>`:'';
+    html+=`<div class="lnode" id="n${id}"><span class="ptag" id="t${id}"></span>${prevCell}<span class="val">${n.val}</span><span class="nptr">next</span></div>`;
+    if(i<ids.length-1){
+      html+=doubly?'<span class="arrow dbl">⇄</span>':'<span class="arrow">→</span>';
+    }
+  });
+  if(cyclesTo!==null){
+    const tgt=ids.indexOf(cyclesTo);
+    html+=`<span class="arrow" style="color:var(--bad)">↺ to node ${cyclesTo} (pos ${tgt})</span>`;
+  }else{
+    html+=doubly?'<span class="arrow dbl">→</span><span class="term">null</span>':'<span class="arrow">→</span><span class="term">null</span>';
+  }
+  document.getElementById('nodes').innerHTML=html;
+}
+
+function logLine(cls,msg){
+  const t=new Date().toLocaleTimeString();
+  const el=document.getElementById('log');
+  el.innerHTML+=`<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop=el.scrollHeight;
+}
+function explain(html){document.getElementById('explain').innerHTML=html;}
+function cls(id,c){const e=document.getElementById('n'+id);if(e)e.classList.add(c);}
+function uncls(id,c){const e=document.getElementById('n'+id);if(e)e.classList.remove(c);}
+function tag(id,txt,color){const e=document.getElementById('t'+id);if(e){e.textContent=txt;e.style.color=color||'var(--accent)';}}
+function clearTags(){document.querySelectorAll('.ptag').forEach(e=>e.textContent='');}
+
+// ---------- operations ----------
+async function insertHead(){
+  if(busy)return;const v=document.getElementById('val').value.trim()||'?';
+  busy=true;logLine('cmd',`> insertHead(${v})`);
+  const id=order++;nodes.set(id,{id,val:v,next:head});head=id;render();
+  cls(id,'flash-ok');
+  logLine('ok',`new node ${v} → old head; head moved — O(1)`);
+  explain(`Created node <b>${v}</b>, set its <code>next</code> to the old head, then pointed <code>head</code> at it. No traversal, no shifting — <b>O(1)</b>.`);
+  await sleep(500);uncls(id,'flash-ok');busy=false;
+}
+
+async function insertTail(){
+  if(busy)return;const v=document.getElementById('val').value.trim()||'?';
+  busy=true;logLine('cmd',`> insertTail(${v})`);
+  if(head===null){const id=order++;nodes.set(id,{id,val:v,next:null});head=id;render();cls(id,'flash-ok');logLine('ok',`first node ${v} — O(1)`);await sleep(500);uncls(id,'flash-ok');busy=false;return;}
+  const {ids}=walk();
+  // animate the walk to the tail (illustrates the O(n) without a tail pointer)
+  for(const id of ids){cls(id,'active');await sleep(180);uncls(id,'active');}
+  const tailId=ids[ids.length-1];
+  const id=order++;nodes.set(id,{id,val:v,next:null});nodes.get(tailId).next=id;render();
+  cls(id,'flash-ok');
+  logLine('ok',`appended ${v} after walking ${ids.length} node(s). With a tail pointer this is O(1); without one, O(n).`);
+  explain(`Appended <b>${v}</b>. The splice is O(1), but we had to <b>walk ${ids.length} node(s)</b> to find the tail — that's why production lists keep a <b>tail pointer</b> to make this true O(1).`);
+  await sleep(500);uncls(id,'flash-ok');busy=false;
+}
+
+async function deleteVal(){
+  if(busy)return;const v=document.getElementById('val').value.trim();
+  busy=true;logLine('cmd',`> delete(${v})`);
+  const {ids}=walk();let prev=null;let found=null;
+  for(const id of ids){
+    cls(id,'active');await sleep(200);
+    if(String(nodes.get(id).val)===v){found=id;uncls(id,'active');break;}
+    uncls(id,'active');prev=id;
+  }
+  if(found===null){logLine('err',`value ${v} not found (walked ${ids.length} nodes — O(n))`);explain(`Walked the whole list and never found <b>${v}</b>. A miss costs a full O(n) traversal.`);busy=false;return;}
+  cls(found,'flash-bad');await sleep(350);
+  const nextId=nodes.get(found).next;
+  if(prev===null){head=nextId;}else{nodes.get(prev).next=nextId;}
+  nodes.delete(found);render();
+  logLine('ok',`unlinked ${v}: ${prev===null?'head':'predecessor'}.next now skips it — splice is O(1)`);
+  explain(`Found <b>${v}</b> (the O(n) part), then deleted it by pointing its <b>predecessor's <code>next</code> past it</b>. The rewire itself is <b>O(1)</b> — no elements shift, unlike an array delete.`);
+  busy=false;
+}
+
+async function search(){
+  if(busy)return;const v=document.getElementById('val').value.trim();
+  busy=true;logLine('cmd',`> search(${v})`);
+  const {ids}=walk();let hops=0;
+  for(const id of ids){
+    hops++;cls(id,'active');await sleep(280);
+    if(String(nodes.get(id).val)===v){cls(id,'flash-ok');logLine('ok',`found ${v} at position ${hops-1} after ${hops} hop(s) — O(n)`);explain(`Found <b>${v}</b> after <b>${hops} hop(s)</b> from the head. There's no index math here — search is inherently <b>O(n)</b>.`);await sleep(500);uncls(id,'active');uncls(id,'flash-ok');busy=false;return;}
+    uncls(id,'active');
+  }
+  logLine('err',`${v} not found after ${ids.length} hop(s) — full O(n) scan`);
+  explain(`Walked all <b>${ids.length}</b> nodes without a match. Worst case (miss or last element) touches every node — <b>O(n)</b>.`);
+  busy=false;
+}
+
+async function reverse(){
+  if(busy)return;
+  const {cyclesTo}=walk();
+  if(cyclesTo!==null){logLine('err','cannot reverse a cyclic list — reset or detect the cycle first');return;}
+  busy=true;logLine('cmd','> reverse()');
+  // capture original linear order, then rewire next-pointers against that snapshot
+  const {ids}=walk();
+  for(const id of ids){cls(id,'active');tag(id,'flip','var(--accent2)');await sleep(260);uncls(id,'active');}
+  for(let i=0;i<ids.length;i++){
+    nodes.get(ids[i]).next = i===0 ? null : ids[i-1];
+  }
+  head=ids[ids.length-1];clearTags();render();
+  logLine('ok',`reversed in one pass: flipped ${ids.length} next-pointer(s) — O(n) time, O(1) space`);
+  explain(`Walked once, flipping each node's <code>next</code> to point at the <b>previous</b> node. New head is the old tail. <b>O(n)</b> time, <b>O(1)</b> extra space — the classic three-pointer (prev/cur/next) trick.`);
+  busy=false;
+}
+
+function makeCycle(){
+  if(busy)return;
+  const {ids,cyclesTo}=walk();
+  if(ids.length<2){logLine('err','need at least 2 nodes to form a cycle');return;}
+  if(cyclesTo!==null){logLine('warn','already cyclic');return;}
+  const tail=ids[ids.length-1];const target=ids[Math.floor(ids.length/2)];
+  nodes.get(tail).next=target;render();
+  logLine('warn',`tail (node ${tail}) now points back to node ${target} (value ${nodes.get(target).val}) — a cycle exists`);
+  explain(`Pointed the <b>tail's <code>next</code> back into the list</b> (at value ${nodes.get(target).val}). The list now loops forever. Run <b>Floyd</b> to detect it without extra memory.`);
+}
+
+async function floyd(){
+  if(busy)return;busy=true;
+  logLine('cmd','> detectCycle()  // Floyd tortoise & hare');
+  if(head===null){logLine('info','empty list — no cycle');busy=false;return;}
+  let slow=head,fast=head;let steps=0;
+  while(true){
+    // mark
+    document.querySelectorAll('.lnode').forEach(e=>e.classList.remove('slow','fast','both'));
+    if(slow===fast&&steps>0){cls(slow,'both');tag(slow,'🐢🐇 meet','var(--bad)');}
+    else{cls(slow,'slow');tag(slow,'🐢','var(--ok)');if(fast!==null){cls(fast,'fast');tag(fast,'🐇','var(--warn)');}}
+    await sleep(550);
+    if(steps>0&&slow===fast){
+      logLine('err',`🐢 and 🐇 met at node ${slow} after ${steps} step(s) → CYCLE DETECTED`);
+      explain(`Slow and fast pointers <b>landed on the same node</b>. Since fast gains one position per step inside a loop, it must eventually catch slow — a meeting proves a <b>cycle</b>. O(n) time, <b>O(1) space</b> (no visited set).`);
+      busy=false;return;
+    }
+    // advance: slow 1, fast 2
+    slow=nodes.get(slow).next;
+    fast=fast!==null?nodes.get(fast).next:null;
+    fast=fast!==null?nodes.get(fast).next:null;
+    steps++;
+    if(fast===null){
+      document.querySelectorAll('.lnode').forEach(e=>e.classList.remove('slow','fast','both'));clearTags();
+      logLine('ok','🐇 reached null → NO cycle (list terminates)');
+      explain(`The fast pointer ran off the end (hit <code>null</code>), so the list <b>terminates</b> — no cycle. Make a cycle first, then re-run to see them meet.`);
+      busy=false;return;
+    }
+    if(steps>200){logLine('err','safety stop');busy=false;return;}
+  }
+}
+
+function toggleDoubly(){
+  doubly=!doubly;
+  document.getElementById('dblBtn').textContent= doubly?'Toggle singly':'Toggle doubly';
+  render();
+  logLine('info',`switched to ${doubly?'doubly':'singly'}-linked view`);
+  explain(doubly
+    ? 'Now <b>doubly</b>-linked: each node also stores a <code>prev</code> pointer (⇄). This makes deleting a known node O(1) <i>without</i> needing its predecessor, at the cost of an extra pointer per node.'
+    : 'Back to <b>singly</b>-linked: only <code>next</code> pointers. To delete a node you need its predecessor (or you walk to find it).');
+}
+
+// ---------- wire up ----------
+document.getElementById('headBtn').onclick=insertHead;
+document.getElementById('tailBtn').onclick=insertTail;
+document.getElementById('delBtn').onclick=deleteVal;
+document.getElementById('searchBtn').onclick=search;
+document.getElementById('reverseBtn').onclick=reverse;
+document.getElementById('cycleBtn').onclick=makeCycle;
+document.getElementById('floydBtn').onclick=floyd;
+document.getElementById('dblBtn').onclick=toggleDoubly;
+document.getElementById('resetBtn').onclick=reset;
+reset();
+</script>
+</body>
+</html>

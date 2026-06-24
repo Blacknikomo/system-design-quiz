@@ -25,12 +25,19 @@ interactive/
 ├── postgres.html
 ├── flink.html
 ├── zookeeper.html
-└── api-gateway.html
+├── api-gateway.html
+└── ds-*.html            # 14 data-structure visualizers (arrays, linked-lists,
+                         # stacks, queues, hash-tables, heaps, sorted-sets,
+                         # skip-lists, tries, btrees, graphs, union-find,
+                         # lru-lfu, bloom-filters) — same simulator contract (§5)
 ```
 
 Related, **outside this repo** (in the parent `FAANG Interviews/` folder):
-- `hi-knowledge/` — distilled HelloInterview notes (`core-concepts.md`, `key-technologies.md`, `patterns.md`, `question-breakdowns.md`, `README.md`). The quiz content is derived from these. Keep notes and quiz in sync.
+- `hi-knowledge/` — distilled HelloInterview notes (`core-concepts.md`, `key-technologies.md`, `patterns.md`, `question-breakdowns.md`, `README.md`). The system-design quiz content is derived from these. Keep notes and quiz in sync.
+- `Data Structures/` — 14 markdown notes (one per structure) that the `ds-*.html` pages and the `DS: *` quiz questions are derived from. Keep them in sync.
 - `system-design-tracker.md` — the candidate's diagnostic + gap list.
+
+> **Source links:** quiz questions point to a source via `q.src` or `SOURCES[topic]`. System-design topics link to HelloInterview URLs; **data-structure topics (`DS: *`) link to their local `ds-*.html` page** (e.g. `ds-heaps.html`). `sourceLabel()` renders local `ds-*.html` links as `Interactive: <Name>`.
 
 ---
 

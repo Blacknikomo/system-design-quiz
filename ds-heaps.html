@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Heaps & Priority Queues — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  #tree{width:100%;height:240px;display:block}
+  #tree .edge{stroke:var(--line);stroke-width:2}
+  #tree .nodec{fill:var(--panel);stroke:var(--line);stroke-width:2;transition:.2s}
+  #tree .nodec.active{stroke:var(--accent);stroke-width:3}
+  #tree .nodec.ok{stroke:var(--ok);stroke-width:3}
+  #tree .nodec.root{stroke:var(--accent2);stroke-width:3}
+  #tree text{fill:var(--txt);font-family:ui-monospace,Menlo,monospace;font-size:13px;text-anchor:middle;dominant-baseline:central}
+  #tree text.lbl{fill:var(--muted);font-size:10px}
+  .arr{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px;justify-content:center}
+  .acell{display:flex;flex-direction:column;align-items:center;gap:3px}
+  .acell .box{width:46px;height:40px;border:2px solid var(--line);border-radius:9px;display:flex;
+    align-items:center;justify-content:center;font-family:ui-monospace,Menlo,monospace;font-size:14px;
+    background:var(--panel);transition:.2s}
+  .acell .box.root{border-color:var(--accent2);background:#1c1730}
+  .acell .box.active{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,156,249,.4)}
+  .acell .box.ok{border-color:var(--ok)}
+  .acell .ai{font-size:10px;color:var(--muted)}
+  .idxmath{text-align:center;color:var(--muted);font-size:12px;margin-top:10px;font-family:ui-monospace,Menlo,monospace}
+  table.cx{border-collapse:collapse;font-size:12.5px;margin-top:10px;width:100%}
+  table.cx td,table.cx th{border:1px solid var(--line);padding:5px 9px;text-align:left}
+  table.cx th{color:var(--muted);font-weight:600;background:var(--panel2)}
+  table.cx code{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>⛏️ Heaps &amp; Priority Queues</h1>
+      <div class="sub">A binary heap shown two ways at once: as a <i>tree</i> and as its flat <i>backing array</i>. Push bubbles up, pop sifts down — both O(log n). Toggle min vs max and try the top-K demo.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">complete binary tree</span>
+      <span class="tag">array-backed</span>
+      <span class="tag">push/pop O(log n)</span>
+      <span class="tag">peek O(1)</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A binary heap is a <b>complete</b> tree stored in a plain array — no pointers. For node at index <code>i</code>: children are <code>2i+1</code> and <code>2i+2</code>, parent is <code>⌊(i−1)/2⌋</code>. The <b>heap property</b> says every parent beats its children (smaller in a min-heap, larger in a max-heap), so the extreme element is always at the root (index 0). <b>Push</b> appends at the end and <b>sifts up</b>; <b>pop</b> swaps root with the last element, removes it, and <b>sifts down</b>.</p>
+    <div class="note gotcha"><b>The gotcha:</b> a heap is only <b>partially ordered</b> — the root is the min/max, but the rest is <i>not</i> sorted, so you can't iterate it in order for free (that's what heapsort's repeated pops are for). The classic trip-up: to keep the <b>K largest</b> elements, use a <b>min-heap of size K</b> (not a max-heap) — the smallest of your current top-K sits at the root, ready to be evicted when something bigger arrives. Getting that direction backwards is the bug. Also: building a heap from n items bottom-up is <b>O(n)</b>, not O(n log n).</div>
+    <table class="cx">
+      <tr><th>Operation</th><th>Cost</th><th>Why</th></tr>
+      <tr><td><code>peek</code> (top)</td><td>O(1)</td><td>root is index 0</td></tr>
+      <tr><td><code>push</code></td><td>O(log n)</td><td>sift up ≤ height</td></tr>
+      <tr><td><code>pop</code></td><td>O(log n)</td><td>sift down ≤ height</td></tr>
+      <tr><td><code>build-heap</code></td><td>O(n)</td><td>bottom-up heapify</td></tr>
+    </table>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Run an operation</h3>
+    <div class="row">
+      <label class="fld">value<input type="number" id="val" value="7" size="5"></label>
+      <button class="btn" id="pushBtn">Push</button>
+      <button class="btn sec" id="popBtn">Pop</button>
+      <button class="btn ghost" id="peekBtn">Peek</button>
+      <span style="width:10px"></span>
+      <label class="fld">heap type
+        <select id="kind"><option value="min">min-heap</option><option value="max">max-heap</option></select>
+      </label>
+      <button class="btn ghost" id="randBtn">+5 random</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="row" style="margin-top:10px;gap:8px">
+      <span class="small muted">Top-K demo:</span>
+      <label class="fld">K<input type="number" id="kk" value="3" size="3"></label>
+      <input type="text" id="stream" value="5 1 9 3 7 2 8 4" size="22">
+      <button class="btn ghost" id="topkBtn">Run top-K (min-heap of size K)</button>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <svg id="tree" viewBox="0 0 720 240" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="arr" id="arr"></div>
+      <div class="idxmath" id="idxmath">children of i → 2i+1, 2i+2 &nbsp;·&nbsp; parent of i → ⌊(i−1)/2⌋</div>
+    </div>
+    <div class="explain" id="explain">Push values and watch the new element bubble up to its correct level; pop to see the root leave and the heap re-settle. The tree and the array are the same data — compare the index math.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Operation log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li>The heap lives in an <b>array</b>; the tree is just that array drawn by index math.</li>
+        <li><b>Push</b>: append at the end, then <span style="color:var(--accent)">sift up</span> — swap with parent while it beats the parent.</li>
+        <li><b>Pop</b>: take the root, move the last element to the root, then <span style="color:var(--accent)">sift down</span> — swap with the better child.</li>
+        <li>Each sift touches at most <code>log n</code> levels → O(log n).</li>
+        <li><b>Top-K</b>: a min-heap of size K keeps the largest K; its root is the weakest survivor.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+let heap;            // array
+let kind;            // 'min' | 'max'
+
+function reset(){
+  heap = [];
+  kind = document.getElementById('kind').value;
+  document.getElementById('log').innerHTML='';
+  logLine('info', `Empty ${kind}-heap ready. Push values to build it.`);
+  render();
+  explain('Push values and watch the new element bubble up; pop to see the root leave and the heap re-settle. The tree and array are the same data.');
+}
+
+// ---------- helpers ----------
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+// "a should be above b" per heap kind
+function beats(a,b){ return kind==='min' ? a < b : a > b; }
+
+// ---------- rendering ----------
+function render(active, ok){
+  active = active || [];
+  ok = ok || [];
+  // array view
+  const arr = document.getElementById('arr');
+  if(heap.length===0){ arr.innerHTML = '<span class="small muted">(empty array)</span>'; }
+  else {
+    arr.innerHTML = heap.map((v,i)=>{
+      let cls = '';
+      if(i===0) cls+=' root';
+      if(active.includes(i)) cls+=' active';
+      if(ok.includes(i)) cls+=' ok';
+      return `<div class="acell"><div class="box${cls}">${v}</div><div class="ai">[${i}]</div></div>`;
+    }).join('');
+  }
+  // tree view
+  drawTree(active, ok);
+}
+
+function drawTree(active, ok){
+  const svg = document.getElementById('tree');
+  const n = heap.length;
+  if(n===0){ svg.innerHTML = '<text x="360" y="120" class="lbl">empty</text>'; return; }
+  const levels = Math.floor(Math.log2(n)) + 1;
+  const W = 720, top = 28, vgap = Math.min(64, (240-2*top)/Math.max(1,levels-1)||64);
+  const pos = [];
+  for(let i=0;i<n;i++){
+    const lvl = Math.floor(Math.log2(i+1));
+    const idxInLvl = (i+1) - (1<<lvl);
+    const slots = 1<<lvl;
+    const x = W*(idxInLvl + 0.5)/slots;
+    const y = top + lvl*vgap;
+    pos.push({x,y});
+  }
+  let edges='', circles='';
+  for(let i=0;i<n;i++){
+    const l=2*i+1, r=2*i+2;
+    if(l<n) edges += `<line class="edge" x1="${pos[i].x}" y1="${pos[i].y}" x2="${pos[l].x}" y2="${pos[l].y}"/>`;
+    if(r<n) edges += `<line class="edge" x1="${pos[i].x}" y1="${pos[i].y}" x2="${pos[r].x}" y2="${pos[r].y}"/>`;
+  }
+  for(let i=0;i<n;i++){
+    let cls='nodec';
+    if(i===0) cls+=' root';
+    if(active.includes(i)) cls+=' active';
+    if(ok.includes(i)) cls+=' ok';
+    circles += `<circle class="${cls}" cx="${pos[i].x}" cy="${pos[i].y}" r="16"/>`;
+    circles += `<text x="${pos[i].x}" y="${pos[i].y}">${heap[i]}</text>`;
+    circles += `<text class="lbl" x="${pos[i].x}" y="${pos[i].y-22}">[${i}]</text>`;
+  }
+  svg.innerHTML = edges + circles;
+}
+
+// ---------- core heap ops (animated) ----------
+async function siftUp(i){
+  while(i>0){
+    const p = Math.floor((i-1)/2);
+    render([i,p]);
+    await sleep(420);
+    if(beats(heap[i], heap[p])){
+      [heap[i],heap[p]] = [heap[p],heap[i]];
+      logLine('info', `sift-up: ${heap[p]} beats parent ${heap[i]} → swap [${i}]↔[${p}]`);
+      i = p;
+    } else {
+      logLine('ok', `sift-up: ${heap[i]} settled at [${i}] (parent ${heap[p]} still wins)`);
+      render([], [i]);
+      await sleep(300);
+      return;
+    }
+  }
+  render([], [0]);
+  await sleep(200);
+}
+
+async function siftDown(i){
+  const n = heap.length;
+  while(true){
+    let best=i, l=2*i+1, r=2*i+2;
+    if(l<n && beats(heap[l], heap[best])) best=l;
+    if(r<n && beats(heap[r], heap[best])) best=r;
+    render([i, l<n?l:i, r<n?r:i]);
+    await sleep(420);
+    if(best!==i){
+      [heap[i],heap[best]] = [heap[best],heap[i]];
+      logLine('info', `sift-down: child ${heap[i]} beats ${heap[best]} → swap [${i}]↔[${best}]`);
+      i = best;
+    } else {
+      logLine('ok', `sift-down: ${heap.length?heap[i]:''} settled at [${i}]`);
+      render([], [i]);
+      await sleep(250);
+      return;
+    }
+  }
+}
+
+// ---------- operations ----------
+let busy=false;
+async function push(vArg, quiet){
+  if(busy) return; busy=true;
+  const raw = (vArg!==undefined? vArg : document.getElementById('val').value);
+  const v = parseInt(raw,10);
+  if(Number.isNaN(v)){ busy=false; return; }
+  heap.push(v);
+  const i = heap.length-1;
+  logLine('cmd', `> push(${v})  — append at end [${i}], then sift up`);
+  render([i]);
+  await sleep(380);
+  await siftUp(i);
+  if(!quiet) explain(`Pushed <b>${v}</b>: appended at index ${heap.length-1}, then bubbled up while it beat its parent. New root (the ${kind==='min'?'minimum':'maximum'}) is <b>${heap[0]}</b>. O(log n).`);
+  busy=false;
+}
+
+async function pop(){
+  if(busy) return;
+  if(heap.length===0){ logLine('err','pop() on empty heap'); explain('Nothing to pop — the heap is empty.'); return; }
+  busy=true;
+  const top = heap[0];
+  logLine('cmd', `> pop()  — remove root ${top}`);
+  render([0]);
+  await sleep(380);
+  const last = heap.pop();
+  if(heap.length>0){
+    heap[0]=last;
+    logLine('info', `moved last element ${last} to root [0], now sift down`);
+    render([0]);
+    await sleep(380);
+    await siftDown(0);
+  } else {
+    render();
+  }
+  explain(`Popped the ${kind==='min'?'minimum':'maximum'} <b>${top}</b> (always at the root). The last element took its place and sifted down to restore the heap. New top: <b>${heap.length?heap[0]:'(empty)'}</b>. O(log n).`);
+  busy=false;
+}
+
+function peek(){
+  if(heap.length===0){ logLine('warn','peek() → empty'); explain('Heap is empty.'); return; }
+  render([0]);
+  logLine('info', `peek() → ${heap[0]} (the ${kind==='min'?'min':'max'}, at root)`);
+  explain(`<b>peek()</b> returns the root <b>${heap[0]}</b> — the ${kind==='min'?'minimum':'maximum'} — in O(1), without removing it.`);
+}
+
+async function pushRandom(){
+  if(busy) return;
+  for(let n=0;n<5;n++){
+    const v = Math.floor(Math.random()*99)+1;
+    await push(v, true);
+    await sleep(120);
+  }
+  explain(`Pushed 5 random values. Notice the tree stays <b>complete</b> (filled left-to-right) and only the heap property — parent beats children — is enforced; siblings are <i>not</i> sorted.`);
+}
+
+async function runTopK(){
+  if(busy) return; busy=true;
+  const K = Math.max(1, parseInt(document.getElementById('kk').value,10)||3);
+  const stream = document.getElementById('stream').value.trim().split(/[\s,]+/).map(x=>parseInt(x,10)).filter(x=>!Number.isNaN(x));
+  // force a min-heap for the canonical top-K-largest demo
+  document.getElementById('kind').value='min'; kind='min';
+  heap=[]; document.getElementById('log').innerHTML='';
+  logLine('info', `top-${K} LARGEST via a MIN-heap of size ${K}. Stream: ${stream.join(' ')}`);
+  explain(`Goal: keep the <b>${K} largest</b>. We use a <b>min-heap of size ${K}</b> — its root is the smallest of our current winners, so it's the first to be evicted when a bigger value arrives.`);
+  render();
+  await sleep(500);
+  for(const v of stream){
+    if(heap.length < K){
+      logLine('cmd', `> ${v}: heap has room (<${K}) → push`);
+      await push(v, true);
+    } else if(v > heap[0]){
+      logLine('cmd', `> ${v} > root ${heap[0]} → evict root, push ${v}`);
+      // pop then push
+      render([0]); await sleep(300);
+      const last=heap.pop(); heap[0]=last; render([0]); await sleep(250); await siftDown(0);
+      await push(v, true);
+    } else {
+      logLine('warn', `> ${v} ≤ root ${heap[0]} → discard (not in top ${K})`);
+      render([0]); await sleep(350);
+    }
+  }
+  const result = [...heap].sort((a,b)=>b-a);
+  logLine('ok', `done — top ${K} largest: ${result.join(', ')}  (heap root ${heap[0]} = the K-th largest)`);
+  explain(`The min-heap now holds the <b>${K} largest</b>: ${result.join(', ')}. Its root <b>${heap[0]}</b> is the smallest survivor = the K-th largest. Using a <i>max</i>-heap here would have been the classic mistake — you'd have to scan it to find what to evict.`);
+  render([],[0]);
+  busy=false;
+}
+
+// ---------- wire up ----------
+document.getElementById('pushBtn').onclick = ()=>push();
+document.getElementById('popBtn').onclick = pop;
+document.getElementById('peekBtn').onclick = peek;
+document.getElementById('randBtn').onclick = pushRandom;
+document.getElementById('topkBtn').onclick = runTopK;
+document.getElementById('resetBtn').onclick = reset;
+document.getElementById('kind').onchange = ()=>{
+  if(busy) return;
+  kind = document.getElementById('kind').value;
+  if(heap.length){
+    // re-heapify existing values for the new kind (build-heap, O(n))
+    for(let i=Math.floor(heap.length/2)-1;i>=0;i--){
+      let j=i;
+      while(true){
+        let best=j,l=2*j+1,r=2*j+2;
+        if(l<heap.length&&beats(heap[l],heap[best]))best=l;
+        if(r<heap.length&&beats(heap[r],heap[best]))best=r;
+        if(best===j)break;
+        [heap[j],heap[best]]=[heap[best],heap[j]]; j=best;
+      }
+    }
+    logLine('info', `switched to ${kind}-heap → re-heapified existing values bottom-up (build-heap, O(n)). New top: ${heap[0]}.`);
+  } else {
+    logLine('info', `switched to ${kind}-heap.`);
+  }
+  render();
+};
+reset();
+</script>
+</body>
+</html>

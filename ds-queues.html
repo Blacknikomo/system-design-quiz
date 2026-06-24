@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Queues, Deque & Ring Buffer — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .ring{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;align-items:flex-start;margin-top:8px}
+  .cell{width:64px;display:flex;flex-direction:column;align-items:center;gap:4px;position:relative}
+  .cell .box{width:56px;height:48px;border:2px solid var(--line);border-radius:10px;display:flex;
+    align-items:center;justify-content:center;font-family:ui-monospace,Menlo,monospace;font-size:14px;
+    background:var(--panel);transition:.2s}
+  .cell .box.filled{border-color:var(--accent);background:#15233a;color:var(--txt)}
+  .cell .box.head{box-shadow:0 0 0 3px rgba(46,204,113,.45)}
+  .cell .box.tail{box-shadow:0 0 0 3px rgba(124,92,255,.45)}
+  .cell .box.headtail{box-shadow:0 0 0 3px rgba(46,204,113,.45),0 0 0 6px rgba(124,92,255,.45)}
+  .cell .box.flash-ok{box-shadow:0 0 0 3px rgba(46,204,113,.6)}
+  .cell .box.flash-bad{box-shadow:0 0 0 3px rgba(255,92,92,.6)}
+  .cell .idx{font-size:11px;color:var(--muted)}
+  .cell .ptr{font-size:10px;font-weight:700;height:14px;display:flex;gap:4px}
+  .ptr .h{color:var(--ok)}
+  .ptr .t{color:var(--accent2)}
+  .wraphint{text-align:center;color:var(--muted);font-size:12px;margin-top:10px}
+  table.cx{border-collapse:collapse;font-size:12.5px;margin-top:10px;width:100%}
+  table.cx td,table.cx th{border:1px solid var(--line);padding:5px 9px;text-align:left}
+  table.cx th{color:var(--muted);font-weight:600;background:var(--panel2)}
+  table.cx code{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🎟️ Queues, Deque &amp; Ring Buffer</h1>
+      <div class="sub">FIFO in a fixed-size array. Watch a <i>ring buffer</i> enqueue at the tail and dequeue at the head, both indices marching forward with <code>% capacity</code> so the buffer wraps around — true O(1) at both ends.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">FIFO</span>
+      <span class="tag">ring / circular buffer</span>
+      <span class="tag">O(1) enqueue &amp; dequeue</span>
+      <span class="tag">bounded capacity</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A <b>queue</b> is first-in-first-out. A <b>ring buffer</b> implements it over a fixed array using two indices: <code>head</code> (next to read) and <code>tail</code> (next slot to write). Each op advances its index modulo capacity, so the logical sequence wraps past the end of the array back to slot 0. No element ever shifts — both ends are <b>O(1)</b>. A <b>deque</b> generalizes this to push/pop at <i>both</i> ends.</p>
+    <div class="note gotcha"><b>The gotcha:</b> using a plain JS array as a queue with <code>arr.shift()</code> is <b>O(n) per dequeue</b> — every remaining element gets re-indexed. That's a real, easy-to-ship performance bug; a ring buffer or linked list gives true O(1). Also: <b>BFS uses a queue, DFS uses a stack</b>, and <b>bounded vs unbounded</b> matters for backpressure — an unbounded queue under overload grows until it OOMs; a bounded one forces you to reject or block (apply backpressure).</p>
+    <table class="cx">
+      <tr><th>Operation</th><th>Ring buffer</th><th>Array + shift()</th></tr>
+      <tr><td><code>enqueue</code> (push tail)</td><td>O(1)</td><td>O(1) (push)</td></tr>
+      <tr><td><code>dequeue</code> (pop head)</td><td><b>O(1)</b></td><td><b>O(n)</b> (shift)</td></tr>
+      <tr><td><code>peek</code></td><td>O(1)</td><td>O(1)</td></tr>
+    </table>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Run an operation</h3>
+    <div class="row">
+      <label class="fld">value<input type="text" id="val" value="A" size="6"></label>
+      <button class="btn" id="enqBtn">Enqueue (tail)</button>
+      <button class="btn sec" id="deqBtn">Dequeue (head)</button>
+      <button class="btn ghost" id="peekBtn">Peek</button>
+      <span style="width:14px"></span>
+      <label class="fld">on FULL
+        <select id="policy"><option value="reject">reject (backpressure)</option><option value="overwrite">overwrite oldest</option></select>
+      </label>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="row" style="margin-top:6px"><span class="small muted">Capacity is fixed at 6. Try filling it, then enqueue past full to see the chosen policy; dequeue a few and keep enqueuing to watch the tail wrap to slot 0.</span></div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div class="ring" id="ring"></div>
+      <div class="wraphint" id="wraphint"></div>
+    </div>
+    <div class="explain" id="explain">Enqueue a few values, then dequeue some, then keep enqueuing — the <b>tail</b> (purple) will wrap from slot 5 back to slot 0 while the <b>head</b> (green) chases it.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Operation log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>Enqueue</b> writes value at slot <code>tail</code>, then <code>tail = (tail+1) % cap</code>.</li>
+        <li><b>Dequeue</b> reads slot <code>head</code>, then <code>head = (head+1) % cap</code>.</li>
+        <li>A <code>count</code> tracks size, distinguishing <b>empty</b> (count 0) from <b>full</b> (count = cap) when head==tail.</li>
+        <li>On FULL: <span style="color:var(--bad)">reject</span> the new value, or <span style="color:var(--warn)">overwrite</span> the oldest (advancing head too).</li>
+        <li>Indices wrap with <code>% cap</code> — the array end loops back to slot 0 (the "ring").</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+const CAP = 6;
+let buf, head, tail, count;
+
+function reset(){
+  buf = new Array(CAP).fill(null);
+  head = 0; tail = 0; count = 0;
+  document.getElementById('log').innerHTML='';
+  logLine('info', `Ring buffer ready: capacity ${CAP}, empty (head=tail=0, count=0).`);
+  render();
+  explain('Enqueue a few values, then dequeue some, then keep enqueuing — the <b>tail</b> (purple) will wrap back to slot 0 while the <b>head</b> (green) chases it.');
+}
+
+// ---------- helpers ----------
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+function flash(i, cls){
+  const e = document.querySelector('#ring .cell[data-i="'+i+'"] .box');
+  if(e){ e.classList.add(cls); setTimeout(()=>e.classList.remove(cls), 600); }
+}
+
+// ---------- rendering ----------
+function render(){
+  const ring = document.getElementById('ring');
+  let html='';
+  for(let i=0;i<CAP;i++){
+    const filled = buf[i] !== null;
+    const isHead = (i===head) && count>0;            // head only meaningful when non-empty
+    const isTail = (i===tail);
+    let ptrCls = '';
+    if(count===CAP && i===head) ptrCls='headtail';   // full: head==tail, both point here
+    else if(isHead && isTail) ptrCls='headtail';
+    else if(isHead) ptrCls='head';
+    else if(isTail) ptrCls='tail';
+    let ptr='';
+    if((isHead) || (isTail)){
+      ptr = '<span class="ptr">'+(isHead?'<span class="h">▲head</span>':'')+(isTail?'<span class="t">▲tail</span>':'')+'</span>';
+    } else { ptr='<span class="ptr"></span>'; }
+    html += `<div class="cell" data-i="${i}">
+        <div class="box ${filled?'filled':''} ${ptrCls}">${filled?buf[i]:'·'}</div>
+        <div class="idx">[${i}]</div>
+        ${ptr}
+      </div>`;
+  }
+  ring.innerHTML = html;
+  const wh = document.getElementById('wraphint');
+  wh.innerHTML = `size = <b style="color:var(--txt)">${count}</b>/${CAP} &nbsp;·&nbsp; head=${head} &nbsp; tail=${tail} &nbsp;·&nbsp; slot 5 → wraps → slot 0`;
+}
+
+// ---------- operations ----------
+async function enqueue(){
+  const v = document.getElementById('val').value.trim() || '?';
+  const policy = document.getElementById('policy').value;
+  if(count === CAP){
+    if(policy === 'reject'){
+      logLine('err', `enqueue("${v}") REJECTED — buffer full (count=${CAP}). Backpressure: caller must wait/drop.`);
+      explain(`Buffer is <b>full</b> (count = cap = ${CAP}). With the <b>reject</b> policy the write is refused — this is how a bounded queue applies <b>backpressure</b> instead of growing without limit.`);
+      flash(tail, 'flash-bad');
+      return;
+    } else {
+      // overwrite oldest: write at tail, then advance BOTH head and tail
+      const evicted = buf[head];
+      buf[tail] = v;
+      flash(tail, 'flash-ok');
+      const wroteAt = tail;
+      tail = (tail+1) % CAP;
+      head = (head+1) % CAP;   // oldest is dropped, head moves up
+      logLine('warn', `enqueue("${v}") at [${wroteAt}] OVERWROTE oldest "${evicted}"; head→${head}, tail→${tail}`);
+      explain(`Full buffer, <b>overwrite</b> policy: wrote "${v}" at slot ${wroteAt}, dropped the oldest ("${evicted}"), and advanced <b>both</b> head and tail with <code>% ${CAP}</code>. count stays ${CAP}.`);
+      render();
+      return;
+    }
+  }
+  const wroteAt = tail;
+  buf[tail] = v;
+  flash(tail, 'flash-ok');
+  tail = (tail+1) % CAP;
+  count++;
+  const wrapped = wroteAt === CAP-1;
+  logLine('ok', `enqueue("${v}") at [${wroteAt}]; tail = (${wroteAt}+1) % ${CAP} = ${tail}; count=${count}`);
+  explain(`Wrote "${v}" at slot ${wroteAt}, then <code>tail = (${wroteAt}+1) % ${CAP} = ${tail}</code>.${wrapped?' The tail just <b>wrapped</b> back to slot 0 — the ring in action.':''} <b>O(1)</b> — nothing shifted.`);
+  render();
+}
+
+async function dequeue(){
+  if(count === 0){
+    logLine('err', 'dequeue() on EMPTY buffer (count=0) — underflow, nothing to return.');
+    explain('Buffer is <b>empty</b> (count = 0). A correct queue returns "empty"/throws rather than reading a stale slot — note head==tail can mean empty <i>or</i> full, which is why we track <code>count</code>.');
+    return;
+  }
+  const readAt = head;
+  const v = buf[head];
+  buf[head] = null;
+  flash(readAt, 'flash-ok');
+  head = (head+1) % CAP;
+  count--;
+  const wrapped = readAt === CAP-1;
+  logLine('ok', `dequeue() → "${v}" from [${readAt}]; head = (${readAt}+1) % ${CAP} = ${head}; count=${count}`);
+  explain(`Read "${v}" from slot ${readAt} (the <b>oldest</b> element — FIFO), then <code>head = (${readAt}+1) % ${CAP} = ${head}</code>.${wrapped?' The head just <b>wrapped</b> to slot 0.':''} <b>O(1)</b> — no element re-indexed (unlike <code>shift()</code>).`);
+  render();
+}
+
+function peek(){
+  if(count === 0){
+    logLine('warn', 'peek() → empty');
+    explain('Nothing to peek — buffer is empty.');
+    return;
+  }
+  const v = buf[head];
+  flash(head, 'flash-ok');
+  logLine('info', `peek() → "${v}" (slot [${head}], the head)`);
+  explain(`<b>peek()</b> returns the front element "${v}" at slot ${head} <b>without</b> removing it. O(1).`);
+}
+
+// ---------- wire up ----------
+document.getElementById('enqBtn').onclick = enqueue;
+document.getElementById('deqBtn').onclick = dequeue;
+document.getElementById('peekBtn').onclick = peek;
+document.getElementById('resetBtn').onclick = reset;
+reset();
+</script>
+</body>
+</html>
