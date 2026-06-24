@@ -46,7 +46,7 @@
       <span class="tag">bounded capacity</span>
     </div>
     <p class="small" style="margin-bottom:6px">A <b>queue</b> is first-in-first-out. A <b>ring buffer</b> implements it over a fixed array using two indices: <code>head</code> (next to read) and <code>tail</code> (next slot to write). Each op advances its index modulo capacity, so the logical sequence wraps past the end of the array back to slot 0. No element ever shifts — both ends are <b>O(1)</b>. A <b>deque</b> generalizes this to push/pop at <i>both</i> ends.</p>
-    <div class="note gotcha"><b>The gotcha:</b> using a plain JS array as a queue with <code>arr.shift()</code> is <b>O(n) per dequeue</b> — every remaining element gets re-indexed. That's a real, easy-to-ship performance bug; a ring buffer or linked list gives true O(1). Also: <b>BFS uses a queue, DFS uses a stack</b>, and <b>bounded vs unbounded</b> matters for backpressure — an unbounded queue under overload grows until it OOMs; a bounded one forces you to reject or block (apply backpressure).</p>
+    <div class="note gotcha"><b>The gotcha:</b> using a plain JS array as a queue with <code>arr.shift()</code> is <b>O(n) per dequeue</b> — every remaining element gets re-indexed. That's a real, easy-to-ship performance bug; a ring buffer or linked list gives true O(1). Also: <b>BFS uses a queue, DFS uses a stack</b>, and <b>bounded vs unbounded</b> matters for backpressure — an unbounded queue under overload grows until it OOMs; a bounded one forces you to reject or block (apply backpressure).</div>
     <table class="cx">
       <tr><th>Operation</th><th>Ring buffer</th><th>Array + shift()</th></tr>
       <tr><td><code>enqueue</code> (push tail)</td><td>O(1)</td><td>O(1) (push)</td></tr>

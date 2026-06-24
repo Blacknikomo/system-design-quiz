@@ -60,7 +60,9 @@
       <tr><td><code>BFS</code></td><td>O(V + E)</td><td>O(V) queue</td><td>shortest path (unweighted)</td></tr>
       <tr><td><code>DFS</code></td><td>O(V + E)</td><td>O(V) stack</td><td>a path / connectivity / cycles</td></tr>
       <tr><td><code>Topo sort</code></td><td>O(V + E)</td><td>O(V)</td><td>valid ordering or "cycle!"</td></tr>
+      <tr><td><code>Dijkstra</code></td><td>O((V + E) log V)</td><td>O(V) heap</td><td>shortest path, non-negative weights</td></tr>
     </table>
+    <div class="note info"><b>Weighted shortest path:</b> Dijkstra (non-negative weights) is O((V+E) log V) with a binary heap; bidirectional BFS and A* (with a heuristic) prune the search for point-to-point queries.</div>
   </div>
 
   <!-- controls -->

@@ -44,7 +44,7 @@
       <span class="tag">amortized O(1) append</span>
       <span class="tag">cache-friendly</span>
     </div>
-    <p class="small" style="margin-bottom:6px">A dynamic array (Go slice, C++ <code>vector</code>, Java <code>ArrayList</code>, Python <code>list</code>) stores elements in one contiguous block. It tracks two numbers: <b>size</b> (logical count) and <b>capacity</b> (slots in the backing buffer). Indexing is O(1) pointer arithmetic. When <code>size == capacity</code>, append allocates a larger buffer (typically <b>2×</b>) and copies everything over.</p>
+    <p class="small" style="margin-bottom:6px">A dynamic array (Go slice, C++ <code>vector</code>, Java <code>ArrayList</code>, Python <code>list</code>) stores elements in one contiguous block. It tracks two numbers: <b>size</b> (logical count) and <b>capacity</b> (slots in the backing buffer). Indexing is O(1) pointer arithmetic. When <code>size == capacity</code>, append allocates a larger buffer (commonly <b>1.5–2×</b>, e.g. Java/C++ ~2×, Python ~1.125×) and copies everything over.</p>
     <div class="note gotcha"><b>The gotcha:</b> append is <b>amortized</b> O(1) — most appends are O(1), but the occasional resize is O(n); doubling makes the copies sum to a geometric series, so n appends cost O(n) total. Insert/delete at the <b>front or middle</b> is always O(n) because every following element must shift. The win is <b>cache locality</b>: contiguous layout means a linear scan streams through cache lines — usually beating a linked list in practice.</div>
     <table class="cx">
       <tr><th>Operation</th><th>Time</th><th>Why</th></tr>

@@ -53,6 +53,7 @@
     </div>
     <p class="small" style="margin-bottom:6px">A hash table stores entries in an array of <b>buckets</b>. A hash function turns a key into an integer; <code>bucket = hash(key) % numBuckets</code>. Two keys can land in the same bucket — a <b>collision</b> — so each bucket holds a small list (a <b>chain</b>). As entries pile up, the <b>load factor</b> = entries ÷ buckets rises; when it crosses ~0.75 we <b>resize</b> (double the buckets) and <b>rehash</b> every entry into the bigger array.</p>
     <div class="note gotcha"><b>The gotcha:</b> O(1) is <i>average / amortized</i>, not guaranteed. Worst case is <b>O(n)</b> — all keys collide into one chain, or a resize rehashes every entry (that single insert is O(n), but spread out it amortizes to O(1)). Hash maps are <b>unordered</b> — if you need sorted iteration or range queries, use a balanced tree / sorted set instead. And adversaries can force collisions on purpose (<b>HashDoS</b>) — production hashes are seeded/randomized to defend against it.</div>
+    <div class="note info"><b>Beyond chaining:</b> <b>open addressing</b> (linear/quadratic probing, Robin Hood hashing) stores collisions in the table itself instead of chaining; and Java 8+ converts a long collision chain into a red-black tree, capping a bad bucket at O(log n) instead of O(n).</div>
     <table class="cx">
       <tr><th>Operation</th><th>Average</th><th>Worst case</th></tr>
       <tr><td><code>insert</code></td><td>O(1) amortized</td><td>O(n) (resize / all-collide)</td></tr>

@@ -50,6 +50,7 @@
     </div>
     <p class="small" style="margin-bottom:6px">Each node holds a value and a pointer to the <code>next</code> node (a <b>doubly</b>-linked node also keeps a <code>prev</code> pointer). Nodes live anywhere in memory — there's no contiguity, so you <b>cannot</b> jump to index <i>i</i>; you must walk from the head. The payoff: inserting or deleting at a node you already hold is O(1) pointer rewiring, no shifting.</p>
     <div class="note gotcha"><b>The gotcha:</b> O(1) insert/delete only holds when you <b>already have a pointer to the node</b> (or its predecessor). If you must first <i>find</i> the node, that's an O(n) search and the operation is O(n) overall. And despite the better Big-O on splices, <b>arrays usually win in practice</b>: pointer-chasing scatters cache misses, while contiguous arrays stream through cache. Reach for a linked list when you need stable O(1) splicing with held node references (LRU cache, intrusive lists), not for general iteration.</div>
+    <div class="note info"><b>Floyd follow-up:</b> to find the cycle's <b>entry node</b> — after the fast/slow pointers meet, reset one pointer to head and advance both one step at a time — they meet at the cycle entry.</div>
     <table class="cx">
       <tr><th>Operation</th><th>Time</th><th>Why</th></tr>
       <tr><td>insert head</td><td>O(1)</td><td>point new node at old head</td></tr>

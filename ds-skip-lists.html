@@ -49,7 +49,7 @@
       <span class="tag">LSM memtable</span>
     </div>
     <p class="small" style="margin-bottom:6px">A skip list is several sorted linked lists stacked up. <b>Level 0</b> contains every key. Each higher level is a sparser "express lane": a node appears on level k+1 only if a coin flip promotes it. <b>Search</b> starts top-left and moves right while the next key ≤ target, otherwise drops down a level — so the express lanes skip over big chunks of the list. <b>Insert</b> finds the spot, then flips coins to decide how tall the new node is.</p>
-    <div class="note gotcha"><b>The gotcha:</b> skip lists are <b>probabilistic</b> — O(log n) is the <b>expected</b> height/cost, not a worst-case guarantee (a pathological run of coin flips could make it tall and thin). The ~50% promotion probability gives expected height ≈ log₂ n and ~2 nodes per level on average. This is how <b>Redis sorted sets (ZSET)</b> are implemented and how the in-memory <b>memtable</b> works in LSM-tree stores (LevelDB / RocksDB / Cassandra) — easier to make concurrent than a balanced tree.</div>
+    <div class="note gotcha"><b>The gotcha:</b> skip lists are <b>probabilistic</b> — O(log n) is the <b>expected</b> height/cost, not a worst-case guarantee (a pathological run of coin flips could make it tall and thin). The ~50% promotion probability gives expected height ≈ log₂ n and ~2× total node-copies across all levels (a geometric series: n + n/2 + n/4 + … ≈ 2n). This is how <b>Redis sorted sets (ZSET)</b> are implemented and how the in-memory <b>memtable</b> works in LSM-tree stores (LevelDB / RocksDB / Cassandra) — easier to make concurrent than a balanced tree.</div>
   </div>
 
   <!-- controls -->

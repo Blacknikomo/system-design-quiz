@@ -46,7 +46,7 @@
       <span class="tag">radix compresses it</span>
     </div>
     <p class="small" style="margin-bottom:6px">A <b>trie</b> stores strings by sharing common prefixes. Walking from the root, each edge consumes one character; a node flagged <b>end-of-word</b> (green dot) means the path to it spells a stored word. <b>Insert/Search</b> walk one node per character. <b>StartsWith</b> just checks a prefix path exists. <b>Autocomplete</b> walks to the prefix node, then collects every word in the subtree below it.</p>
-    <div class="note gotcha"><b>The gotcha:</b> a lookup costs <b>O(L)</b> where L = the length of the key — it is <b>independent of n</b>, the number of words stored. That's the whole point: 10 words or 10 million, finding "cat" still takes 3 hops. The trade-off is <b>memory</b> (a pointer array per node); <b>radix / Patricia tries</b> compress single-child chains to fix that. A <b>hash set</b> is faster for pure exact-membership (O(L) to hash, but no tree walk) — but a hash set <b>cannot do prefix queries at all</b>. For real autocomplete you also <b>augment each node with a cached top-K</b> list of completions so you don't walk the whole subtree on every keystroke.</div>
+    <div class="note gotcha"><b>The gotcha:</b> a lookup costs <b>O(L)</b> where L = the length of the key — it is <b>independent of n</b>, the number of words stored. That's the whole point: 10 words or 10 million, finding "cat" still takes 3 hops. The trade-off is <b>memory</b> (a pointer array per node); <b>radix / Patricia tries</b> compress single-child chains to fix that. A <b>hash set</b> is usually faster by a constant factor for pure exact-membership (one hash + bucket probe vs L pointer hops — both are O(L) in key length) — but a hash set <b>cannot do prefix queries at all</b>. For real autocomplete you also <b>augment each node with a cached top-K</b> list of completions so you don't walk the whole subtree on every keystroke.</div>
   </div>
 
   <!-- controls -->
@@ -84,7 +84,7 @@
         <tr><td>Search exact</td><td><code>O(L)</code></td><td>independent of n</td></tr>
         <tr><td>StartsWith(prefix)</td><td><code>O(L)</code></td><td>hash set can't do this</td></tr>
         <tr><td>Autocomplete</td><td><code>O(L + total chars)</code></td><td>cache top-K to speed up</td></tr>
-        <tr><td>Space</td><td colspan="2"><code>O(total chars × alphabet)</code> — radix compresses</td></tr>
+        <tr><td>Space</td><td colspan="2"><code>O(total chars)</code> with map-children; <code>×alphabet</code> with fixed arrays — radix compresses single-child chains</td></tr>
       </table>
     </div>
     <div class="card">

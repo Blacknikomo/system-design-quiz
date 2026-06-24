@@ -28,7 +28,7 @@
     <div>
       <div class="back"><a href="index.html">← All technologies</a></div>
       <h1>🟧 Kafka — partitions, offsets &amp; consumer groups</h1>
-      <div class="sub">A topic is a partitioned, append-only log. Produce a record, watch it get <i>hashed</i> to a partition, then see two consumer groups read the same retained data <i>independently</i> — and replay it from the start.</div>
+      <div class="sub">A topic is a partitioned, append-only log. Produce a record, watch it get <i>hashed</i> to a partition, then see two consumer groups read the same retained data <i>independently</i> — and replay it from the start. Records without a key are spread by the producer's default sticky partitioner (it fills a batch on one partition, then moves on) — even spread without the per-record cost of old round-robin.</div>
     </div>
   </div>
 
@@ -48,7 +48,7 @@
   <div class="card">
     <h3>Run a command</h3>
     <div class="row">
-      <label class="fld">key (blank = round-robin)<input type="text" id="k" value="user:1" size="12"></label>
+      <label class="fld">key (blank = sticky partitioner)<input type="text" id="k" value="user:1" size="12"></label>
       <label class="fld">value<input type="text" id="v" value="click" size="12"></label>
       <button class="btn" id="prodBtn">PRODUCE</button>
     </div>
@@ -68,7 +68,7 @@
     <div class="stage" id="stage">
       <div class="nodes" id="nodes"></div>
     </div>
-    <div class="explain" id="explain">Click <b>PRODUCE</b> to append a record. With a key it's hashed to one of 3 partitions; leave the key blank to round-robin. Then pick a group and <b>CONSUME</b> to read the next record on each partition.</div>
+    <div class="explain" id="explain">Click <b>PRODUCE</b> to append a record. With a key it's hashed to one of 3 partitions; leave the key blank for the sticky partitioner (even spread, no per-key order). Then pick a group and <b>CONSUME</b> to read the next record on each partition.</div>
   </div>
 
   <div class="cols">
@@ -98,16 +98,17 @@
           <li><b>Durability knobs:</b> <code>acks=0|1|all</code> (producer waits for none / leader / all ISR) paired with <code>min.insync.replicas=2</code> — together they bound how many copies hold a write before it's acked.</li>
           <li><b>Producers</b> batch + compress (<code>linger.ms</code>, <code>compression.type</code>) for throughput.</li>
           <li><b>Retention:</b> time/size (<code>retention.ms</code>) <i>or</i> <b>log compaction</b> (<code>cleanup.policy=compact</code> keeps the latest value per key).</li>
-          <li><b>Rule of thumb:</b> ~<b>1 TB</b> and ~<b>1M msgs/sec</b> per broker before you scale out.</li>
+          <li><b>Rule of thumb:</b> throughput scales with partition count; a broker handles high-hundreds-of-MB/s to GB/s depending on message size and replication. Storage per broker ranges from a few TB to tens of TB (more with tiered storage) — scale out when partition count, disk, or replication bandwidth saturates, not at a fixed message rate.</li>
         </ul>
       </div>
       <div>
         <h3>Sharding &amp; scaling</h3>
         <ul>
           <li><b>Partition = unit of parallelism:</b> within a <b>consumer group</b> exactly one consumer reads a partition → <b>max parallelism = partition count</b>.</li>
-          <li><b>Placement:</b> <code>partition = murmur2(key) % numPartitions</code> — same key → same partition → per-key ordering. No key → round-robin.</li>
+          <li><b>Placement:</b> <code>partition = murmur2(key) % numPartitions</code> — same key → same partition → per-key ordering. No key → the producer's <b>sticky partitioner</b> (fills one batch, then moves on) for even spread without per-key order.</li>
           <li><b>Adding partitions</b> scales throughput but <b>breaks the existing key→partition mapping</b> (rehash) — over-provision instead of resharding live.</li>
-          <li><b>Consumer groups + rebalancing:</b> partitions are redistributed when consumers join/leave; offsets are committed per group.</li>
+          <li><b>Consumer groups + rebalancing:</b> partitions are redistributed when consumers join/leave; offsets are committed per group. Rebalances are painful (stop-the-world) — <b>cooperative/incremental rebalancing</b> (KIP-429) and <b>static membership</b> (<code>group.instance.id</code>) reduce the churn.</li>
+          <li><b>Exactly-once scope:</b> Kafka's exactly-once is <b>per read-process-write within Kafka</b> (transactions + idempotent producer), <b>not</b> end-to-end to arbitrary external sinks.</li>
           <li><b>Tiered storage:</b> offload old segments to object storage for cheap long retention without bloating brokers.</li>
           <li><b>Hot partition:</b> a low-cardinality/hot key skews one partition — no extra consumers help past one-per-partition.</li>
         </ul>
@@ -213,7 +214,7 @@ function reset(){
   document.getElementById('log').innerHTML = '';
   logLine('info', 'Topic "events" created: 3 partitions, empty. Groups: analytics, billing (both at offset 0).');
   render();
-  explain('Click <b>PRODUCE</b> to append a record. With a key it is hashed to one of 3 partitions; leave the key blank to round-robin.');
+  explain('Click <b>PRODUCE</b> to append a record. With a key it is hashed to one of 3 partitions; leave the key blank for the sticky partitioner (even spread, no per-key order).');
 }
 
 // ---------- rendering ----------
@@ -287,7 +288,7 @@ async function produce(){
   let part, key, how;
   if(keyRaw === ''){
     part = rr % NP; rr++; key = null;
-    how = `no key → round-robin to partition-${part}`;
+    how = `no key → sticky partitioner → partition-${part}`;
   } else {
     const h = hashKey(keyRaw);
     part = h % NP; key = keyRaw;
@@ -303,7 +304,7 @@ async function produce(){
   if(key!==null){
     explain(`<b>${how}</b>. Record stored at <b>partition-${part}, offset ${off}</b>. Every record with key <code>${key}</code> hashes to the same partition, so its order is preserved. Note: ordering holds <i>within</i> a partition only — there is no global order across partitions.`);
   } else {
-    explain(`No key, so the producer <b>round-robins</b> for even spread → <b>partition-${part}, offset ${off}</b>. Without a key you get balance but <b>no per-key ordering guarantee</b>.`);
+    explain(`No key, so the producer's <b>sticky partitioner</b> spreads load (it fills a batch on one partition, then moves on) → <b>partition-${part}, offset ${off}</b>. Without a key you get even spread but <b>no per-key ordering guarantee</b>.`);
   }
   busy = false;
 }

@@ -96,6 +96,7 @@
           <li><b>Scales near-linearly</b> by adding nodes — vnodes redistribute token ranges automatically.</li>
           <li><b>Partition design is critical:</b> avoid <b>unbounded / large partitions</b>. Add a time/size <b>bucket</b> to the key (e.g. Discord's <b>10-day bucket</b>) to keep partitions bounded.</li>
           <li><b>Writes are cheap</b> (append-only) → <b>denormalize one table per query</b> rather than joining; store data the way you read it.</li>
+          <li><b>Tombstone read amplification:</b> scanning past too many tombstones (<code>tombstone_failure_threshold</code>, default <b>100k</b>) makes queries <b>fail</b> — a classic delete-heavy-workload trap. Prefer TTLs/bucketing over mass deletes.</li>
         </ul>
       </div>
     </div>
@@ -402,7 +403,7 @@ async function doRead(){
     logLine('warn', `replicas disagreed → READ REPAIR: coordinator pushes the latest (ts ${winner.ts}) back to stale replicas`);
     explain(`The ${QUORUM} contacted replicas returned <b>different versions</b>. Cassandra resolves with <b>last-write-wins by timestamp</b> and triggers <b>read repair</b> to update the stale replica. Because <b>W(2)+R(2) &gt; RF(3)</b>, the read quorum and write quorum overlap on ≥1 node, so the latest acked write is guaranteed to be in the set you read.`);
   } else {
-    explain(`Returned <b>${shown}</b>. With QUORUM read (${QUORUM}) and QUORUM write (${QUORUM}) on RF=${RF}, <b>W+R &gt; RF</b> (4 &gt; 3): the two quorums must share a node, so a QUORUM read can never miss the latest QUORUM-acked write. That's tunable strong consistency on a masterless ring.`);
+    explain(`Returned <b>${shown}</b>. With QUORUM read (${QUORUM}) and QUORUM write (${QUORUM}) on RF=${RF}, <b>W+R &gt; RF</b> (4 &gt; 3): the two quorums must share a node, so a QUORUM read can never miss the latest QUORUM-acked write. That's tunable strong consistency on a masterless ring (under normal operation; a partially-failed write isn't rolled back, so QUORUM alone isn't full linearizability — that needs LWT/Paxos).`);
   }
   busy=false;
 }

@@ -63,7 +63,7 @@
     <div class="card">
       <h3>What you're seeing</h3>
       <ol class="steps small">
-        <li><code>PutItem</code>: <code>hash(pk) % 3</code> picks the partition; the write hits its <b>leader</b> (blue).</li>
+        <li><code>PutItem</code>: the partition key's hash selects a partition (DynamoDB spreads keys across a dynamic set of partitions that split as data/throughput grow); the write hits that partition's leader (blue).</li>
         <li>Leader acks the client (1 WCU/1KB), then <b>async-replicates</b> to followers (purple).</li>
         <li><code>GetItem · eventual</code> may read a <span style="color:var(--warn)">stale</span> follower (0.5 RCU).</li>
         <li><code>GetItem · strong</code> reads the leader → always latest (1 RCU = 2×).</li>
@@ -80,7 +80,7 @@
       <div>
         <h3>Infrastructure &amp; deployment</h3>
         <ul>
-          <li><b>Fully managed &amp; serverless</b> — no nodes to run; data is auto-partitioned and <b>replicated synchronously across 3 AZs</b> in a region. A write is acked once a quorum of replicas has it.</li>
+          <li><b>Fully managed &amp; serverless</b> — no nodes to run; data is auto-partitioned and stored across <b>3 AZs</b> in a region. A write is durably committed to the leader and replicated to a second replica before it's acked (the third catches up asynchronously). A <b>strongly-consistent read goes to the leader.</b></li>
           <li><b>Capacity modes:</b> <b>on-demand</b> (pay per request, instant scaling — spiky/unknown traffic) or <b>provisioned</b> RCU/WCU with <b>auto-scaling</b> (cheaper for steady, predictable load).</li>
           <li><b>DAX</b> — in-memory cache cluster in front of the table (microsecond reads), <b>read-through / write-through</b>; only helps eventually-consistent reads.</li>
           <li><b>DynamoDB Streams</b> — ordered change data capture (per partition key) of item-level changes; the trigger for Lambda fan-out, replication, search indexing.</li>
@@ -97,6 +97,8 @@
           <li><b>Adaptive capacity</b> auto-isolates and boosts hot partitions, but it isn't a substitute for a good key design.</li>
           <li><b>Single-table design:</b> overload generic <code>PK</code>/<code>SK</code> + GSIs so one table serves many entity types &amp; access patterns (fewer round-trips, no joins).</li>
           <li><b>Item ≤ 400KB</b> (incl. attribute names). Store large blobs in S3, keep a pointer.</li>
+          <li>A table with a <b>Local Secondary Index (LSI)</b> caps each <b>item collection at 10 GB</b> (all items sharing a partition key, across the table + its LSIs).</li>
+          <li>A <b>hot GSI that throttles</b> can <b>back-pressure and throttle base-table writes</b> — a GSI's capacity problems are not isolated from the table.</li>
         </ul>
       </div>
     </div>

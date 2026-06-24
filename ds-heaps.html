@@ -55,6 +55,8 @@
       <tr><td><code>push</code></td><td>O(log n)</td><td>sift up ≤ height</td></tr>
       <tr><td><code>pop</code></td><td>O(log n)</td><td>sift down ≤ height</td></tr>
       <tr><td><code>build-heap</code></td><td>O(n)</td><td>bottom-up heapify</td></tr>
+      <tr><td><code>search / delete arbitrary</code></td><td>O(n)</td><td>not the root → must scan unless you keep a side index</td></tr>
+      <tr><td><code>decrease-key</code></td><td>O(n)</td><td>O(n) to find the node without a side index (the bridge to Dijkstra); O(log n) to sift once found</td></tr>
     </table>
   </div>
 

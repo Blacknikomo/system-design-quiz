@@ -98,6 +98,8 @@
           <li><b>Horizontal sharding:</b> the <b>Citus</b> extension distributes a table across worker nodes by a shard key and fans queries out.</li>
           <li><b>Vertical scaling goes far:</b> a single beefy Postgres is comfortable into the low <b>TBs</b> — shard only when you must.</li>
           <li><b>MVCC:</b> each UPDATE writes a new tuple version, so <b>readers don't block writers</b> (and vice-versa); dead tuples are reclaimed by <b>VACUUM</b>.</li>
+          <li><b>Transaction-ID wraparound:</b> autovacuum must <b>freeze</b> old rows or the 32-bit XID space wraps and the DB <b>stops accepting writes</b> — the canonical Postgres-at-scale outage.</li>
+          <li><b>Connections are processes:</b> each connection ≈ a backend process with its own <code>work_mem</code>, so connection count is capped — front it with <b>PgBouncer</b>/pooling rather than thousands of direct connections.</li>
         </ul>
       </div>
     </div>

@@ -20,11 +20,12 @@
     <div class="row" style="gap:8px">
       <span class="tag accent">single-threaded</span>
       <span class="tag">async replication</span>
-      <span class="tag">consistent, not durable</span>
+      <span class="tag">atomic ops, not durable</span>
       <span class="tag">noeviction default</span>
     </div>
     <p class="small" style="margin-bottom:6px">Redis runs commands on a <b>single thread</b>, so each command is atomic. The primary takes writes and <b>acknowledges the client before replicas have the data</b> (async replication). Replicas serve reads to scale read traffic — but they may lag.</p>
     <div class="note gotcha"><b>The gotcha:</b> because the primary acks before replicating, a failover can promote a replica that never saw the last acked writes → those writes vanish. That's why single-node/replicated Redis is <b>not a system of record</b>.</div>
+    <div class="note gotcha"><b>Redlock is not a correctness lock:</b> the Redlock distributed-locking algorithm is <b>unsafe under GC pauses / clock skew</b> (Kleppmann) — a paused client can hold a lock past its TTL while another acquires it. For correctness use <b>fencing tokens</b> or a real consensus system (ZooKeeper/etcd); treat Redis locks as an efficiency optimization only.</div>
   </div>
 
   <!-- controls -->
@@ -78,6 +79,7 @@
         <h3>Infrastructure &amp; deployment</h3>
         <ul>
           <li><b>Single-threaded</b> event loop — one core runs commands; each command is atomic, but a heavy command (<code>KEYS</code>, big <code>SORT</code>) blocks the box. Run multiple instances to use more cores.</li>
+          <li><b>I/O threads (Redis 6+):</b> reading/writing client sockets can be parallelized across threads, so the classic "single-threaded" model now applies to <b>command execution</b>, not all network I/O.</li>
           <li><b>Persistence:</b> <code>RDB</code> snapshots (fork + copy-on-write, point-in-time) and/or <code>AOF</code> append-only log (<code>appendfsync everysec</code> ≈ ≤1s loss; <code>always</code> = durable but slow). Enable both for cache+durability.</li>
           <li><b>HA (single shard):</b> <b>Sentinel</b> monitors master + replicas, does auto-failover, and tells clients the new master. Replication is <b>async</b> → a promoted replica may lose the last acked writes.</li>
           <li><b>Managed:</b> ElastiCache (cache) · <b>MemoryDB</b> (multi-AZ, durable, strongly-consistent primary) when Redis must be a source of truth.</li>

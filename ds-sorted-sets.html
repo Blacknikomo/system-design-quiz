@@ -45,6 +45,7 @@
     </div>
     <p class="small" style="margin-bottom:6px">A <b>binary search tree</b> stores keys so that for every node, the left subtree is smaller and the right subtree is larger. That ordering buys you operations a hash map can't do: <b>range queries</b>, <b>min/max</b>, <b>floor/ceiling</b>, and ordered iteration — each in <b>O(log n)</b> when the tree is balanced. Search walks down comparing one node per level.</p>
     <div class="note gotcha"><b>The gotcha:</b> a plain BST is <b>not</b> self-balancing. Inserting keys in sorted order (1,2,3,…) creates a one-sided chain — effectively a linked list with <b>O(n)</b> operations. Production "sorted sets" use a <b>self-balancing tree (red-black / AVL)</b> to guarantee O(log n). The key design judgment: a <b>hash map</b> gives O(1) but is <b>unordered</b>; a <b>sorted set</b> costs O(log n) but gives you <b>order + ranges</b>. Pick based on whether you need range/ordering.</div>
+    <div class="note info"><b>Deleting a node:</b> delete is the trickiest op — a node with two children is replaced by its <b>in-order successor</b> (smallest in the right subtree), then that successor is removed — O(h).</div>
   </div>
 
   <!-- controls -->
