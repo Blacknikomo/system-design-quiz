@@ -21,6 +21,12 @@
   .blk.nfr h4{color:var(--warn)}
   .blk.tech h4{color:var(--ok)}
   .blk.got h4{color:var(--bad)}
+  .blk.mine{background:var(--panel2);border:1px solid var(--accent2);border-radius:10px;padding:10px 12px;margin:12px 0}
+  .blk.mine h4{color:var(--accent2);margin-top:0}
+  .blk.mine .slot{font-weight:700;color:var(--txt)}
+  .blk.mine .meta{color:var(--muted);font-size:12px;margin-top:4px}
+  .blk.mine .score{font-weight:700}
+  .blk.mine .warn{display:block;margin-top:6px;color:var(--warn);font-size:12.5px}
   .blk ul{margin:0;padding-left:18px}
   .blk li{margin:3px 0;font-size:13.5px}
   .blk .why{color:var(--muted)}
@@ -35,7 +41,7 @@
     <div>
       <div class="back"><a href="index.html">← All materials</a></div>
       <h1>🗺️ Behavioral Story Map</h1>
-      <div class="sub">For each question archetype: which STAR story to deploy, the competency it signals, the follow-ups to expect, and the trap to avoid. Built for active recall — read the archetype, recall your story, then reveal to check.</div>
+      <div class="sub">For each question archetype: <b>your actual prepared STAR story</b> (slot, file, score, status), the competency it signals, the follow-ups to expect, and the trap to avoid. Now wired to your 12-story bank in <code>star-stories/</code>. Built for active recall — read the archetype, recall your story, then reveal to check.</div>
     </div>
   </div>
 
@@ -53,13 +59,25 @@
 
   <div class="card" style="margin-top:16px">
     <h3 style="margin-top:0">One story, many questions</h3>
-    <p class="small muted" style="margin-top:0">Strong stories flex across archetypes. Build ~10–12 and map each to several. High-reuse anchors:</p>
+    <p class="small muted" style="margin-top:0">Strong stories flex across archetypes. High-reuse anchors from your bank:</p>
     <ul class="small" style="margin:0;padding-left:18px;color:var(--muted)">
-      <li><b style="color:var(--txt)">Underperformer turnaround</b> → Underperformance · People Growth · Conflict</li>
-      <li><b style="color:var(--txt)">Senior-engineer conflict</b> → Conflict · Influence w/o Authority · People Growth</li>
-      <li><b style="color:var(--txt)">Tough trade-off / said no</b> → Ambiguity &amp; Results · Strategy &amp; Vision</li>
-      <li><b style="color:var(--txt)">A real failure</b> → Self-Awareness · Ambiguity &amp; Results</li>
+      <li><b style="color:var(--txt)">Slot 01 — Underperformer turnaround</b> → Underperformance · People Growth · Conflict</li>
+      <li><b style="color:var(--txt)">Slot 12 — Hard feedback (eng↔PM)</b> → Self-Awareness · People Growth · Conflict <span style="color:var(--ok)">(33/35, strongest)</span></li>
+      <li><b style="color:var(--txt)">Slot 04/11 — Performance direction</b> → Conflict (04) <i>or</i> Strategy &amp; Vision (11) — pick one per loop</li>
+      <li><b style="color:var(--txt)">Slot 09 — DSL converter failure</b> → Self-Awareness · Ambiguity &amp; Results</li>
     </ul>
+  </div>
+
+  <div class="card" style="margin-top:16px;border-color:var(--warn)">
+    <h3 style="margin-top:0;color:var(--warn)">⚠️ Anti-collision map (multi-interviewer loop)</h3>
+    <p class="small muted" style="margin-top:0">The whole bank rests on ~5 real events, so the same backdrop repeats. Don’t let two interviewers hear the same situation:</p>
+    <ul class="small" style="margin:0;padding-left:18px;color:var(--muted)">
+      <li><b style="color:var(--txt)">04 ↔ 11</b> — same TeamCity performance situation. Never both in one loop (conflict lens vs. strategy lens).</li>
+      <li><b style="color:var(--txt)">05 / 07 / 12</b> — all share the Stream-Teams reorg / eng↔PM endgame. Split across interviewers.</li>
+      <li><b style="color:var(--txt)">02 / 03 / 12</b> — all draw on the AI-Assistant project. Vary which one you deploy.</li>
+      <li><b style="color:var(--txt)">05 / 06 / 08 / 09</b> — all touch the agent-orchestration PoC. Pick distinct ones per round.</li>
+    </ul>
+    <p class="small muted" style="margin:8px 0 0">Coverage gaps from the re-eval: area <b style="color:var(--txt)">E (hiring/team-building)</b> rests on slot 10 alone, and several stories share the “I brought structure / a framework” move and the “should’ve seen the signal earlier” reflection — diversify before the loop.</p>
   </div>
 
   <p class="small muted" style="margin-top:16px">Tip: in <b>Recall mode</b>, cards stay collapsed — say which story you'd deploy and why out loud, then click to reveal. Pairs with the <a href="behavioral-story-craft.html">Story Craft</a> and <a href="behavioral-best-practices.html">Best Practices</a> guides and the <a href="behavioral-quiz.html">quiz</a>.</p>
@@ -68,6 +86,7 @@
 <script>
 const CARDS = [
   {icon:"🌱", name:'"Helped an engineer grow"', scope:"coaching & development", tags:["People Growth"],
+   ref:{slot:"03", file:"grew-engineer-promotion", line:'"V." — grew a Middle SWE who owned the AI-Assistant subsystem into Senior scope (stretch + sponsorship + targeted feedback).', score:"30/35", status:"drafted", note:"Safest / lowest-conflict of the people stories — lead with a concrete promotion + timeline, not just “good 1:1s”."},
    blocks:[
     {cls:"", h:"Deploy this story", items:["A specific mid-level IC who was stuck — you coached with feedback + stretch work until they earned a promotion or a clear scope increase."]},
     {cls:"tech", h:"Signals", items:["<b>Is a good coach</b> — you ask before you tell, develop via feedback not answers.","Supports career development."]},
@@ -75,6 +94,7 @@ const CARDS = [
     {cls:"got", h:"Trap", items:["Picking a top performer who needed little from you — there's no coaching signal.","Telling a team-wide process story instead of one person."]}
    ]},
   {icon:"⚔️", name:'"Resolved a conflict between engineers"', scope:"two seniors, one decision", tags:["Conflict"],
+   ref:{slot:"04", file:"conflict-two-senior-engineers", line:'Two Staff engineers deadlocked on TeamCity’s performance direction (optimize vs. horizontal redesign); you mediated and drove the call (P99 6.5s→1s).', score:"30/35", status:"drafted", warn:"Same situation as slot 11 (Set a vision). NEVER tell both in one loop — 04 is the conflict lens, 11 is the strategy lens."},
    blocks:[
     {cls:"", h:"Deploy this story", items:["Two senior engineers deadlocked on an architectural direction — you surfaced the real criteria, drove a decision (deciding yourself when needed), and kept both committed."]},
     {cls:"tech", h:"Signals", items:["Conflict resolution; decision-making with commitment.","Influence — you converged them without pulling rank."]},
@@ -82,6 +102,7 @@ const CARDS = [
     {cls:"got", h:"Trap", items:["Hero-manager framing (you solved it all yourself).","Mushy compromise, or deferring to the more senior voice."]}
    ]},
   {icon:"🧲", name:'"Influenced without authority"', scope:"across teams you don't own", tags:["Influence w/o Authority"],
+   ref:{slot:"06", file:"cross-team-influence", line:'TeamCity ↔ Junie ↔ YouTrack "solve-the-ticket" agent integration — aligned 3 departments you didn’t own.', score:"27–28/35", status:"borderline", warn:"Be honest: parts read as coordination, not influence. Lead with the staging-server trade and reading others’ incentives, or it under-delivers on competency C."},
    blocks:[
     {cls:"", h:"Deploy this story", items:["You aligned peer teams behind a standard/tool using shared data and incentives, with no power to mandate it."]},
     {cls:"tech", h:"Signals", items:["Cross-org collaboration; influence via credibility.","Strategy — you connected the ask to others' goals."]},
@@ -89,6 +110,7 @@ const CARDS = [
     {cls:"got", h:"Trap", items:["A mandate or a director's order — that removes the “without authority”.","A one-time escalation win that burned the relationship."]}
    ]},
   {icon:"🌫️", name:'"Drove results under ambiguity"', scope:"unclear goal / requirements", tags:["Ambiguity & Results"],
+   ref:{slot:"08", file:"delivered-under-ambiguity", line:'Stepped into a stuck agent-orchestration PoC, reduced the fog to a roadmap, shipped a demo in 2 weeks — without authority over the team.', score:"28/35", status:"drafted", note:"Flexes to C (influence w/o authority). Name the scale with a number — that’s the weak dimension here."},
    blocks:[
     {cls:"", h:"Deploy this story", items:["A project where the goal was unclear — you framed a hypothesis, defined success metrics, shipped, and adjusted."]},
     {cls:"tech", h:"Signals", items:["Dealing with ambiguity; bias to action; results-orientation."]},
@@ -96,6 +118,7 @@ const CARDS = [
     {cls:"got", h:"Trap", items:["Waiting for leadership to remove the ambiguity for you.","Hiding progress until it was ‘perfect’."]}
    ]},
   {icon:"✂️", name:'"Toughest prioritization / said no"', scope:"too many wanted projects", tags:["Ambiguity & Results","Strategy & Vision"],
+   ref:{slot:"07", file:"tough-prioritization-tradeoff", line:'Build Tools team in crisis (~30 tools, 6 people, churn) — cut scope to focus on the few that mattered and owned the “no”.', score:"~28/35", status:"drafted", note:"README still shows the stale 23 — the spoken version is ~28. Add the metric for what the focus bought you."},
    blocks:[
     {cls:"", h:"Deploy this story", items:["Engineers wanted to start many projects — you anchored on mission, used impact/effort, set an explicit cut line, and explained the ‘no’."]},
     {cls:"tech", h:"Signals", items:["Prioritization & decision-making; clear vision; protecting the team's focus."]},
@@ -103,6 +126,7 @@ const CARDS = [
     {cls:"got", h:"Trap", items:["Starting everything at reduced capacity.","Following the loudest engineers instead of strategy."]}
    ]},
   {icon:"📉", name:'"Managed an underperformer"', scope:"end to end", tags:["Underperformance"],
+   ref:{slot:"01", file:"underperformer-turnaround", line:'Senior "S." gone quiet on caching — diagnosed will/context (not skill), reset expectations, real turnaround. Pair: slot 02 (managed-someone-out) for the humane-exit ending when they want the hard call.', score:"31–32/35 (02: 32–33)", status:"drafted", note:"Two anonymized people are both “S.” across 01/02 — don’t confuse them in a loop."},
    blocks:[
     {cls:"", h:"Deploy this story", items:["You diagnosed skill vs will vs context, set explicit expectations, coached and tracked, then made a clear decision (turnaround or a humane exit)."]},
     {cls:"tech", h:"Signals", items:["Diagnoses fairly; acts decisively; results-oriented; protects the team."]},
@@ -110,6 +134,7 @@ const CARDS = [
     {cls:"got", h:"Trap", items:["Jumping straight to a PIP / paper trail.","No ending — interviewers want to see you'll make the hard call."]}
    ]},
   {icon:"🎯", name:'"Hiring win + hiring miss"', scope:"raising the bar", tags:["Hiring","Self-Awareness"],
+   ref:{slot:"10", file:"hiring-win-and-miss", line:'Win: Dima (Staff, Performance) — named the soft-skill risk, made a coachability contract. Miss: David (Middle+) — accepted a verbal “agreed” instead of de-risking the ambiguity signal.', score:"29/35", status:"drafted", warn:"This is your ONLY true hiring story — area E is thin. If they ask for a second hiring/team-building case (borderline candidate, building balance), there’s no backup yet."},
    blocks:[
     {cls:"", h:"Deploy this story", items:["A specific hire you got wrong — the signal you under-weighted — and how you changed your bar/process afterward; pair with a deliberate win."]},
     {cls:"tech", h:"Signals", items:["Owns hiring quality; self-aware; learns and adjusts."]},
@@ -117,6 +142,7 @@ const CARDS = [
     {cls:"got", h:"Trap", items:["Only telling success stories.","Blaming the recruiter or the candidate for the miss."]}
    ]},
   {icon:"💥", name:'"A significant failure"', scope:"ownership & learning", tags:["Self-Awareness"],
+   ref:{slot:"09", file:"project-that-failed", line:'CI→TeamCity DSL converter — wrong team composition + no early facilitation → team interlock, project killed. Applied both lessons in later teams.', score:"29–30/35", status:"drafted", note:"Genuine miss with real stakes. Risk is delivery — it bundles two failures; pick one spine when spoken."},
    blocks:[
     {cls:"", h:"Deploy this story", items:["A real failure you owned, the lesson, and the specific change you made afterward — genuine, with stakes."]},
     {cls:"tech", h:"Signals", items:["Self-awareness; intellectual honesty; growth — the core of Googleyness."]},
@@ -124,6 +150,7 @@ const CARDS = [
     {cls:"got", h:"Trap", items:["A humblebrag (‘I cared too much’).","Blaming circumstances; or a trivial, consequence-free ‘failure’."]}
    ]},
   {icon:"🪜", name:'"Disagreed with leadership"', scope:"pushing back up", tags:["Conflict","Self-Awareness"],
+   ref:{slot:"05", file:"disagreed-with-leadership", line:'Pushed back on your lead D.’s ad-hoc reassignments; built a governance/rules-of-engagement framework between peers and the lead.', score:"27–28/35", status:"borderline", warn:"Most fragile to deliver: it bundles 3 episodes (underperformer + governance + reorg). Pick ONE spine (governance PoC), demote the rest to a single line, and add the real delivery number. Shares the Stream-Teams reorg endgame with 07 & 12 — split across the loop."},
    blocks:[
     {cls:"", h:"Deploy this story", items:["You made an evidence-based case to your manager/leader, then disagreed-and-committed once the call was made."]},
     {cls:"tech", h:"Signals", items:["Upward courage; influence; intellectual honesty; team-player after the decision."]},
@@ -131,6 +158,7 @@ const CARDS = [
     {cls:"got", h:"Trap", items:["Going around them to their boss.","Relitigating the decision after it was made."]}
    ]},
   {icon:"🧭", name:'"Set a vision / direction"', scope:"direction the team used", tags:["Strategy & Vision"],
+   ref:{slot:"11", file:"set-technical-direction", line:'Set TeamCity’s multi-quarter performance direction — horizontal-scale bet + a decision framework — and won over a skeptical team and leadership who’d written it off as a “swamp.”', score:"29/35", status:"drafted", warn:"Same situation as slot 04 (Resolved a conflict). NEVER both in one loop — here the two engineers are background; the spotlight is the bet and the investment case."},
    blocks:[
     {cls:"", h:"Deploy this story", items:["You set a direction tied to business impact, aligned the team, and it actually guided their decisions."]},
     {cls:"tech", h:"Signals", items:["Clear vision & strategy; connects work to impact; communicates and gets buy-in."]},
@@ -138,6 +166,7 @@ const CARDS = [
     {cls:"got", h:"Trap", items:["A vision doc nobody referenced afterward.","Relaying leadership's direction verbatim with no ownership."]}
    ]},
   {icon:"📣", name:'"Received hard feedback"', scope:"coachability", tags:["Self-Awareness","People Growth"],
+   ref:{slot:"12", file:"received-hard-feedback", line:'Manager: “you’re complaining about eng↔PM, not fixing it.” Felt unfair, sat with it, found the kernel — built a repeatable eng↔PM collaboration framework instead.', score:"33/35", status:"interview-ready", note:"Your strongest story — top-tier Googleyness. Shares the Stream-Teams / PM backdrop with 05 & 07; keep them apart in a loop."},
    blocks:[
     {cls:"", h:"Deploy this story", items:["You took hard feedback seriously, changed a specific behavior, and can point to the resulting outcome."]},
     {cls:"tech", h:"Signals", items:["Coachability; humility; growth mindset."]},
@@ -145,6 +174,7 @@ const CARDS = [
     {cls:"got", h:"Trap", items:["Explaining why the feedback was wrong.","Accepting it verbally but changing nothing."]}
    ]},
   {icon:"🏗️", name:'"Built or grew a team"', scope:"bar, balance, outcomes", tags:["Hiring","Strategy & Vision"],
+   ref:{slot:"—", file:"", line:'No dedicated story yet. Closest: borrow the bar/judgment from slot 10 (hiring) and the growth arc from slot 03 — but neither is a true “built a balanced team from scratch” narrative.', score:"gap", status:"to build", warn:"Coverage gap (area E). If a “build a team / get the balance right” question is likely in your loop, draft a dedicated story — don’t improvise it live."},
    blocks:[
     {cls:"", h:"Deploy this story", items:["You defined the bar and roles, built a balanced team, and tied the hires to measurable outcomes."]},
     {cls:"tech", h:"Signals", items:["Hiring ownership; team-building; results from the people you brought in."]},
@@ -157,11 +187,27 @@ const listEl = document.getElementById("list");
 function blockHtml(b){
   return `<div class="blk ${b.cls||''}"><h4>${b.h}</h4><ul>${b.items.map(x=>`<li>${x}</li>`).join("")}</ul></div>`;
 }
+function refHtml(r){
+  if(!r) return "";
+  const fileTxt = r.file ? `star-stories/${r.slot}-${r.file}.md` : "—";
+  const link = r.file
+    ? `<a href="../star-stories/${r.slot}-${r.file}.md"><code>${fileTxt}</code></a>`
+    : `<code>${fileTxt}</code>`;
+  return `<div class="blk mine">
+    <h4>📂 Your prepared story</h4>
+    <div><span class="slot">Slot ${r.slot}</span> — ${link}</div>
+    <div style="margin-top:6px;font-size:13.5px">${r.line}</div>
+    <div class="meta">Score: <span class="score">${r.score}</span> · Status: ${r.status}</div>
+    ${r.note?`<span class="warn" style="color:var(--muted)">Note: ${r.note}</span>`:""}
+    ${r.warn?`<span class="warn">⚠️ ${r.warn}</span>`:""}
+  </div>`;
+}
 function render(filter=""){
   const f = filter.trim().toLowerCase();
   let shown=0;
   listEl.innerHTML = CARDS.map((d,idx)=>{
-    const hay = (d.name+" "+d.scope+" "+d.tags.join(" ")+" "+d.blocks.map(b=>b.h+" "+b.items.join(" ")).join(" ")).toLowerCase();
+    const refHay = d.ref ? `${d.ref.slot} ${d.ref.file} ${d.ref.line} ${d.ref.note||""} ${d.ref.warn||""}` : "";
+    const hay = (d.name+" "+d.scope+" "+d.tags.join(" ")+" "+refHay+" "+d.blocks.map(b=>b.h+" "+b.items.join(" ")).join(" ")).toLowerCase();
     if(f && !hay.includes(f)) return "";
     shown++;
     return `<div class="cs" data-i="${idx}">
@@ -173,6 +219,7 @@ function render(filter=""){
       <div class="recall-hint">Recall: which story would you deploy, and which competency does it signal? Then reveal.</div>
       <div class="cs-body">
         <div class="cs-tags">${d.tags.map(t=>`<span class="tag accent">${t}</span>`).join("")}</div>
+        ${refHtml(d.ref)}
         ${d.blocks.map(blockHtml).join("")}
       </div>
     </div>`;
