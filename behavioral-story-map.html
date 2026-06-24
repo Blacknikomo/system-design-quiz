@@ -181,6 +181,46 @@ const CARDS = [
     {cls:"nfr", h:"Expect follow-ups", items:["“What was your bar, and how did you hold it?”","“What outcomes did the team deliver?”"]},
     {cls:"got", h:"Trap", items:["Filling headcount fast to hit a number.","Cloning one profile (homogeneity) instead of balancing."]}
    ]},
+  {icon:"🚫", name:'"Denied a report\'s request"', scope:"a no you had to give", tags:["People Growth","Conflict"],
+   ref:{slot:"—", file:"", line:'No dedicated story yet. A report asked for a promotion / transfer / scope you couldn’t grant — you were honest about the gap, co-created a plan, and committed to sponsor when ready. Closest material: the “not ready” judgment in slot 10 and the development arc in slot 03.', score:"gap", status:"to build", warn:"Coverage gap. “Tell me about a time you had to say no to a report / deny a promotion request” is a common L6 probe — draft a dedicated story rather than improvising the hard conversation live."},
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["A report wanted something you couldn’t give (promotion, transfer, scope) — you named the specific gap honestly, co-created a concrete plan to close it, and committed to sponsor them when ready."]},
+    {cls:"tech", h:"Signals", items:["Honest, caring directness; develops people; keeps trust through a no.","Holds the bar without crushing motivation."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“How did they react, and how did you keep them engaged?”","“What was the gap, specifically — and did they close it?”"]},
+    {cls:"got", h:"Trap", items:["Saying yes to avoid the hard conversation, setting them up to fail.","‘It’s out of my hands / the committee decides’ — dodging your own role.","A vague ‘not yet’ with no concrete path forward."]}
+   ]},
+  {icon:"🤝", name:'"Conflict across two teams"', scope:"peer / cross-team friction", tags:["Conflict","Influence w/o Authority"],
+   ref:{slot:"06", file:"cross-team-influence", line:'Reframe of the cross-team-influence story (TeamCity ↔ Junie ↔ YouTrack) toward the friction angle: a peer team kept deprioritizing your dependency — you understood their constraints, found the shared goal, and aligned on sequencing both could defend.', score:"27–28/35 (reframed)", status:"borderline", warn:"Distinct from slot 04 (conflict between two engineers on YOUR team) — this is peer/cross-team conflict. Shares the situation with the “Influenced without authority” archetype (slot 06); never tell both in one loop, and lead here with the friction + constraints, not the coordination."},
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["A peer manager’s team kept deprioritizing a dependency you needed — you met them to understand their constraints, found the shared goal, and aligned on a sequencing both could defend to a shared lead."]},
+    {cls:"tech", h:"Signals", items:["Cross-functional conflict resolution; reads others’ constraints/incentives.","Resolves before escalating; preserves the peer relationship."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“What were their constraints — why was it deprioritized?”","“What would you have done if you still couldn’t align?”"]},
+    {cls:"got", h:"Trap", items:["Forcing it via your shared manager — burns peer capital you’ll need again.","Routing around them with throwaway work, or a public power play to apply pressure."]}
+   ]},
+  {icon:"🧲", name:'"Retained an at-risk top performer"', scope:"diagnose the real driver", tags:["People Growth"],
+   ref:{slot:"—", file:"", line:'No dedicated story yet. Your strongest engineer was interviewing / disengaging — you diagnosed the real driver (growth, scope, manager fit), not just comp, and changed something durable. Closest material: the re-engagement instinct behind quiz item q5mpnlr, but no prepared narrative.', score:"gap", status:"to build", warn:"Coverage gap. “Tell me about a time you retained someone at risk of leaving” is a common people probe — draft a real story with the diagnosis and the durable fix; don’t reach for a comp-only save live."},
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["A top performer was at risk of leaving — you dug into what was really driving it (growth, scope, sponsorship, manager fit), tested a credible response, and re-engaged them durably."]},
+    {cls:"tech", h:"Signals", items:["Diagnoses the real driver; retention through development, not just money.","Reads people; acts before the resignation, not after."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“What was actually driving it, and how did you find out?”","“What did you change — and did it hold?”"]},
+    {cls:"got", h:"Trap", items:["A reflexive comp counter-offer that treats the symptom and rarely holds.","Promising a promotion you weren’t sure you could deliver; or giving up and going straight to backfill."]}
+   ]},
+  {icon:"🔥", name:'"On-call / burnout & sustainable pace"', scope:"operational load as a deliverable", tags:["Underperformance","Strategy & Vision"],
+   ref:{slot:"—", file:"", line:'No dedicated story yet. On-call/pages spiked and the team was burning out — you made the load visible with data, bought roadmap room to fix root causes, and rebalanced the rotation. Closest material: the prioritization muscle in slot 07, but not on operational load specifically.', score:"gap", status:"to build", warn:"Coverage gap. Sustainable-pace / on-call-health questions are increasingly common — draft a story where you treated operational load as a first-class deliverable, not heroics."},
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["On-call pages spiked and the team was visibly burning out — you made the operational load visible with data, negotiated roadmap room to fix root causes, and rebalanced the rotation now."]},
+    {cls:"tech", h:"Signals", items:["Protects team health; treats sustainable pace as a deliverable.","Data-driven trade-off; fixes root causes, not just symptoms."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“How did you make the case to leadership for the room?”","“What did the load look like before vs after?”"]},
+    {cls:"got", h:"Trap", items:["Just adding bodies to the rotation — spreads pain without reducing it.","‘Power through, relief later’ that risks attrition; or absorbing the worst pages yourself (heroics that doesn’t scale)."]}
+   ]},
+  {icon:"⚖️", name:'"Did the right thing under pressure"', scope:"integrity at a cost", tags:["Self-Awareness","Conflict"],
+   ref:{slot:"—", file:"", line:'No dedicated story yet. A moment where doing the right thing cost you a win — e.g. flagging a privacy/quality/ethics issue that risked a launch metric. Build ONLY if you have a genuine example; a manufactured one reads as performative.', score:"gap", status:"to build", warn:"Coverage gap — and a sensitive one. Only prepare this if it’s real and you can name the cost you accepted. An invented integrity story is worse than not having one."},
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["You surfaced a problem and did the right thing even though it hurt a metric or a win — named the user/quality/ethics impact, stopped the harm, and drove the fix with the right partners."]},
+    {cls:"tech", h:"Signals", items:["Integrity under pressure; user trust over a local win; ownership.","Loops in the right partners (privacy/legal/security) rather than going quiet."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“What did it cost you, and would you do it again?”","“Who did you involve, and how fast did you act?”"]},
+    {cls:"got", h:"Trap", items:["Deferring it to ‘next cycle’ so the win lands first.","A quiet fix that hides a problem others needed to know about; or a manufactured, low-stakes ‘ethics’ story."]}
+   ]},
 ];
 
 const listEl = document.getElementById("list");
