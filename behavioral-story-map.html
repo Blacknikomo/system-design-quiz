@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Behavioral Story Map — which story for which question</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .cs{border:1px solid var(--line);border-radius:12px;margin-bottom:12px;overflow:hidden;background:var(--panel)}
+  .cs-head{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;user-select:none}
+  .cs-head:hover{background:var(--panel2)}
+  .cs-head .ic{font-size:20px;flex:0 0 auto}
+  .cs-head .nm{font-weight:700;font-size:16px}
+  .cs-head .scope{color:var(--muted);font-size:13px}
+  .cs-head .chev{margin-left:auto;color:var(--muted);transition:transform .2s;flex:0 0 auto}
+  .cs.open .cs-head .chev{transform:rotate(90deg)}
+  .cs-body{display:none;padding:0 16px 16px;border-top:1px solid var(--line)}
+  .cs.open .cs-body{display:block}
+  .cs-tags{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+  .blk h4{margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .blk.nfr h4{color:var(--warn)}
+  .blk.tech h4{color:var(--ok)}
+  .blk.got h4{color:var(--bad)}
+  .blk ul{margin:0;padding-left:18px}
+  .blk li{margin:3px 0;font-size:13.5px}
+  .blk .why{color:var(--muted)}
+  .recall-hint{display:none;color:var(--muted);font-size:12.5px;font-style:italic;padding:0 16px 14px}
+  body.recall .cs:not(.open) .recall-hint{display:block}
+  .toolbar{position:sticky;top:0;z-index:10;background:var(--bg);padding:10px 0;margin-bottom:6px;border-bottom:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All materials</a></div>
+      <h1>🗺️ Behavioral Story Map</h1>
+      <div class="sub">For each question archetype: which STAR story to deploy, the competency it signals, the follow-ups to expect, and the trap to avoid. Built for active recall — read the archetype, recall your story, then reveal to check.</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="row">
+      <input type="text" id="search" placeholder="filter by archetype / competency / keyword…" style="flex:1;min-width:180px">
+      <button class="btn sec" id="expandAll">Expand all</button>
+      <button class="btn sec" id="collapseAll">Collapse all</button>
+      <label class="chip"><input type="checkbox" id="recallChk" style="accent-color:var(--accent)"> Recall mode</label>
+    </div>
+    <div class="small muted" id="count" style="margin-top:6px"></div>
+  </div>
+
+  <div id="list"></div>
+
+  <div class="card" style="margin-top:16px">
+    <h3 style="margin-top:0">One story, many questions</h3>
+    <p class="small muted" style="margin-top:0">Strong stories flex across archetypes. Build ~10–12 and map each to several. High-reuse anchors:</p>
+    <ul class="small" style="margin:0;padding-left:18px;color:var(--muted)">
+      <li><b style="color:var(--txt)">Underperformer turnaround</b> → Underperformance · People Growth · Conflict</li>
+      <li><b style="color:var(--txt)">Senior-engineer conflict</b> → Conflict · Influence w/o Authority · People Growth</li>
+      <li><b style="color:var(--txt)">Tough trade-off / said no</b> → Ambiguity &amp; Results · Strategy &amp; Vision</li>
+      <li><b style="color:var(--txt)">A real failure</b> → Self-Awareness · Ambiguity &amp; Results</li>
+    </ul>
+  </div>
+
+  <p class="small muted" style="margin-top:16px">Tip: in <b>Recall mode</b>, cards stay collapsed — say which story you'd deploy and why out loud, then click to reveal. Pairs with the <a href="behavioral-story-craft.html">Story Craft</a> and <a href="behavioral-best-practices.html">Best Practices</a> guides and the <a href="behavioral-quiz.html">quiz</a>.</p>
+</div>
+
+<script>
+const CARDS = [
+  {icon:"🌱", name:'"Helped an engineer grow"', scope:"coaching & development", tags:["People Growth"],
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["A specific mid-level IC who was stuck — you coached with feedback + stretch work until they earned a promotion or a clear scope increase."]},
+    {cls:"tech", h:"Signals", items:["<b>Is a good coach</b> — you ask before you tell, develop via feedback not answers.","Supports career development."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“What did <i>you</i> specifically do?”","“What changed, and how did you measure it?”"]},
+    {cls:"got", h:"Trap", items:["Picking a top performer who needed little from you — there's no coaching signal.","Telling a team-wide process story instead of one person."]}
+   ]},
+  {icon:"⚔️", name:'"Resolved a conflict between engineers"', scope:"two seniors, one decision", tags:["Conflict"],
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["Two senior engineers deadlocked on an architectural direction — you surfaced the real criteria, drove a decision (deciding yourself when needed), and kept both committed."]},
+    {cls:"tech", h:"Signals", items:["Conflict resolution; decision-making with commitment.","Influence — you converged them without pulling rank."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“What did each of them actually want?”","“How did you decide, and how did the loser react?”"]},
+    {cls:"got", h:"Trap", items:["Hero-manager framing (you solved it all yourself).","Mushy compromise, or deferring to the more senior voice."]}
+   ]},
+  {icon:"🧲", name:'"Influenced without authority"', scope:"across teams you don't own", tags:["Influence w/o Authority"],
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["You aligned peer teams behind a standard/tool using shared data and incentives, with no power to mandate it."]},
+    {cls:"tech", h:"Signals", items:["Cross-org collaboration; influence via credibility.","Strategy — you connected the ask to others' goals."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“Why did they go along with it?”","“What did you do when someone said no?”"]},
+    {cls:"got", h:"Trap", items:["A mandate or a director's order — that removes the “without authority”.","A one-time escalation win that burned the relationship."]}
+   ]},
+  {icon:"🌫️", name:'"Drove results under ambiguity"', scope:"unclear goal / requirements", tags:["Ambiguity & Results"],
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["A project where the goal was unclear — you framed a hypothesis, defined success metrics, shipped, and adjusted."]},
+    {cls:"tech", h:"Signals", items:["Dealing with ambiguity; bias to action; results-orientation."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“How did you know you were on the right track?”","“What would you have done if the hypothesis was wrong?”"]},
+    {cls:"got", h:"Trap", items:["Waiting for leadership to remove the ambiguity for you.","Hiding progress until it was ‘perfect’."]}
+   ]},
+  {icon:"✂️", name:'"Toughest prioritization / said no"', scope:"too many wanted projects", tags:["Ambiguity & Results","Strategy & Vision"],
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["Engineers wanted to start many projects — you anchored on mission, used impact/effort, set an explicit cut line, and explained the ‘no’."]},
+    {cls:"tech", h:"Signals", items:["Prioritization & decision-making; clear vision; protecting the team's focus."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“What did you cut, and how did the team take it?”","“How did you protect tech-debt / innovation capacity?”"]},
+    {cls:"got", h:"Trap", items:["Starting everything at reduced capacity.","Following the loudest engineers instead of strategy."]}
+   ]},
+  {icon:"📉", name:'"Managed an underperformer"', scope:"end to end", tags:["Underperformance"],
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["You diagnosed skill vs will vs context, set explicit expectations, coached and tracked, then made a clear decision (turnaround or a humane exit)."]},
+    {cls:"tech", h:"Signals", items:["Diagnoses fairly; acts decisively; results-oriented; protects the team."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“Was it skill or will — how did you know?”","“What was the outcome, and how long did it take?”"]},
+    {cls:"got", h:"Trap", items:["Jumping straight to a PIP / paper trail.","No ending — interviewers want to see you'll make the hard call."]}
+   ]},
+  {icon:"🎯", name:'"Hiring win + hiring miss"', scope:"raising the bar", tags:["Hiring","Self-Awareness"],
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["A specific hire you got wrong — the signal you under-weighted — and how you changed your bar/process afterward; pair with a deliberate win."]},
+    {cls:"tech", h:"Signals", items:["Owns hiring quality; self-aware; learns and adjusts."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“What exactly did you mis-read?”","“What changed in how you interview now?”"]},
+    {cls:"got", h:"Trap", items:["Only telling success stories.","Blaming the recruiter or the candidate for the miss."]}
+   ]},
+  {icon:"💥", name:'"A significant failure"', scope:"ownership & learning", tags:["Self-Awareness"],
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["A real failure you owned, the lesson, and the specific change you made afterward — genuine, with stakes."]},
+    {cls:"tech", h:"Signals", items:["Self-awareness; intellectual honesty; growth — the core of Googleyness."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“What was your part in it, specifically?”","“What have you done differently since?”"]},
+    {cls:"got", h:"Trap", items:["A humblebrag (‘I cared too much’).","Blaming circumstances; or a trivial, consequence-free ‘failure’."]}
+   ]},
+  {icon:"🪜", name:'"Disagreed with leadership"', scope:"pushing back up", tags:["Conflict","Self-Awareness"],
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["You made an evidence-based case to your manager/leader, then disagreed-and-committed once the call was made."]},
+    {cls:"tech", h:"Signals", items:["Upward courage; influence; intellectual honesty; team-player after the decision."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“What happened after the decision went against you?”","“Would you do it the same way again?”"]},
+    {cls:"got", h:"Trap", items:["Going around them to their boss.","Relitigating the decision after it was made."]}
+   ]},
+  {icon:"🧭", name:'"Set a vision / direction"', scope:"direction the team used", tags:["Strategy & Vision"],
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["You set a direction tied to business impact, aligned the team, and it actually guided their decisions."]},
+    {cls:"tech", h:"Signals", items:["Clear vision & strategy; connects work to impact; communicates and gets buy-in."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“How did the team's decisions change because of it?”","“How did you handle the skeptics?”"]},
+    {cls:"got", h:"Trap", items:["A vision doc nobody referenced afterward.","Relaying leadership's direction verbatim with no ownership."]}
+   ]},
+  {icon:"📣", name:'"Received hard feedback"', scope:"coachability", tags:["Self-Awareness","People Growth"],
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["You took hard feedback seriously, changed a specific behavior, and can point to the resulting outcome."]},
+    {cls:"tech", h:"Signals", items:["Coachability; humility; growth mindset."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“What did you change, concretely?”","“How do you know it worked?”"]},
+    {cls:"got", h:"Trap", items:["Explaining why the feedback was wrong.","Accepting it verbally but changing nothing."]}
+   ]},
+  {icon:"🏗️", name:'"Built or grew a team"', scope:"bar, balance, outcomes", tags:["Hiring","Strategy & Vision"],
+   blocks:[
+    {cls:"", h:"Deploy this story", items:["You defined the bar and roles, built a balanced team, and tied the hires to measurable outcomes."]},
+    {cls:"tech", h:"Signals", items:["Hiring ownership; team-building; results from the people you brought in."]},
+    {cls:"nfr", h:"Expect follow-ups", items:["“What was your bar, and how did you hold it?”","“What outcomes did the team deliver?”"]},
+    {cls:"got", h:"Trap", items:["Filling headcount fast to hit a number.","Cloning one profile (homogeneity) instead of balancing."]}
+   ]},
+];
+
+const listEl = document.getElementById("list");
+function blockHtml(b){
+  return `<div class="blk ${b.cls||''}"><h4>${b.h}</h4><ul>${b.items.map(x=>`<li>${x}</li>`).join("")}</ul></div>`;
+}
+function render(filter=""){
+  const f = filter.trim().toLowerCase();
+  let shown=0;
+  listEl.innerHTML = CARDS.map((d,idx)=>{
+    const hay = (d.name+" "+d.scope+" "+d.tags.join(" ")+" "+d.blocks.map(b=>b.h+" "+b.items.join(" ")).join(" ")).toLowerCase();
+    if(f && !hay.includes(f)) return "";
+    shown++;
+    return `<div class="cs" data-i="${idx}">
+      <div class="cs-head">
+        <span class="ic">${d.icon}</span>
+        <div><div class="nm">${d.name}</div><div class="scope">${d.scope}</div></div>
+        <span class="chev">▶</span>
+      </div>
+      <div class="recall-hint">Recall: which story would you deploy, and which competency does it signal? Then reveal.</div>
+      <div class="cs-body">
+        <div class="cs-tags">${d.tags.map(t=>`<span class="tag accent">${t}</span>`).join("")}</div>
+        ${d.blocks.map(blockHtml).join("")}
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("count").textContent = `${shown} of ${CARDS.length} archetypes`;
+  wire();
+}
+function wire(){ document.querySelectorAll(".cs-head").forEach(h=>{ h.onclick=()=>h.parentElement.classList.toggle("open"); }); }
+document.getElementById("search").oninput = e => render(e.target.value);
+document.getElementById("expandAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.add("open"));
+document.getElementById("collapseAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.remove("open"));
+document.getElementById("recallChk").onchange = e=>{
+  document.body.classList.toggle("recall", e.target.checked);
+  if(e.target.checked) document.querySelectorAll(".cs").forEach(c=>c.classList.remove("open"));
+};
+render();
+</script>
+</body>
+</html>

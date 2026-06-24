@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Behavioral Interview Quiz — FAANG EM Prep</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#1a212b; --panel2:#222b38; --line:#2d3744;
+    --txt:#e6edf3; --muted:#8b98a8; --accent:#4f9cf9; --accent2:#7c5cff;
+    --ok:#2ecc71; --okbg:#11331f; --bad:#ff5c5c; --badbg:#3a1518;
+    --warn:#ffb84d; --chip:#26313f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--txt);line-height:1.5;font-size:15px}
+  .wrap{max-width:920px;margin:0 auto;padding:24px 18px 80px}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+  .row{display:flex;flex-wrap:wrap;gap:8px}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:9px;padding:10px 16px;font-size:14px;
+    font-weight:600;cursor:pointer;transition:.15s}
+  .btn:hover{filter:brightness(1.1)}
+  .btn.sec{background:var(--panel2);border:1px solid var(--line);color:var(--txt)}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--muted)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .chip{background:var(--chip);border:1px solid var(--line);color:var(--txt);border-radius:20px;
+    padding:6px 13px;font-size:13px;cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:6px}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .chip .ct{opacity:.7;font-size:11px}
+  .label{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px}
+  /* question */
+  .qtop{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+  .qmeta{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .tag{font-size:11px;padding:3px 9px;border-radius:6px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  .tag.topic{color:var(--accent);border-color:#2c4a6e}
+  .tag.tricky{color:var(--warn);border-color:#5a4520}
+  .tag.lvl-Mid{color:#8b98a8;border-color:#3a4654}
+  .tag.lvl-Senior{color:#4f9cf9;border-color:#2c4a6e}
+  .tag.lvl-Staff{color:#ffd24d;border-color:#6b5410;background:#2c2410}
+  .qtext{font-size:17px;font-weight:600;margin:10px 0 4px}
+  .multi-note{font-size:12px;color:var(--warn);margin-bottom:12px}
+  .opt{display:flex;gap:11px;align-items:flex-start;background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px;margin-bottom:9px;cursor:pointer;transition:.12s}
+  .opt:hover{border-color:var(--accent)}
+  .opt.sel{border-color:var(--accent);background:#1c2c40}
+  .opt.correct{border-color:var(--ok);background:var(--okbg)}
+  .opt.wrong{border-color:var(--bad);background:var(--badbg)}
+  .opt .box{width:20px;height:20px;border-radius:5px;border:2px solid var(--muted);flex:0 0 auto;margin-top:1px;
+    display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+  .opt.radio .box{border-radius:50%}
+  .opt.sel .box{border-color:var(--accent);color:var(--accent)}
+  .opt.correct .box{border-color:var(--ok);color:var(--ok)}
+  .opt.wrong .box{border-color:var(--bad);color:var(--bad)}
+  .opt.locked{cursor:default}
+  .feedback{border-radius:10px;padding:13px 15px;margin-top:12px;font-size:14px;display:none}
+  .feedback.show{display:block}
+  .feedback.good{background:var(--okbg);border:1px solid var(--ok)}
+  .feedback.bad{background:var(--badbg);border:1px solid var(--bad)}
+  .feedback b{display:block;margin-bottom:5px}
+  .feedback .why{color:var(--txt);opacity:.92}
+  .feedback .more{color:var(--txt);opacity:.82;font-size:13px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+  .feedback .src{margin-top:9px;font-size:12.5px}
+  .feedback .src a{color:var(--accent)}
+  .feedback .accept{color:var(--warn);font-size:13px;margin-top:8px}
+  .nav{display:flex;justify-content:space-between;align-items:center;margin-top:16px;gap:10px}
+  .progress{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden;margin-bottom:16px}
+  .progress > div{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));width:0;transition:.3s}
+  /* stats */
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center}
+  .stat .n{font-size:26px;font-weight:700}
+  .stat .l{font-size:12px;color:var(--muted);margin-top:2px}
+  .bar-row{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+  .bar-row .name{width:160px;font-size:13px;flex:0 0 auto}
+  .bar-row .track{flex:1;height:18px;background:var(--panel2);border-radius:5px;overflow:hidden;position:relative}
+  .bar-row .fill{height:100%;border-radius:5px}
+  .bar-row .pct{width:78px;text-align:right;font-size:12px;color:var(--muted);flex:0 0 auto}
+  .weak{color:var(--bad);font-weight:600}
+  .hist-item{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .hist-item:last-child{border:none}
+  .muted{color:var(--muted)}
+  .hide{display:none!important}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:10px;background:var(--panel2);border:1px solid var(--line)}
+  a.link{color:var(--accent);cursor:pointer}
+  .toprow{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+  select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="toprow">
+    <div>
+      <div class="back"><a href="index.html">← All materials</a></div>
+      <h1>Behavioral Interview Quiz</h1>
+      <div class="sub">FAANG EM behavioral / leadership prep · 8 competencies · tracks weak areas · saves history</div>
+    </div>
+    <div class="row">
+      <button class="btn sec" id="tab-quiz">Quiz</button>
+      <button class="btn ghost" id="tab-stats">Stats &amp; History</button>
+    </div>
+  </div>
+
+  <!-- ============ SETUP ============ -->
+  <div id="view-setup">
+    <div class="card">
+      <div class="label">1 · Pick topics</div>
+      <div class="row" id="topicChips" style="margin-bottom:10px"></div>
+      <div class="row">
+        <button class="btn ghost" id="selAll">Select all</button>
+        <button class="btn ghost" id="selNone">Clear</button>
+        <button class="btn ghost" id="selWeak">Weak topics only</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">2 · Options</div>
+      <div class="row" style="align-items:center">
+        <label class="muted" style="font-size:13px">Difficulty
+          <select id="diffSel">
+            <option value="all">All</option>
+            <option value="basic">Basic only</option>
+            <option value="tricky">Tricky only</option>
+          </select>
+        </label>
+        <label class="muted" style="font-size:13px">Seniority
+          <select id="levelSel">
+            <option value="all">All levels</option>
+            <option value="Mid">Mid</option>
+            <option value="Senior">Senior</option>
+            <option value="Staff">Staff</option>
+          </select>
+        </label>
+        <label class="muted" style="font-size:13px">Length
+          <select id="lenSel">
+            <option value="10">10 questions</option>
+            <option value="20">20 questions</option>
+            <option value="0">All matching</option>
+          </select>
+        </label>
+        <label class="chip"><input type="checkbox" id="shuffleChk" checked style="accent-color:var(--accent)"> Shuffle</label>
+      </div>
+    </div>
+    <button class="btn" id="startBtn" style="font-size:16px;padding:13px 28px">Start quiz →</button>
+    <span class="muted" id="poolInfo" style="margin-left:12px;font-size:13px"></span>
+  </div>
+
+  <!-- ============ QUIZ ============ -->
+  <div id="view-quiz" class="hide">
+    <div class="progress"><div id="progFill"></div></div>
+    <div class="card" id="qCard"></div>
+    <div class="nav">
+      <button class="btn ghost" id="quitBtn">Quit</button>
+      <div class="row">
+        <button class="btn" id="checkBtn">Check</button>
+        <button class="btn" id="nextBtn" disabled>Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RESULT ============ -->
+  <div id="view-result" class="hide">
+    <div class="card">
+      <h1 style="margin-bottom:14px">Session result</h1>
+      <div class="stat-grid" id="resStats"></div>
+    </div>
+    <div class="card">
+      <div class="label">By topic this session</div>
+      <div id="resTopics"></div>
+    </div>
+    <div class="row">
+      <button class="btn" id="againBtn">New quiz</button>
+      <button class="btn sec" id="retryWeakBtn">Retry weak topics</button>
+    </div>
+  </div>
+
+  <!-- ============ STATS ============ -->
+  <div id="view-stats" class="hide">
+    <div class="card">
+      <div class="label">All-time totals</div>
+      <div class="stat-grid" id="allStats"></div>
+    </div>
+    <div class="card">
+      <div class="toprow" style="margin-bottom:12px">
+        <div class="label" style="margin:0">Mastery by topic</div>
+        <span class="muted" style="font-size:12px">red = weak (&lt;60% &amp; ≥3 answered)</span>
+      </div>
+      <div id="topicBars"></div>
+    </div>
+    <div class="card">
+      <div class="label">Recent sessions</div>
+      <div id="histList"></div>
+    </div>
+    <div class="row">
+      <button class="btn" id="exportBtn">⬇ Export weak-topics analysis (JSON)</button>
+      <button class="btn ghost" id="resetBtn">Reset all history</button>
+    </div>
+    <p class="small muted" style="margin-top:8px">The JSON captures your weak topics, per-level accuracy, and the exact questions you missed (by id) — designed to feed targeted, more-detailed question generation later.</p>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   QUESTION BANK
+   type: "single" | "multi"
+   correct: array of option indices
+   Aligned to Denis's System Design tracker + miss log.
+   ============================================================ */
+const QUESTIONS = [
+  {id:"q1tog57y", topic:"People Growth", diff:"basic", level:"Mid", type:"single", q:"For \"Tell me about a time you helped an engineer grow,\" which story best demonstrates the coaching signal interviewers want?", options:["A struggling mid-level engineer you coached with feedback and stretch work until they earned a promotion","A top performer who was already excelling and needed very little input from you","A team-wide process change that improved everyone's delivery velocity at once","A reorg you led that moved several engineers between different teams"], correct:[0], why:"Growth stories must show YOUR coaching actions on a specific person plus a development outcome. The struggling-IC-to-promotion arc shows feedback + stretch, the core \"good coach\" signal. The top performer needed little from you; the process and reorg stories are delivery/org, not individual growth."},
+  {id:"qvh9k1a", topic:"People Growth", diff:"tricky", level:"Senior", type:"single", q:"You're telling a coaching story in about 2.5 minutes. Where should the bulk of your airtime go?", options:["The specific coaching actions you took and your reasoning — roughly 60% of the answer","The situation and background context that set everything up — roughly 60%","The final quantified result and its business impact — roughly 60%","An even one-third split across situation, action, and result"], correct:[0], why:"STAR for managers weights Action ~60% (the scored part: what you decided and why), Situation/Task ~20%, Result ~20%. Long setups bury the signal, and the interviewer scores your decisions, not the backstory.", src:"behavioral-story-craft.html"},
+  {id:"q1xym4mn", topic:"People Growth", diff:"basic", level:"Mid", type:"single", q:"A report is technically excellent but a poor collaborator. In a behavioral answer, what shows the strongest people-management judgment?", options:["You gave specific behavioral feedback, agreed on concrete changes, and coached the follow-through","You reassigned them to solo work so that collaboration no longer mattered","You raised it once in their annual review so that it was formally documented","You let the team's frustration build until the person eventually self-corrected"], correct:[0], why:"The signal is direct, specific, timely feedback plus coaching toward observable change. Routing them to solo work, deferring to the annual cycle, or waiting for self-correction all signal conflict-avoidance — the opposite of the coaching behavior."},
+  {id:"q1v58hhk", topic:"People Growth", diff:"tricky", level:"Senior", type:"single", q:"Telling a \"drove a promotion\" story, how should you frame your role versus the engineer's?", options:["Credit their work for clearing the bar, and make YOUR sponsorship, stretch assignments, and case-building explicit","Emphasize that you personally did much of the work that ultimately got them promoted","Keep the whole story in \"we\" throughout so that it sounds appropriately collaborative","Focus mainly on how the promotion committee weighed the evidence and decided"], correct:[0], why:"Be honest about \"I vs we\": the engineer earns the bar, and your manager value is the sponsorship, stretch work, and promotion case you built. Over-claiming their work reads as credit-stealing, pure \"we\" hides your contribution, and the committee framing removes you from the story.", src:"behavioral-story-craft.html"},
+  {id:"q5mpnlr", topic:"People Growth", diff:"basic", level:"Mid", type:"single", q:"Which is the strongest \"retained an at-risk engineer\" story?", options:["You diagnosed why they were disengaged, fixed the root cause, and they re-committed with measurable re-engagement","You gave them a large off-cycle raise so that they would decide to stay","You promised them a near-term promotion you were not sure you could actually deliver","You asked HR to step in and handle the retention conversation on your behalf"], correct:[0], why:"Retention signal = you understood the real driver (growth, scope, manager fit) and changed something durable. A money-only fix, an undeliverable promise, or outsourcing the conversation to HR all show weak ownership."},
+  {id:"qdfhvrl", topic:"People Growth", diff:"tricky", level:"Staff", type:"multi", q:"Which elements strengthen a people-growth story for an EM loop? (Select all that apply)", options:["A specific named situation with the person's starting level and scope","A quantified or concrete development outcome such as a promotion or scope increase","One honest line of reflection on what you would do differently next time","A complete list of every 1:1 topic you covered with them over the year"], correct:[0,1,2], why:"Specificity, a concrete outcome, and a reflection all add signal. An exhaustive 1:1 log is noise — it shows activity, not judgment or impact.", src:"behavioral-story-craft.html"},
+  {id:"q1eogvly", topic:"Conflict", diff:"basic", level:"Mid", type:"single", q:"Two senior engineers are deadlocked over an architectural direction. Which response shows the strongest conflict-management signal?", options:["You facilitated a decision on explicit criteria, made the call when needed, and kept both engineers committed","You let the more senior of the two engineers win in order to end the argument","You escalated the architectural decision up to your own manager to settle it","You averaged the two competing designs into a middle-ground compromise"], correct:[0], why:"Strong conflict signal: surface the real decision criteria, drive to a decision (deciding yourself if needed), and preserve commitment. Deferring to seniority, escalating, or a mushy compromise all dodge the judgment being tested."},
+  {id:"q1prk8ps", topic:"Conflict", diff:"tricky", level:"Senior", type:"single", q:"Telling \"the hardest conversation you had with a report,\" what most strengthens the answer?", options:["The real tension in the moment and how you stayed fair while still being direct","How everyone ended up perfectly happy with no lingering friction afterward","How you softened the message so much that it was not really a hard conversation","That you avoided the conversation for a while until the issue resolved itself"], correct:[0], why:"Interviewers want real friction handled directly and fairly. \"Everyone was happy,\" a softened message, or avoidance all read as low-stakes or evasive and remove the very signal the question probes.", src:"behavioral-story-craft.html"},
+  {id:"q9b0idy", topic:"Conflict", diff:"basic", level:"Senior", type:"single", q:"For \"a disagreement with your own manager,\" which framing signals the most maturity?", options:["You made your case with evidence, then disagreed-and-committed once the call was made","You quietly went around your manager and took it to their boss instead","You complied silently in the moment purely to avoid any friction","You kept relitigating the decision repeatedly after it had already been made"], correct:[0], why:"Disagree-and-commit with evidence is the mature signal: advocate hard, then support the decision. Going around them, silent compliance, or relitigating all signal poor upward management."},
+  {id:"q3e04on", topic:"Conflict", diff:"tricky", level:"Staff", type:"single", q:"In a story where you mediated between two people in conflict, what is the subtle trap to avoid?", options:["Telling it so that you are the hero who single-handedly solved everything yourself","Naming the specific behaviors that each person needed to change going forward","Explaining the criteria you used to stay neutral between the two of them","Describing the durable outcome and working relationship after the mediation"], correct:[0], why:"The \"hero manager\" framing — solving it all yourself — signals a failure to empower and can undercut a mediation story. Naming behaviors, explaining your neutral criteria, and showing the durable outcome are all strengths.", src:"behavioral-story-craft.html"},
+  {id:"q1m2j4aj", topic:"Conflict", diff:"basic", level:"Mid", type:"single", q:"A high performer is becoming toxic to the team. Which story choice signals the right judgment?", options:["You set a clear behavioral bar, held it despite their output, and acted when nothing changed","You tolerated the behavior because their output was simply too valuable to risk losing","You quietly moved the rest of the team around them to reduce the friction","You only addressed it after several teammates had already threatened to quit"], correct:[0], why:"Signal: results don't buy a pass on behavior — you set the bar and act. Tolerating it, reorganizing around them, or waiting for attrition all show you let impact override team health."},
+  {id:"q17q68cs", topic:"Conflict", diff:"tricky", level:"Senior", type:"single", q:"You gave feedback the person strongly rejected. What best demonstrates the competency?", options:["You grounded it in specific observed behavior and its impact, and stayed on the message","You withdrew the feedback once they pushed back hard against it","You cited that \"others have noticed it too\" without offering any specifics","You reframed it as merely your personal opinion to lower the stakes"], correct:[0], why:"Specific observed behavior plus its impact is what survives pushback. Withdrawing it, a vague \"others noticed,\" or downgrading it to \"just my opinion\" all collapse under disagreement and signal weak conviction.", src:"behavioral-story-craft.html"},
+  {id:"qneglzr", topic:"Influence w/o Authority", diff:"basic", level:"Senior", type:"single", q:"Which story best demonstrates \"influence without authority\"?", options:["You aligned several peer teams behind a standard using shared data and incentives, with no power to mandate it","You mandated the change directly because it fell squarely within your own team's remit","Your director ordered the other teams to comply with the new approach","You built the entire change alone and shipped it inside just your own team"], correct:[0], why:"The competency is getting outcomes across teams you don't control, via credibility and persuasion. A mandate, a director's order, or solo in-team work all remove the \"without authority\" element being tested."},
+  {id:"q1bp6sel", topic:"Influence w/o Authority", diff:"tricky", level:"Staff", type:"single", q:"A partner team won't prioritize your work. What is the strongest influence move to highlight?", options:["You connected your ask to their own goals and made the trade-off visible to a shared stakeholder","You escalated to their manager to force the prioritization through immediately","You built the thing entirely yourself so that you would not need them at all","You waited for the next planning cycle and hoped your work would get picked up"], correct:[0], why:"Reframing your ask in terms of THEIR goals (and surfacing the trade-off to a shared stakeholder) is durable influence. Immediate escalation burns capital, building it yourself dodges the skill, and waiting shows no agency."},
+  {id:"q56h0bb", topic:"Influence w/o Authority", diff:"basic", level:"Senior", type:"single", q:"For \"a time you changed a leader's mind,\" what signals the competency best?", options:["You brought evidence and a crisp recommendation that actually shifted the decision","You wore them down by raising the same point over and over again","You got several more-senior people to apply pressure on your behalf","They happened to change their own mind on it some time later anyway"], correct:[0], why:"Evidence plus a clear recommendation is the influence signal. Persistence-as-attrition, proxy pressure, or a coincidental later change don't demonstrate your own persuasive judgment."},
+  {id:"q1c4bxp5", topic:"Influence w/o Authority", diff:"tricky", level:"Staff", type:"single", q:"You drove org-wide adoption of a tool or standard. What most strengthens the story?", options:["You made adoption easy and showcased early adopters' wins to pull other teams in","You announced it broadly and assumed the other teams would simply comply","You measured adoption only by counting how many teams you had told about it","You required a VP-level mandate before any team would agree to move"], correct:[0], why:"Lowering friction plus demonstrating early wins is how influence scales. Broad announcements, a vanity \"we told N teams\" metric, and reliance on a mandate all show weak organic influence."},
+  {id:"q6z6ym4", topic:"Influence w/o Authority", diff:"basic", level:"Senior", type:"single", q:"Stakeholders initially disagreed and you built alignment. What is the key signal?", options:["You found the shared goal underneath their stated positions and converged them on it","You let whichever stakeholder argued loudest effectively set the direction","You split the difference down the middle so that nobody would object","You delayed the decision until the disagreement quietly faded on its own"], correct:[0], why:"Surfacing the shared interest beneath stated positions is real alignment-building. Deferring to volume, splitting the difference, or waiting it out all avoid the judgment being tested."},
+  {id:"q1ftfgma", topic:"Influence w/o Authority", diff:"tricky", level:"Staff", type:"multi", q:"Which elements signal genuine influence-without-authority? (Select all that apply)", options:["You reframed your ask around the other party's incentives and goals","You relied on data and credibility rather than any positional power","You preserved the relationship for the sake of future collaboration","You secured a one-time win by escalating over the other party's head"], correct:[0,1,2], why:"Incentive-reframing, credibility, and relationship preservation are the durable influence signals. A one-time escalation win is the opposite — it spends authority you were meant to work without and damages future leverage."},
+  {id:"q17t8311", topic:"Ambiguity & Results", diff:"basic", level:"Senior", type:"single", q:"A project's goal and requirements were unclear. Which approach best signals \"driving results under ambiguity\"?", options:["You framed a hypothesis, defined success metrics, and made progress visible while adjusting","You waited for leadership to fully clarify the requirements before starting anything","You picked a direction quietly and hid all progress until it was perfect","You expanded scope until every conceivable possibility was somehow covered"], correct:[0], why:"Under ambiguity: form a hypothesis, define what \"done\" and \"good\" mean, ship, and adjust. Waiting, hiding progress, or boiling the ocean all signal discomfort with the ambiguity being tested."},
+  {id:"qx9xug8", topic:"Ambiguity & Results", diff:"tricky", level:"Staff", type:"single", q:"Your engineers want to start 11 projects at once. What is the strongest answer?", options:["You anchored on mission and impact-versus-effort, set an explicit cut line, and explained the \"no\"","You let the team start all of them in parallel at reduced capacity each","You picked whichever projects the loudest engineers most wanted to do","You deferred the decision indefinitely in order to keep everyone happy"], correct:[0], why:"Prioritization signal: anchor on strategy, make the cut line explicit, and communicate the trade-off. Starting everything, following volume, or deferring all dodge the decision the question is about.", src:"behavioral-best-practices.html"},
+  {id:"q11d2die", topic:"Ambiguity & Results", diff:"basic", level:"Senior", type:"single", q:"Delivering under a hard deadline with real constraints — what best shows judgment?", options:["You cut scope to the essential outcome and protected quality on whatever actually shipped","You added several people late in the project in order to hit the date","You kept the full scope and quietly let quality slip where nobody was looking","You hit the date by hiding the cut corners from your stakeholders"], correct:[0], why:"Cutting scope to the essential outcome, transparently, is the result-under-constraint signal. Adding late people (Brooks's law), silent quality erosion, and hidden corner-cutting all signal weak judgment.", src:"behavioral-best-practices.html"},
+  {id:"q2ij62e", topic:"Ambiguity & Results", diff:"tricky", level:"Staff", type:"single", q:"You changed direction mid-project on new information. What is the trap to avoid in the telling?", options:["Framing it as flip-flopping rather than as a deliberate, evidence-based pivot","Stating clearly the new signal that triggered the change of direction","Quantifying what the pivot ultimately saved or unlocked for the team","Noting how you re-aligned the team quickly after deciding to pivot"], correct:[0], why:"A pivot must read as a deliberate, evidence-driven decision — not indecision. The triggering signal, the quantified upside, and fast re-alignment are all strengths to keep in.", src:"behavioral-story-craft.html"},
+  {id:"q18fwogx", topic:"Ambiguity & Results", diff:"basic", level:"Mid", type:"single", q:"A project was slipping. Which response best signals results-orientation?", options:["You diagnosed the bottleneck, re-planned with the team, and communicated a revised credible plan","You pushed the team to work weekends until the project caught back up","You kept reporting the status as green and hoped to quietly recover the time","You used the status update mainly to blame the upstream dependency team"], correct:[0], why:"Diagnose, re-plan, then communicate a credible revised plan is the recovery signal. Crunch, watermelon status (green outside, red inside), and blame all signal weak ownership.", src:"behavioral-best-practices.html"},
+  {id:"q1jypbwt", topic:"Ambiguity & Results", diff:"tricky", level:"Staff", type:"single", q:"A decision you made with incomplete information. What best demonstrates the competency?", options:["You made a reversible bet, set a checkpoint to learn from, and committed to it","You waited until you had gathered near-complete certainty before deciding","You made the call and then never revisited your original assumptions","You polled the whole team and simply went with the majority view"], correct:[0], why:"Decide-with-a-checkpoint, especially for reversible \"two-way door\" calls, shows calibrated decisiveness. Waiting for certainty, never revisiting, or majority-polling all avoid the judgment being tested.", src:"behavioral-best-practices.html"},
+  {id:"qlu0vey", topic:"Hiring", diff:"basic", level:"Senior", type:"single", q:"Which story best signals strong hiring and team-building judgment?", options:["You defined the bar and the roles, built a balanced team, and tied the hires to measurable outcomes","You filled the open headcount as fast as possible in order to hit a number","You hired only people who closely resembled your single strongest current engineer","You let the recruiters make the final calls in order to save your own time"], correct:[0], why:"Signal: a deliberate bar, a balanced composition, and outcomes from the hires. Speed-only hiring, cloning one profile (homogeneity), or abdicating to recruiters all show weak hiring ownership."},
+  {id:"q1irk1nj", topic:"Hiring", diff:"tricky", level:"Staff", type:"single", q:"Asked for \"a hire you got right and one you got wrong,\" what most strengthens the answer?", options:["A specific miss, the signal you under-weighted, and how you changed your bar afterward","Only your success stories, in order to keep the overall impression positive","A miss that you blame entirely on the recruiter or on the candidate themselves","A vague \"sometimes it just doesn't work out\" without any real specifics"], correct:[0], why:"The learning — what you mis-read and how you adjusted your process — is the signal. Refusing to name a miss, externalizing the blame, or staying vague all dodge the self-aware judgment being probed.", src:"behavioral-story-craft.html"},
+  {id:"q5fimgf", topic:"Hiring", diff:"basic", level:"Senior", type:"single", q:"A tough call on a borderline candidate. Which approach signals the right bar?", options:["You identified the specific risk, sought disconfirming evidence, and defaulted to \"no\" when unresolved","You said yes mainly because the team was desperate for the extra headcount","You said yes largely because the candidate interviewed in a likeable way","You deferred entirely to the most senior interviewer's gut feeling"], correct:[0], why:"Naming the risk, testing it, and a \"when in doubt, no\" default all protect the bar. Desperation hires, likeability bias, and gut-deference are classic bar-lowering traps."},
+  {id:"qt8w3my", topic:"Hiring", diff:"tricky", level:"Staff", type:"single", q:"You improved a team's capability or balance. What is the strongest framing?", options:["You identified a specific capability gap and hired or developed deliberately to close it","You increased the headcount broadly and hoped the balance would improve on its own","You measured success only by diversity optics rather than by actual capability","You replaced underperformers rather than developing any of the existing people"], correct:[0], why:"A named gap closed by deliberate hiring or development is the signal. Broad headcount, optics-only framing, or replace-don't-develop all read as weak or performative."},
+  {id:"q8hswbq", topic:"Hiring", diff:"basic", level:"Mid", type:"single", q:"Asked \"what's your bar for a hire?\", what is the strongest kind of answer?", options:["A concrete, consistent standard tied to the role's signals, applied even under pressure","Whatever the team happens to need most at that particular moment","A gut feeling that you have gradually refined over many years of interviewing","Matching the level of the single strongest person already on the team"], correct:[0], why:"A concrete, role-tied, pressure-resistant bar is the signal. A situational bar, pure gut, or \"clone the best\" all indicate an inconsistent or biased standard."},
+  {id:"qb52q09", topic:"Hiring", diff:"tricky", level:"Staff", type:"single", q:"Onboarding someone into a high-impact role quickly — what best shows judgment?", options:["You set 30/60/90-day goals, paired them with context owners, and sequenced some early wins","You handed them the single hardest project on day one in order to test them","You left them to figure it all out to see whether they would sink or swim","You front-loaded every document on day one and assumed they would absorb it"], correct:[0], why:"A structured ramp — 30/60/90 goals, pairing with context owners, and sequenced early wins — is the signal. Trial by fire, sink-or-swim, and document-dumping all show weak onboarding judgment.", src:"behavioral-best-practices.html"},
+  {id:"q6y34x0", topic:"Underperformance", diff:"basic", level:"Senior", type:"single", q:"Walking through managing an underperformer, what is the strongest opening move?", options:["You diagnosed whether it was a skill, a will, or a context problem before acting","You started a formal PIP immediately in order to create a paper trail","You quietly reassigned their work to the stronger engineers on the team","You assumed they would improve once they noticed the team's frustration"], correct:[0], why:"Diagnosis first — skill versus will versus context — drives the right intervention. Jumping straight to a PIP, silently rerouting work, or hoping all skip the judgment the question tests.", src:"behavioral-best-practices.html"},
+  {id:"q9nhvsk", topic:"Underperformance", diff:"tricky", level:"Staff", type:"single", q:"A turnaround that worked — what specifically should you emphasize?", options:["The explicit, observable expectations you set and how you coached and then tracked them","That the person suddenly improved largely on their own after one conversation","How patient you were throughout, without naming any concrete change you drove","That you lowered the performance bar somewhat so that they could meet it"], correct:[0], why:"Observable expectations plus coaching plus tracking is the turnaround signal. Spontaneous improvement, vague patience, or bar-lowering don't demonstrate your managerial actions.", src:"behavioral-story-craft.html"},
+  {id:"qgg3kyc", topic:"Underperformance", diff:"basic", level:"Senior", type:"single", q:"How do you distinguish a skill problem from a will problem in an underperformance story?", options:["Skill means \"can't yet\" so you coach or train; will means \"won't\" so it's motivation or fit","It doesn't really matter much in practice, because the right response is the same either way","You assume that it is essentially always a will problem and move straight to escalation","You assume that it is essentially always a skill problem and simply send them to training"], correct:[0], why:"Skill versus will determines the intervention (coaching versus motivation or fit), and you diagnose it from evidence. Treating them identically or defaulting to one shows shallow judgment."},
+  {id:"qhrt7y5", topic:"Underperformance", diff:"tricky", level:"Staff", type:"single", q:"A turnaround that failed, and you had to part ways. What signals strong judgment?", options:["You acted decisively and humanely, with clear expectations and documentation throughout","You delayed the decision for many months while hoping it would resolve itself","You let the team carry the person indefinitely so as to avoid the hard call","You managed them out abruptly without any prior expectation-setting at all"], correct:[0], why:"Decisive plus humane plus documented is the signal interviewers want — including the willingness to make the hard call.", accept:"Giving it reasonable time is fine, but the story must still end in a clear, timely decision — open-ended delay is the weakness.", src:"behavioral-story-craft.html"},
+  {id:"q37o2e9", topic:"Underperformance", diff:"basic", level:"Mid", type:"single", q:"You inherited a team with a known performance issue. What is the best first signal?", options:["You formed your own evidence-based view before accepting the prior manager's narrative","You acted immediately on your predecessor's assessment of the situation","You ignored the issue at first in order to avoid early conflict on the team","You announced changes broadly before really understanding the context"], correct:[0], why:"Forming an independent, evidence-based view first is the signal. Inheriting a narrative uncritically, avoiding it, or acting before understanding all show weak judgment."},
+  {id:"qu40gaf", topic:"Underperformance", diff:"tricky", level:"Staff", type:"single", q:"Telling \"the first time you gave hard performance feedback,\" what is the trap?", options:["Making it so sanitized that there was no real difficulty or stakes left in the story","Naming the specific performance gap and the impact it was having","Describing how you prepared for it and how you followed up afterward","Adding one honest line on what you would do differently next time"], correct:[0], why:"A sanitized, low-stakes version removes the signal. The specific gap, your preparation and follow-up, and a reflection are all strengths to keep.", src:"behavioral-story-craft.html"},
+  {id:"qu7tzyw", topic:"Strategy & Vision", diff:"basic", level:"Senior", type:"single", q:"Which story best signals \"set a direction for your team\"?", options:["You defined a direction tied to business impact, aligned the team, and it guided their daily decisions","You wrote a polished vision document that nobody really referenced afterward","You adopted whatever direction leadership handed down, verbatim and unchanged","You let each engineer pick their own direction independently of the others"], correct:[0], why:"Direction-setting = a business-tied vision the team understood and used to make decisions. An ignored doc, a pure top-down relay, or no direction at all all fail the signal.", src:"behavioral-best-practices.html"},
+  {id:"q1x55mqs", topic:"Strategy & Vision", diff:"tricky", level:"Staff", type:"single", q:"Balancing short-term delivery against long-term technical health — what is the strongest framing?", options:["You budgeted a steady share of capacity for technical health and tied it to delivery outcomes","You stopped feature work entirely for a single big-bang rewrite of the system","You always shipped features and deferred the technical debt indefinitely","You let each engineer fix whatever piece of debt they personally disliked most"], correct:[0], why:"A steady budget tied to outcomes is the sustainable signal. Stop-the-world rewrites, indefinite deferral, and ungoverned debt-picking all signal weak strategic judgment.", src:"behavioral-best-practices.html"},
+  {id:"qk5dmcd", topic:"Strategy & Vision", diff:"basic", level:"Senior", type:"single", q:"You aligned your team's roadmap to broader org goals. What is the key signal?", options:["You traced each major bet to an org objective and cut the work that didn't ladder up","You kept the roadmap the team already preferred and simply relabeled it","You added every leadership request to the plan without re-prioritizing anything","You aligned on the slides, but the team's actual day-to-day work never changed"], correct:[0], why:"Tracing each bet to an objective and cutting what doesn't ladder up is real alignment. Relabeling, request-stacking, and slide-only alignment are all hollow."},
+  {id:"q13l7u9r", topic:"Strategy & Vision", diff:"tricky", level:"Staff", type:"single", q:"You advocated for investment such as headcount, a refactor, or a platform. What best shows the competency?", options:["You quantified the cost of inaction and the expected return, and won the resources","You argued mainly that it was simply the technically correct thing to do","You requested it repeatedly over time until leadership eventually relented","You built it quietly without approval and then asked for forgiveness later"], correct:[0], why:"A quantified cost-of-inaction plus expected return is what wins investment and signals business judgment. \"Technically right,\" persistence, and unsanctioned building all signal a weaker case.", src:"behavioral-best-practices.html"},
+  {id:"q1wc3xn3", topic:"Strategy & Vision", diff:"basic", level:"Senior", type:"single", q:"You had to communicate a strategy your team was skeptical about. What is the strongest move?", options:["You explained the why honestly, engaged their objections, and connected it back to their work","You presented it as a done deal that was already settled and then moved on","You privately agreed with them that it was wrong while still selling it upward","You let the skepticism slide rather than address it directly with the team"], correct:[0], why:"An honest why, engaging objections, and connecting it to their work all build real buy-in. A decree, two-faced selling, or ignoring the skepticism all erode trust."},
+  {id:"q5r9k78", topic:"Strategy & Vision", diff:"tricky", level:"Staff", type:"single", q:"Describing a long-term bet you made, what most strengthens it?", options:["The thesis, the leading indicators you watched, and the eventual outcome — including what you'd refine","Only that it happened to work out in the end, with no underlying mechanism","That you committed to it fully and never re-examined the original thesis","That leadership told you to make the bet and you simply carried it out"], correct:[0], why:"Thesis plus leading indicators plus outcome plus refinement shows strategic thinking. Outcome-only, never-re-examined, or \"I was told to\" all remove your strategic judgment from the story.", src:"behavioral-story-craft.html"},
+  {id:"q17d0sig", topic:"Self-Awareness", diff:"basic", level:"Senior", type:"single", q:"For \"tell me about a significant failure,\" what makes the answer strong?", options:["A real failure you owned, the lesson you drew, and the specific change you made afterward","A disguised humblebrag along the lines of \"I just cared a little too much\"","A failure that you attribute mainly to other people or to the circumstances","A trivial mistake that ultimately had no real consequence for anyone"], correct:[0], why:"Ownership plus lesson plus concrete change is the self-awareness signal. Humblebrags, blame-shifting, and trivial \"failures\" all signal you can't engage with real failure — a Googleyness red flag.", src:"behavioral-story-craft.html"},
+  {id:"q39lmpx", topic:"Self-Awareness", diff:"tricky", level:"Staff", type:"single", q:"You received hard feedback. What best demonstrates self-awareness?", options:["You took it seriously, changed a specific behavior, and can point to the resulting outcome","You carefully explained why the feedback was actually mistaken in the first place","You accepted it verbally in the moment but ultimately changed nothing at all","You only went on to seek out feedback that confirmed your existing strengths"], correct:[0], why:"Acting on feedback with an observable change is the signal. Rebutting it, hollow acceptance, or confirmation-seeking all show low coachability."},
+  {id:"qluptvr", topic:"Self-Awareness", diff:"basic", level:"Mid", type:"single", q:"Telling \"a decision you got wrong,\" what is the strongest structure?", options:["What you decided, the signal you missed, how you recovered, and what you'd do differently","How it was not really your decision to make in the first place anyway","How the situation turned out perfectly fine in the end regardless of the call","How, given the same information, you would confidently make the exact same call"], correct:[0], why:"Decision, then missed signal, then recovery, then reflection is the full self-aware arc. Disowning it, \"it was fine anyway,\" or \"I'd do it identically\" all dodge the learning.", src:"behavioral-story-craft.html"},
+  {id:"q1r5hwep", topic:"Self-Awareness", diff:"tricky", level:"Staff", type:"single", q:"An early management mistake you've since corrected. What signals real growth?", options:["A concrete early-career habit, such as solving everything yourself, and the deliberate change you made","A claim that you have never really made any meaningful management mistakes","A \"mistake\" framed so carefully that it actually sounds like a strength","A mistake mentioned with no description of what you actually changed after"], correct:[0], why:"A named early habit plus the deliberate correction shows real growth. Denying mistakes, strength-framing, or omitting the change all fail the self-awareness probe."},
+  {id:"q1xy1rjc", topic:"Self-Awareness", diff:"basic", level:"Senior", type:"single", q:"A time you admitted you were wrong in front of your team — what is the signal?", options:["You owned it openly, which built trust and modeled intellectual honesty for the team","You quietly fixed it on your own so that nobody noticed you had been wrong","You let the team go on believing that a more senior person was at fault","You avoided admitting it at all in order to protect your authority"], correct:[0], why:"Open ownership models intellectual honesty and builds trust — the Googleyness signal. Hiding it, deflecting the blame, or protecting your ego all signal the opposite."},
+  {id:"qy50jp1", topic:"Self-Awareness", diff:"tricky", level:"Staff", type:"single", q:"Asked \"what feedback do you most consistently get?\", what is the strongest answer?", options:["A genuine recurring growth area and the concrete steps you are actively taking on it","A non-answer along the lines of \"people tell me that I work too hard\"","A confident claim that the feedback you receive has been uniformly positive","A real recurring weakness named with no concrete action attached to it"], correct:[0], why:"A real recurring area plus active steps shows honest self-assessment and a growth mindset. A humblebrag, \"all positive,\" or naming a weakness with no action all ring false.", src:"behavioral-story-craft.html"}
+];
+
+/* ============================================================
+   SOURCES — fallback HelloInterview page per topic.
+   A question's own `src` wins; otherwise we use the topic's page.
+   ============================================================ */
+const B = "";
+const SOURCES = {
+  "People Growth":B+"behavioral-story-map.html",
+  "Conflict":B+"behavioral-story-map.html",
+  "Influence w/o Authority":B+"behavioral-story-map.html",
+  "Ambiguity & Results":B+"behavioral-story-map.html",
+  "Hiring":B+"behavioral-story-map.html",
+  "Underperformance":B+"behavioral-story-map.html",
+  "Strategy & Vision":B+"behavioral-story-map.html",
+  "Self-Awareness":B+"behavioral-story-map.html"
+};
+function sourceFor(q){ return q.src || SOURCES[q.topic] || B+"in-a-hurry/introduction"; }
+function sourceLabel(url){
+  const m={"behavioral-story-map.html":"Guide: Story Map","behavioral-best-practices.html":"Guide: Best Practices","behavioral-story-craft.html":"Guide: Story Craft"};
+  if(m[url]) return m[url];
+  return "Behavioral Guide";
+}
+
+/* ============================================================
+   STORAGE
+   ============================================================ */
+const LS_KEY = "bq_history_v1";
+function loadStore(){
+  try{ return JSON.parse(localStorage.getItem(LS_KEY)) || defaultStore(); }
+  catch(e){ return defaultStore(); }
+}
+function defaultStore(){ return {topics:{}, sessions:[], levels:{}, missed:{}}; }
+function saveStore(s){ try{ localStorage.setItem(LS_KEY, JSON.stringify(s)); }catch(e){} }
+let STORE = loadStore();
+// migrate older saved stores that predate levels/missed
+if(!STORE.levels) STORE.levels = {};
+if(!STORE.missed) STORE.missed = {};
+
+function topicStat(t){
+  if(!STORE.topics[t]) STORE.topics[t] = {correct:0, total:0};
+  return STORE.topics[t];
+}
+function recordAnswer(q, correct){
+  const ts = topicStat(q.topic);
+  ts.total++; if(correct) ts.correct++;
+  // per-seniority-level tally
+  const lv = q.level || "Unknown";
+  if(!STORE.levels[lv]) STORE.levels[lv] = {correct:0, total:0};
+  STORE.levels[lv].total++; if(correct) STORE.levels[lv].correct++;
+  // track missed questions by id (for targeted future question generation)
+  if(!correct){
+    const prev = STORE.missed[q.id];
+    STORE.missed[q.id] = {
+      id:q.id, topic:q.topic, level:lv,
+      question:q.q,
+      misses:(prev?prev.misses:0)+1,
+      lastMissed:Date.now()
+    };
+  } else if(STORE.missed[q.id]){
+    // got it right later — mark recovered but keep the record
+    STORE.missed[q.id].recoveredAt = Date.now();
+  }
+}
+function isWeak(t){
+  const s = STORE.topics[t];
+  if(!s || s.total < 3) return false;
+  return (s.correct/s.total) < 0.6;
+}
+function allTopics(){
+  return [...new Set(QUESTIONS.map(q=>q.topic))].sort();
+}
+
+/* ============================================================
+   SETUP VIEW
+   ============================================================ */
+const selectedTopics = new Set(allTopics());
+const topicChipsEl = document.getElementById("topicChips");
+
+function topicCount(t){ return QUESTIONS.filter(q=>q.topic===t).length; }
+
+function renderTopicChips(){
+  topicChipsEl.innerHTML = "";
+  allTopics().forEach(t=>{
+    const c = document.createElement("div");
+    c.className = "chip" + (selectedTopics.has(t) ? " on":"");
+    const weak = isWeak(t);
+    c.innerHTML = `${weak?'⚠️ ':''}${t} <span class="ct">${topicCount(t)}</span>`;
+    if(weak) c.title = "Weak topic — accuracy below 60%";
+    c.onclick = ()=>{
+      if(selectedTopics.has(t)) selectedTopics.delete(t); else selectedTopics.add(t);
+      renderTopicChips(); updatePoolInfo();
+    };
+    topicChipsEl.appendChild(c);
+  });
+}
+document.getElementById("selAll").onclick = ()=>{ allTopics().forEach(t=>selectedTopics.add(t)); renderTopicChips(); updatePoolInfo(); };
+document.getElementById("selNone").onclick = ()=>{ selectedTopics.clear(); renderTopicChips(); updatePoolInfo(); };
+document.getElementById("selWeak").onclick = ()=>{
+  const weak = allTopics().filter(isWeak);
+  selectedTopics.clear();
+  if(weak.length){ weak.forEach(t=>selectedTopics.add(t)); }
+  else { allTopics().forEach(t=>selectedTopics.add(t)); alert("No weak topics yet (need ≥3 answers & <60%). Selected all."); }
+  renderTopicChips(); updatePoolInfo();
+};
+
+function matchingPool(){
+  const diff = document.getElementById("diffSel").value;
+  const level = document.getElementById("levelSel").value;
+  return QUESTIONS.filter(q=> selectedTopics.has(q.topic)
+    && (diff==="all"||q.diff===diff)
+    && (level==="all"||q.level===level));
+}
+function updatePoolInfo(){
+  const n = matchingPool().length;
+  document.getElementById("poolInfo").textContent = `${n} question${n!==1?'s':''} in pool`;
+  document.getElementById("startBtn").disabled = n===0;
+}
+document.getElementById("diffSel").onchange = updatePoolInfo;
+document.getElementById("levelSel").onchange = updatePoolInfo;
+
+/* ============================================================
+   QUIZ ENGINE
+   ============================================================ */
+let session = null;
+
+function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
+
+function startQuiz(pool){
+  let qs = pool.slice();
+  if(document.getElementById("shuffleChk").checked) qs = shuffle(qs);
+  const len = parseInt(document.getElementById("lenSel").value,10);
+  if(len>0) qs = qs.slice(0,len);
+  // shuffle option order per question while tracking correct indices
+  qs = qs.map(q=>{
+    const idx = q.options.map((_,i)=>i);
+    const order = document.getElementById("shuffleChk").checked ? shuffle(idx) : idx;
+    return {
+      ...q,
+      _opts: order.map(i=>q.options[i]),
+      _correct: order.map((orig,newPos)=> q.correct.includes(orig)?newPos:-1).filter(x=>x>=0),
+    };
+  });
+  session = {qs, i:0, picks:[], results:[], answered:[]};
+  show("quiz");
+  renderQ();
+}
+
+function renderQ(){
+  const s = session, q = s.qs[s.i];
+  if(!s.picks[s.i]) s.picks[s.i] = new Set();
+  const picks = s.picks[s.i];
+  const answered = s.answered[s.i];
+  document.getElementById("progFill").style.width = ((s.i)/s.qs.length*100)+"%";
+
+  const isMulti = q.type==="multi";
+  let html = `
+    <div class="qtop">
+      <div class="qmeta">
+        <span class="tag topic">${q.topic}</span>
+        <span class="tag lvl-${q.level}" title="Seniority level at which this answer is expected">${q.level}</span>
+        <span class="tag ${q.diff==='tricky'?'tricky':''}">${q.diff}</span>
+        <span class="tag">${isMulti?'multi-select':'single'}</span>
+      </div>
+      <span class="muted">Q ${s.i+1} / ${s.qs.length} · <span style="opacity:.6" title="question id (for debugging)">#${q.id}</span></span>
+    </div>
+    <div class="qtext">${q.q}</div>
+    ${isMulti?'<div class="multi-note">Select all that apply</div>':''}
+    <div id="opts">`;
+  q._opts.forEach((opt,i)=>{
+    let cls = "opt " + (isMulti?"":"radio");
+    let badge = "";
+    if(answered){
+      cls += " locked";
+      const correct = q._correct.includes(i);
+      const picked = picks.has(i);
+      if(correct){ cls+=" correct"; badge="✓"; }
+      else if(picked){ cls+=" wrong"; badge="✕"; }
+    } else if(picks.has(i)){ cls+=" sel"; badge = isMulti?"✓":"●"; }
+    html += `<div class="${cls}" data-i="${i}"><div class="box">${badge}</div><div>${opt}</div></div>`;
+  });
+  html += `</div>`;
+  // feedback
+  const srcUrl = sourceFor(q);
+  html += `<div class="feedback ${answered?(answered.correct?'good show':'bad show'):''}" id="fb">
+    <b>${answered? (answered.correct?'✅ Correct':'❌ Not quite') : ''}</b>
+    <span class="why">${answered? q.why : ''}</span>
+    ${answered && q.accept ? `<div class="accept">↔ Also defensible: ${q.accept}</div>` : ''}
+    ${answered && q.more ? `<div class="more">${q.more}</div>` : ''}
+    ${answered ? `<div class="src">📖 Source: <a href="${srcUrl}" target="_blank" rel="noopener">${sourceLabel(srcUrl)}</a></div>` : ''}
+  </div>`;
+  document.getElementById("qCard").innerHTML = html;
+
+  // option clicks
+  if(!answered){
+    document.querySelectorAll("#opts .opt").forEach(el=>{
+      el.onclick = ()=>{
+        const i = parseInt(el.dataset.i,10);
+        if(isMulti){ picks.has(i)?picks.delete(i):picks.add(i); }
+        else { picks.clear(); picks.add(i); }
+        renderQ();
+      };
+    });
+  }
+
+  // buttons
+  document.getElementById("checkBtn").classList.toggle("hide", !!answered);
+  document.getElementById("checkBtn").disabled = picks.size===0;
+  document.getElementById("nextBtn").disabled = !answered;
+  document.getElementById("nextBtn").textContent = (s.i===s.qs.length-1)?"Finish ✓":"Next →";
+}
+
+document.getElementById("checkBtn").onclick = ()=>{
+  const s = session, q = s.qs[s.i], picks = s.picks[s.i];
+  if(picks.size===0) return;
+  const correctSet = new Set(q._correct);
+  const isCorrect = picks.size===correctSet.size && [...picks].every(p=>correctSet.has(p));
+  s.answered[s.i] = {correct:isCorrect};
+  s.results[s.i] = {topic:q.topic, correct:isCorrect};
+  recordAnswer(q, isCorrect);
+  saveStore(STORE);
+  renderQ();
+};
+
+document.getElementById("nextBtn").onclick = ()=>{
+  const s = session;
+  if(s.i < s.qs.length-1){ s.i++; renderQ(); }
+  else finishQuiz();
+};
+document.getElementById("quitBtn").onclick = ()=>{ if(confirm("Quit this session? Answered questions are already saved.")) backToSetup(); };
+
+function finishQuiz(){
+  const s = session;
+  const answered = s.results.filter(Boolean);
+  const correct = answered.filter(r=>r.correct).length;
+  const total = answered.length;
+  // per-topic this session
+  const byTopic = {};
+  answered.forEach(r=>{ (byTopic[r.topic]=byTopic[r.topic]||{c:0,t:0}); byTopic[r.topic].t++; if(r.correct)byTopic[r.topic].c++; });
+  // save session summary
+  STORE.sessions.unshift({date:Date.now(), correct, total, topics:Object.keys(byTopic)});
+  STORE.sessions = STORE.sessions.slice(0,50);
+  saveStore(STORE);
+
+  document.getElementById("progFill").style.width = "100%";
+  const pct = total? Math.round(correct/total*100):0;
+  document.getElementById("resStats").innerHTML = `
+    <div class="stat"><div class="n">${correct}/${total}</div><div class="l">Correct</div></div>
+    <div class="stat"><div class="n" style="color:${pct>=80?'var(--ok)':pct>=60?'var(--warn)':'var(--bad)'}">${pct}%</div><div class="l">Accuracy</div></div>
+    <div class="stat"><div class="n">${Object.keys(byTopic).length}</div><div class="l">Topics</div></div>`;
+  let tHtml = "";
+  Object.entries(byTopic).sort((a,b)=> (a[1].c/a[1].t)-(b[1].c/b[1].t)).forEach(([t,o])=>{
+    const p = Math.round(o.c/o.t*100);
+    const col = p>=80?'var(--ok)':p>=60?'var(--warn)':'var(--bad)';
+    tHtml += `<div class="bar-row"><div class="name">${t}</div>
+      <div class="track"><div class="fill" style="width:${p}%;background:${col}"></div></div>
+      <div class="pct">${o.c}/${o.t} · ${p}%</div></div>`;
+  });
+  document.getElementById("resTopics").innerHTML = tHtml || '<span class="muted">No answers recorded.</span>';
+  show("result");
+}
+
+document.getElementById("againBtn").onclick = backToSetup;
+document.getElementById("retryWeakBtn").onclick = ()=>{
+  backToSetup();
+  document.getElementById("selWeak").click();
+};
+
+/* ============================================================
+   STATS VIEW
+   ============================================================ */
+function renderStats(){
+  let tot=0, cor=0;
+  Object.values(STORE.topics).forEach(s=>{ tot+=s.total; cor+=s.correct; });
+  const weakCount = allTopics().filter(isWeak).length;
+  const pct = tot? Math.round(cor/tot*100):0;
+  document.getElementById("allStats").innerHTML = `
+    <div class="stat"><div class="n">${tot}</div><div class="l">Answered</div></div>
+    <div class="stat"><div class="n" style="color:${pct>=80?'var(--ok)':pct>=60?'var(--warn)':'var(--bad)'}">${pct}%</div><div class="l">Accuracy</div></div>
+    <div class="stat"><div class="n">${STORE.sessions.length}</div><div class="l">Sessions</div></div>
+    <div class="stat"><div class="n" style="color:${weakCount?'var(--bad)':'var(--ok)'}">${weakCount}</div><div class="l">Weak topics</div></div>`;
+
+  // topic bars (all topics, even unattempted)
+  let bars = "";
+  allTopics().map(t=>{
+    const s = STORE.topics[t] || {correct:0,total:0};
+    const p = s.total? Math.round(s.correct/s.total*100) : 0;
+    return {t, s, p, weak:isWeak(t)};
+  }).sort((a,b)=>{
+    if(a.s.total===0 && b.s.total>0) return 1;
+    if(b.s.total===0 && a.s.total>0) return -1;
+    return a.p-b.p;
+  }).forEach(({t,s,p,weak})=>{
+    const col = s.total===0?'var(--line)': p>=80?'var(--ok)':p>=60?'var(--warn)':'var(--bad)';
+    bars += `<div class="bar-row">
+      <div class="name ${weak?'weak':''}">${weak?'⚠️ ':''}${t}</div>
+      <div class="track"><div class="fill" style="width:${s.total?p:0}%;background:${col}"></div></div>
+      <div class="pct">${s.total? s.correct+'/'+s.total+' · '+p+'%' : '—'}</div></div>`;
+  });
+  document.getElementById("topicBars").innerHTML = bars;
+
+  // history
+  let h = "";
+  if(STORE.sessions.length===0) h = '<span class="muted">No sessions yet.</span>';
+  STORE.sessions.forEach(se=>{
+    const d = new Date(se.date);
+    const p = se.total? Math.round(se.correct/se.total*100):0;
+    const col = p>=80?'var(--ok)':p>=60?'var(--warn)':'var(--bad)';
+    h += `<div class="hist-item">
+      <span>${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
+        <span class="muted">· ${se.topics.length} topic${se.topics.length!==1?'s':''}</span></span>
+      <span style="color:${col};font-weight:600">${se.correct}/${se.total} · ${p}%</span></div>`;
+  });
+  document.getElementById("histList").innerHTML = h;
+}
+document.getElementById("resetBtn").onclick = ()=>{
+  if(confirm("Erase ALL history and topic stats? This can't be undone.")){
+    STORE = defaultStore(); saveStore(STORE);
+    renderStats(); renderTopicChips();
+  }
+};
+
+// Build a rich weak-topics analysis object for export
+function buildWeakAnalysis(){
+  const topicMeta = {}; // topic -> {total questions in bank, levels}
+  QUESTIONS.forEach(q=>{ (topicMeta[q.topic]=topicMeta[q.topic]||{bank:0}); topicMeta[q.topic].bank++; });
+  const byTopic = allTopics().map(t=>{
+    const s = STORE.topics[t] || {correct:0,total:0};
+    const acc = s.total ? +(s.correct/s.total).toFixed(3) : null;
+    return {
+      topic:t,
+      attempts:s.total, correct:s.correct,
+      accuracy:acc,
+      weak:isWeak(t),
+      bankSize:topicMeta[t]?topicMeta[t].bank:0,
+      source: SOURCES[t] || (B+"in-a-hurry/introduction")
+    };
+  });
+  const weakTopics = byTopic.filter(x=>x.weak)
+    .sort((a,b)=>(a.accuracy??1)-(b.accuracy??1))
+    .map(x=>({...x, recommendation:`Generate more detailed ${x.topic} questions; current accuracy ${(x.accuracy*100).toFixed(0)}% over ${x.attempts} attempts. Ground new questions in: ${x.source}`}));
+  // also surface "untested" topics (no attempts) as a softer signal
+  const untested = byTopic.filter(x=>x.attempts===0).map(x=>x.topic);
+  const byLevel = {};
+  Object.entries(STORE.levels||{}).forEach(([lv,s])=>{
+    byLevel[lv] = {attempts:s.total, correct:s.correct, accuracy:s.total?+(s.correct/s.total).toFixed(3):null};
+  });
+  const missed = Object.values(STORE.missed||{})
+    .sort((a,b)=>b.misses-a.misses)
+    .map(m=>({
+      id:m.id, topic:m.topic, level:m.level,
+      question:m.question,
+      misses:m.misses,
+      recovered: !!m.recoveredAt,
+      source: SOURCES[m.topic] || (B+"in-a-hurry/introduction")
+    }));
+  let tot=0,cor=0; Object.values(STORE.topics).forEach(s=>{tot+=s.total;cor+=s.correct;});
+  return {
+    schema:"sd-quiz-weak-analysis/v1",
+    exportedAt:new Date().toISOString(),
+    summary:{
+      totalAnswered:tot, totalCorrect:cor,
+      overallAccuracy: tot?+(cor/tot).toFixed(3):null,
+      sessions:(STORE.sessions||[]).length,
+      weakTopicCount:weakTopics.length,
+      bankSize:QUESTIONS.length
+    },
+    weakTopics,
+    untestedTopics:untested,
+    byLevel,
+    byTopic,
+    missedQuestions:missed,
+    note:"weak = accuracy < 60% over >= 3 attempts. Use weakTopics + missedQuestions (by id) to drive targeted, more-detailed question generation; each entry links its HelloInterview source."
+  };
+}
+document.getElementById("exportBtn").onclick = ()=>{
+  const data = buildWeakAnalysis();
+  if(data.summary.totalAnswered===0){ alert("No answers recorded yet — take a quiz first, then export."); return; }
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0,10);
+  a.href = url; a.download = `weak-topics-analysis-${stamp}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+};
+
+/* ============================================================
+   VIEW ROUTING
+   ============================================================ */
+function show(view){
+  ["setup","quiz","result","stats"].forEach(v=>{
+    document.getElementById("view-"+v).classList.toggle("hide", v!==view);
+  });
+  const onStats = view==="stats";
+  document.getElementById("tab-quiz").className = "btn " + (onStats?"ghost":"sec");
+  document.getElementById("tab-stats").className = "btn " + (onStats?"sec":"ghost");
+}
+function backToSetup(){ renderTopicChips(); updatePoolInfo(); show("setup"); }
+
+document.getElementById("tab-quiz").onclick = backToSetup;
+document.getElementById("tab-stats").onclick = ()=>{ renderStats(); show("stats"); };
+document.getElementById("startBtn").onclick = ()=>{
+  const pool = matchingPool();
+  if(pool.length===0){ alert("No questions match — pick more topics or change difficulty."); return; }
+  startQuiz(pool);
+};
+
+/* init */
+renderTopicChips();
+updatePoolInfo();
+show("setup");
+</script>
+</body>
+</html>

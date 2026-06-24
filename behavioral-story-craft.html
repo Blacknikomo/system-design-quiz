@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Story Craft — what to emphasize vs omit</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .cs{border:1px solid var(--line);border-radius:12px;margin-bottom:12px;overflow:hidden;background:var(--panel)}
+  .cs-head{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;user-select:none}
+  .cs-head:hover{background:var(--panel2)}
+  .cs-head .ic{font-size:20px;flex:0 0 auto}
+  .cs-head .nm{font-weight:700;font-size:16px}
+  .cs-head .scope{color:var(--muted);font-size:13px}
+  .cs-head .chev{margin-left:auto;color:var(--muted);transition:transform .2s;flex:0 0 auto}
+  .cs.open .cs-head .chev{transform:rotate(90deg)}
+  .cs-body{display:none;padding:0 16px 16px;border-top:1px solid var(--line)}
+  .cs.open .cs-body{display:block}
+  .cs-tags{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:720px){.grid2{grid-template-columns:1fr}}
+  .blk h4{margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .blk.nfr h4{color:var(--warn)}
+  .blk.tech h4{color:var(--ok)}
+  .blk.got h4{color:var(--bad)}
+  .blk ul{margin:0;padding-left:18px}
+  .blk li{margin:3px 0;font-size:13.5px}
+  .recall-hint{display:none;color:var(--muted);font-size:12.5px;font-style:italic;padding:0 16px 14px}
+  body.recall .cs:not(.open) .recall-hint{display:block}
+  .toolbar{position:sticky;top:0;z-index:10;background:var(--bg);padding:10px 0;margin-bottom:6px;border-bottom:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All materials</a></div>
+      <h1>🛠️ Story Craft</h1>
+      <div class="sub">For each story type: what to <b style="color:var(--ok)">emphasize / add</b>, what to <b style="color:var(--bad)">omit / cut</b>, and the trap that dilutes the signal. Plus the universal craft rules — 20/60/20 timing, “I vs we”, quantified result, reflection.</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="row">
+      <input type="text" id="search" placeholder="filter by story type / keyword…" style="flex:1;min-width:180px">
+      <button class="btn sec" id="expandAll">Expand all</button>
+      <button class="btn sec" id="collapseAll">Collapse all</button>
+      <label class="chip"><input type="checkbox" id="recallChk" style="accent-color:var(--accent)"> Recall mode</label>
+    </div>
+    <div class="small muted" id="count" style="margin-top:6px"></div>
+  </div>
+
+  <div id="list"></div>
+
+  <p class="small muted" style="margin-top:16px">Tip: in <b>Recall mode</b>, say what you'd emphasize and cut for each story type, then reveal. Pairs with the <a href="behavioral-story-map.html">Story Map</a>, <a href="behavioral-best-practices.html">Best Practices</a>, and the <a href="behavioral-quiz.html">quiz</a>.</p>
+</div>
+
+<script>
+const CARDS = [
+  // ===== Universal craft =====
+  {icon:"⏱️", name:"STAR timing — 20 / 60 / 20", scope:"where your airtime goes", tags:["Universal"],
+   blocks:[
+    {cls:"tech", h:"Emphasize / add", items:["<b>Action ≈ 60%</b> — your decisions and the reasoning behind them. This is the scored part.","Situation/Task ≈ 20%; Result ≈ 20% with a number.","Target ~2–3 minutes, then breathe and let them follow up."]},
+    {cls:"got", h:"Omit / cut", items:["Long backstory and org context (keep S/T to 2–3 sentences).","Every intermediate step — give the 2–3 decisions that mattered."]},
+    {cls:"nfr", h:"Trap", items:["Front-loading setup so the interviewer is lost before you reach your actions."]}
+   ]},
+  {icon:"🙋", name:"\"I\", not \"we\"", scope:"surface the manager layer", tags:["Universal"],
+   blocks:[
+    {cls:"tech", h:"Emphasize / add", items:["Explicit <b>“I decided / I chose / I owned”</b> moments.","What you delegated, escalated, coached, or protected the team from.","‘We’ is fine for context — but the decisions must be yours."]},
+    {cls:"got", h:"Omit / cut", items:["Team-activity narration that any engineer on the team could have told.","Credit-claiming the IC's hands-on work as your own."]},
+    {cls:"nfr", h:"Trap", items:["A story with no visible management layer — it reads as an IC story."]}
+   ]},
+  {icon:"📈", name:"Quantified result + reflection", scope:"close the loop", tags:["Universal"],
+   blocks:[
+    {cls:"tech", h:"Emphasize / add", items:["A metric: attrition ↓, velocity ↑, shipped X, promo, adoption, incident rate.","One line of reflection — “what I'd do differently” (a Googleyness signal)."]},
+    {cls:"got", h:"Omit / cut", items:["Vague endings like “it went well” or “the team was happy”.","Stopping at the action with no outcome."]},
+    {cls:"nfr", h:"Trap", items:["No number and no reflection — the answer feels unfinished and unproven."]}
+   ]},
+  {icon:"🧠", name:"Skeleton, not a script", scope:"think out loud", tags:["Universal"],
+   blocks:[
+    {cls:"tech", h:"Emphasize / add", items:["Memorize the skeleton: situation in one line, 2–3 key decisions, the result.","Anchor hypotheticals (“how would you…”) to a real example.","Think out loud — the journey is graded."]},
+    {cls:"got", h:"Omit / cut", items:["Word-for-word memorized speeches — they collapse under follow-ups.","Going dark/silent when a follow-up surprises you."]},
+    {cls:"nfr", h:"Trap", items:["A rehearsed monologue that can't adapt when they probe a different angle."]}
+   ]},
+  // ===== Per story type =====
+  {icon:"🌱", name:"Coaching / growth story", scope:"developing a person", tags:["Story type"],
+   blocks:[
+    {cls:"tech", h:"Emphasize / add", items:["The person's starting level/scope and the specific coaching you did.","A concrete development outcome (promotion, scope increase)."]},
+    {cls:"got", h:"Omit / cut", items:["A top performer who needed little from you.","An exhaustive log of every 1:1 topic."]},
+    {cls:"nfr", h:"Trap", items:["Telling a team-process story when they asked about one person's growth."]}
+   ]},
+  {icon:"⚔️", name:"Conflict story", scope:"real tension, fair handling", tags:["Story type"],
+   blocks:[
+    {cls:"tech", h:"Emphasize / add", items:["The real tension and how you stayed fair while being direct.","The criteria you used and how you preserved commitment."]},
+    {cls:"got", h:"Omit / cut", items:["“Everyone ended up happy with no friction.”","A softened message that wasn't really hard."]},
+    {cls:"nfr", h:"Trap", items:["Hero-manager framing, or a sanitized story with no stakes."]}
+   ]},
+  {icon:"📉", name:"Underperformance story", scope:"diagnose → act", tags:["Story type"],
+   blocks:[
+    {cls:"tech", h:"Emphasize / add", items:["Skill-vs-will diagnosis; explicit, observable expectations you set.","A clear, timely ending — decisive and humane, documented throughout."]},
+    {cls:"got", h:"Omit / cut", items:["Open-ended delay with no decision.","“They improved on their own”; lowering the bar so they passed."]},
+    {cls:"nfr", h:"Trap", items:["Only telling turnarounds that ended happily — show you'll make the hard call too."]}
+   ]},
+  {icon:"💥", name:"Failure story", scope:"ownership & change", tags:["Story type"],
+   blocks:[
+    {cls:"tech", h:"Emphasize / add", items:["Real stakes, your specific part, and the concrete change you made after."]},
+    {cls:"got", h:"Omit / cut", items:["Humblebrags (“I cared too much”).","Blame on circumstances or other people; a trivial, consequence-free miss."]},
+    {cls:"nfr", h:"Trap", items:["A ‘failure’ engineered to sound like a strength — it reads as evasive."]}
+   ]},
+  {icon:"🧲", name:"Influence story", scope:"without authority", tags:["Story type"],
+   blocks:[
+    {cls:"tech", h:"Emphasize / add", items:["Reframing the ask around the other party's incentives; data and credibility.","Preserving the relationship for future collaboration."]},
+    {cls:"got", h:"Omit / cut", items:["Any mandate or positional power.","A one-time escalation ‘win’ over someone's head."]},
+    {cls:"nfr", h:"Trap", items:["A story where you actually did have authority — it answers a different question."]}
+   ]},
+  {icon:"🎯", name:"Hiring story", scope:"bar & learning", tags:["Story type"],
+   blocks:[
+    {cls:"tech", h:"Emphasize / add", items:["A specific miss, the signal you under-weighted, and the bar change after.","Your concrete, consistent bar held under pressure."]},
+    {cls:"got", h:"Omit / cut", items:["Only success stories.","Blaming the recruiter or candidate for the miss."]},
+    {cls:"nfr", h:"Trap", items:["A vague “sometimes it doesn't work out” with no learning attached."]}
+   ]},
+  {icon:"🌫️", name:"Ambiguity / pivot story", scope:"decision under uncertainty", tags:["Story type"],
+   blocks:[
+    {cls:"tech", h:"Emphasize / add", items:["The hypothesis and success metric you set; the new signal that triggered a pivot.","Quantify what the pivot saved/unlocked; how you re-aligned the team fast."]},
+    {cls:"got", h:"Omit / cut", items:["Waiting for someone else to remove the ambiguity.","Hiding progress until ‘perfect’."]},
+    {cls:"nfr", h:"Trap", items:["A pivot told as flip-flopping rather than a deliberate, evidence-based call."]}
+   ]},
+  {icon:"🧭", name:"Strategy / vision story", scope:"direction with impact", tags:["Story type"],
+   blocks:[
+    {cls:"tech", h:"Emphasize / add", items:["The thesis, the leading indicators you watched, the outcome, and what you'd refine.","How the team's decisions changed because of the direction."]},
+    {cls:"got", h:"Omit / cut", items:["Outcome-only (“it worked”) with no mechanism.","A vision doc nobody used; “leadership told me to”."]},
+    {cls:"nfr", h:"Trap", items:["Aligning on slides while the team's actual work never changed."]}
+   ]},
+];
+
+const listEl = document.getElementById("list");
+function blockHtml(b){ return `<div class="blk ${b.cls||''}"><h4>${b.h}</h4><ul>${b.items.map(x=>`<li>${x}</li>`).join("")}</ul></div>`; }
+function render(filter=""){
+  const f = filter.trim().toLowerCase();
+  let shown=0;
+  listEl.innerHTML = CARDS.map((d,idx)=>{
+    const hay = (d.name+" "+d.scope+" "+d.tags.join(" ")+" "+d.blocks.map(b=>b.h+" "+b.items.join(" ")).join(" ")).toLowerCase();
+    if(f && !hay.includes(f)) return "";
+    shown++;
+    return `<div class="cs" data-i="${idx}">
+      <div class="cs-head">
+        <span class="ic">${d.icon}</span>
+        <div><div class="nm">${d.name}</div><div class="scope">${d.scope}</div></div>
+        <span class="chev">▶</span>
+      </div>
+      <div class="recall-hint">Recall: what do you emphasize, and what do you cut? Then reveal.</div>
+      <div class="cs-body">
+        <div class="cs-tags">${d.tags.map(t=>`<span class="tag accent">${t}</span>`).join("")}</div>
+        <div class="grid2">${d.blocks.filter(b=>b.cls==='tech'||b.cls==='got').map(blockHtml).join("")}</div>
+        ${d.blocks.filter(b=>b.cls!=='tech'&&b.cls!=='got').map(blockHtml).join("")}
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("count").textContent = `${shown} of ${CARDS.length} cards`;
+  wire();
+}
+function wire(){ document.querySelectorAll(".cs-head").forEach(h=>{ h.onclick=()=>h.parentElement.classList.toggle("open"); }); }
+document.getElementById("search").oninput = e => render(e.target.value);
+document.getElementById("expandAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.add("open"));
+document.getElementById("collapseAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.remove("open"));
+document.getElementById("recallChk").onchange = e=>{
+  document.body.classList.toggle("recall", e.target.checked);
+  if(e.target.checked) document.querySelectorAll(".cs").forEach(c=>c.classList.remove("open"));
+};
+render();
+</script>
+</body>
+</html>

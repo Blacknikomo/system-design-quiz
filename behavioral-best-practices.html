@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EM Leadership Best Practices — four lenses</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .cs{border:1px solid var(--line);border-radius:12px;margin-bottom:12px;overflow:hidden;background:var(--panel)}
+  .cs-head{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;user-select:none}
+  .cs-head:hover{background:var(--panel2)}
+  .cs-head .ic{font-size:20px;flex:0 0 auto}
+  .cs-head .nm{font-weight:700;font-size:16px}
+  .cs-head .scope{color:var(--muted);font-size:13px}
+  .cs-head .chev{margin-left:auto;color:var(--muted);transition:transform .2s;flex:0 0 auto}
+  .cs.open .cs-head .chev{transform:rotate(90deg)}
+  .cs-body{display:none;padding:0 16px 16px;border-top:1px solid var(--line)}
+  .cs.open .cs-body{display:block}
+  .cs-tags{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+  .blk h4{margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .blk.nfr h4{color:var(--warn)}
+  .blk.tech h4{color:var(--ok)}
+  .blk.got h4{color:var(--bad)}
+  .blk ul{margin:0;padding-left:18px}
+  .blk li{margin:3px 0;font-size:13.5px}
+  .blk .why{color:var(--muted)}
+  .recall-hint{display:none;color:var(--muted);font-size:12.5px;font-style:italic;padding:0 16px 14px}
+  body.recall .cs:not(.open) .recall-hint{display:block}
+  .toolbar{position:sticky;top:0;z-index:10;background:var(--bg);padding:10px 0;margin-bottom:6px;border-bottom:1px solid var(--line)}
+  .lensbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All materials</a></div>
+      <h1>🧭 EM Leadership Best Practices</h1>
+      <div class="sub">Principles to lead from in the loop, across four lenses — engineering leadership, project / program management, people management, and technical leadership. Each card: the principle, how to show it in the interview, and what to avoid.</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="row">
+      <input type="text" id="search" placeholder="filter by lens / principle / keyword…" style="flex:1;min-width:180px">
+      <button class="btn sec" id="expandAll">Expand all</button>
+      <button class="btn sec" id="collapseAll">Collapse all</button>
+      <label class="chip"><input type="checkbox" id="recallChk" style="accent-color:var(--accent)"> Recall mode</label>
+    </div>
+    <div class="lensbar" id="lensbar"></div>
+    <div class="small muted" id="count" style="margin-top:2px"></div>
+  </div>
+
+  <div id="list"></div>
+
+  <p class="small muted" style="margin-top:16px">Tip: in <b>Recall mode</b>, state the principle and how you'd demonstrate it, then reveal. Pairs with the <a href="behavioral-story-map.html">Story Map</a>, <a href="behavioral-story-craft.html">Story Craft</a>, and the <a href="behavioral-quiz.html">quiz</a>.</p>
+</div>
+
+<script>
+const CARDS = [
+  // ===== Engineering Leadership =====
+  {icon:"🤝", name:"Empower, don't hero", scope:"delegate ownership, set guardrails", tags:["Engineering Leadership"],
+   blocks:[
+    {cls:"", h:"Principle", items:["Delegate ownership and calibrate autonomy to seniority; set guardrails, then resist diving in. Your leverage is the team's output, not yours."]},
+    {cls:"tech", h:"Show it", items:["A story where you let someone struggle-and-learn instead of taking over.","Tie team health to measurable delivery (velocity, quality, on-call load)."]},
+    {cls:"got", h:"Avoid", items:["The hero-manager who solves everything personally — it signals failure to empower (Oxygen #2)."]}
+   ]},
+  {icon:"📊", name:"Outcomes over output", scope:"ship, and tie health to results", tags:["Engineering Leadership"],
+   blocks:[
+    {cls:"", h:"Principle", items:["Results-orientation: you ship, and you connect team health and process to measurable outcomes — not activity for its own sake."]},
+    {cls:"tech", h:"Show it", items:["Always land a quantified result (delivery, quality, retention, adoption).","Frame process changes by the outcome they moved."]},
+    {cls:"got", h:"Avoid", items:["Naming a methodology as if it were an answer — show the call you made and what it produced."]}
+   ]},
+  {icon:"🎲", name:"Decide with incomplete info", scope:"reversible bets + checkpoints", tags:["Engineering Leadership"],
+   blocks:[
+    {cls:"", h:"Principle", items:["Strong decision-makers commit with incomplete data. For reversible ‘two-way door’ calls, bias to action with a checkpoint to learn."]},
+    {cls:"tech", h:"Show it", items:["Distinguish reversible vs irreversible decisions in the story.","State the checkpoint you set and what you'd have done if wrong."]},
+    {cls:"got", h:"Avoid", items:["Waiting for certainty; majority-polling the team to avoid owning the call."]}
+   ]},
+  // ===== Project / Program Management =====
+  {icon:"✂️", name:"Scope is the lever", scope:"cut to the essential outcome", tags:["Project / Program Mgmt"],
+   blocks:[
+    {cls:"", h:"Principle", items:["Under a hard deadline, scope is what you control — cut to the essential outcome and protect quality on what ships."]},
+    {cls:"tech", h:"Show it", items:["Describe the explicit cut you made and why.","Keep stakeholders informed of the trade-off."]},
+    {cls:"got", h:"Avoid", items:["Adding people late (Brooks's law).","Silent quality erosion or hidden corner-cutting."]}
+   ]},
+  {icon:"🪧", name:"Make trade-offs visible", scope:"explicit cut line, say the ‘no’", tags:["Project / Program Mgmt"],
+   blocks:[
+    {cls:"", h:"Principle", items:["Prioritize on mission and impact/effort; make the cut line explicit and say no with the why. Protect a slice for tech debt / innovation."]},
+    {cls:"tech", h:"Show it", items:["Anchor on strategy, then show what fell below the line.","Explain how you kept morale through the ‘no’."]},
+    {cls:"got", h:"Avoid", items:["Starting everything at reduced capacity.","Deferring the decision to keep everyone happy."]}
+   ]},
+  {icon:"🚦", name:"Credible status & recovery", scope:"diagnose → re-plan → communicate", tags:["Project / Program Mgmt"],
+   blocks:[
+    {cls:"", h:"Principle", items:["When a project slips: diagnose the bottleneck, re-plan with the team, and communicate a revised, credible plan early."]},
+    {cls:"tech", h:"Show it", items:["Surface risk early with a mitigation, not a surprise.","Show the revised plan and how you rebuilt confidence."]},
+    {cls:"got", h:"Avoid", items:["Watermelon status (green outside, red inside).","Crunch as the only lever; blaming the dependency team."]}
+   ]},
+  // ===== People Management =====
+  {icon:"🧑‍🏫", name:"Coach: ask before you tell", scope:"develop via feedback, not answers", tags:["People Management"],
+   blocks:[
+    {cls:"", h:"Principle", items:["Good coaches develop people through questions, feedback, and stretch — not by handing over the answer. (GROW is a useful frame.)"]},
+    {cls:"tech", h:"Show it", items:["A specific coaching turnaround with your questions and the person's growth.","Separate performance (calibration) from development (longer arc)."]},
+    {cls:"got", h:"Avoid", items:["Solving the IC's problem for them; pure 1:1-activity with no development outcome."]}
+   ]},
+  {icon:"🩺", name:"Diagnose skill vs will", scope:"the right intervention", tags:["People Management"],
+   blocks:[
+    {cls:"", h:"Principle", items:["Underperformance: diagnose skill (can't yet → coach/train) vs will (won't → motivation/fit) vs context, from evidence, before acting."]},
+    {cls:"tech", h:"Show it", items:["Name which it was and how you knew.","Set explicit, observable expectations with a timeline; document throughout; act humanely."]},
+    {cls:"got", h:"Avoid", items:["Jumping to a PIP for a paper trail; open-ended delay with no decision."]}
+   ]},
+  {icon:"💬", name:"Feedback = behavior + impact", scope:"specific, direct, kind", tags:["People Management"],
+   blocks:[
+    {cls:"", h:"Principle", items:["Anchor feedback in specific observed behavior and its impact; be direct and caring (Radical Candor). That's what survives pushback."]},
+    {cls:"tech", h:"Show it", items:["Give the actual words you used and how you followed up.","Show you delivered news someone didn't want to hear."]},
+    {cls:"got", h:"Avoid", items:["Vague ‘others have noticed’; downgrading to ‘just my opinion’ when challenged."]}
+   ]},
+  // ===== Technical Leadership =====
+  {icon:"🔬", name:"Stay technical enough", scope:"earn trust, review designs", tags:["Technical Leadership"],
+   blocks:[
+    {cls:"", h:"Principle", items:["Keep enough technical depth to advise and review designs without micromanaging — it's how you earn the team's trust (Oxygen #8)."]},
+    {cls:"tech", h:"Show it", items:["A design you reviewed and redirected with a trade-off argument.","Reason out loud about trade-offs, even when rusty."]},
+    {cls:"got", h:"Avoid", items:["Going dark when unsure; rubber-stamping designs you didn't understand."]}
+   ]},
+  {icon:"🧹", name:"Tech debt as a budget", scope:"steady %, tied to outcomes", tags:["Technical Leadership"],
+   blocks:[
+    {cls:"", h:"Principle", items:["Quantify debt cost (slowed delivery, incidents); make it a visible backlog; budget a steady % per cycle tied to business outcomes."]},
+    {cls:"tech", h:"Show it", items:["Show the cost-of-inaction you quantified and the return you won.","Tie the investment ask to a delivery metric."]},
+    {cls:"got", h:"Avoid", items:["Stop-the-world rewrites; indefinite deferral; ungoverned ‘fix what you dislike’."]}
+   ]},
+  {icon:"📐", name:"Instil technical values", scope:"standards via influence", tags:["Technical Leadership"],
+   blocks:[
+    {cls:"", h:"Principle", items:["Raise the bar on standards (review quality, testing, design rigor) by influence and example, scaling beyond your own team."]},
+    {cls:"tech", h:"Show it", items:["Lower friction + show early adopters' wins to drive adoption.","Connect the standard to outcomes the other teams care about."]},
+    {cls:"got", h:"Avoid", items:["Mandating standards by decree; measuring adoption by ‘teams told’."]}
+   ]},
+];
+
+const LENSES = ["Engineering Leadership","Project / Program Mgmt","People Management","Technical Leadership"];
+let activeLens = "all";
+const listEl = document.getElementById("list");
+function blockHtml(b){ return `<div class="blk ${b.cls||''}"><h4>${b.h}</h4><ul>${b.items.map(x=>`<li>${x}</li>`).join("")}</ul></div>`; }
+function renderLensBar(){
+  const bar = document.getElementById("lensbar");
+  bar.innerHTML = ['all',...LENSES].map(l=>`<span class="chip ${activeLens===l?'on':''}" data-l="${l}">${l==='all'?'All lenses':l}</span>`).join("");
+  bar.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{ activeLens=c.dataset.l; renderLensBar(); render(document.getElementById("search").value); });
+}
+function render(filter=""){
+  const f = filter.trim().toLowerCase();
+  let shown=0;
+  listEl.innerHTML = CARDS.map((d,idx)=>{
+    if(activeLens!=="all" && !d.tags.includes(activeLens)) return "";
+    const hay = (d.name+" "+d.scope+" "+d.tags.join(" ")+" "+d.blocks.map(b=>b.h+" "+b.items.join(" ")).join(" ")).toLowerCase();
+    if(f && !hay.includes(f)) return "";
+    shown++;
+    return `<div class="cs" data-i="${idx}">
+      <div class="cs-head">
+        <span class="ic">${d.icon}</span>
+        <div><div class="nm">${d.name}</div><div class="scope">${d.scope}</div></div>
+        <span class="chev">▶</span>
+      </div>
+      <div class="recall-hint">Recall: state the principle and how you'd demonstrate it, then reveal.</div>
+      <div class="cs-body">
+        <div class="cs-tags">${d.tags.map(t=>`<span class="tag accent">${t}</span>`).join("")}</div>
+        ${d.blocks.map(blockHtml).join("")}
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("count").textContent = `${shown} practice${shown!==1?'s':''} shown`;
+  wire();
+}
+function wire(){ document.querySelectorAll(".cs-head").forEach(h=>{ h.onclick=()=>h.parentElement.classList.toggle("open"); }); }
+document.getElementById("search").oninput = e => render(e.target.value);
+document.getElementById("expandAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.add("open"));
+document.getElementById("collapseAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.remove("open"));
+document.getElementById("recallChk").onchange = e=>{
+  document.body.classList.toggle("recall", e.target.checked);
+  if(e.target.checked) document.querySelectorAll(".cs").forEach(c=>c.classList.remove("open"));
+};
+renderLensBar();
+render();
+</script>
+</body>
+</html>
