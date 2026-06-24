@@ -104,6 +104,93 @@
       </ol>
     </div>
   </div>
+
+  <!-- ===== REFERENCE ===== -->
+  <div class="card ref">
+    <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, API &amp; recipes</h2>
+    <div class="ref-cols">
+      <div>
+        <h3>Infrastructure &amp; deployment</h3>
+        <ul>
+          <li><b>Ensemble</b> of <b>3 or 5 nodes</b> (odd count so a strict majority can form a <b>quorum</b>; 5 nodes tolerate 2 failures).</li>
+          <li><b>ZAB</b> (ZooKeeper Atomic Broadcast) consensus — one <b>leader</b> + followers; every write is proposed by the leader and totally ordered.</li>
+          <li>Writes go <b>through the leader</b> and need a <b>quorum ack</b> → strongly consistent, but <b>not high-write-throughput</b> (every write fsyncs + round-trips a majority).</li>
+          <li>Clients hold a <b>session</b> kept alive by <b>heartbeats</b>; lose the heartbeat and the session expires.</li>
+          <li><b>Ephemeral</b> znodes vanish the instant their session dies (the failure detector); <b>watches</b> are <b>one-shot</b> notifications — re-register after each fire.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Sharding &amp; scaling</h3>
+        <ul>
+          <li>It is a <b>coordination service, not a data store</b> — <b>do not shard application data</b> into it. Store pointers/metadata, not your dataset.</li>
+          <li><b>Reads scale</b> with followers (any replica serves them), but a read may be <b>slightly stale</b> — issue <code>sync</code> first if you need the latest.</li>
+          <li>All <b>writes serialize through the leader</b>, so keep <b>write volume low</b>; the ensemble does not scale writes by adding nodes.</li>
+          <li>Data per znode is <b>small</b> (~<b>1MB</b> cap) — it's for config/locks/flags, not blobs.</li>
+          <li><b>Modern alternative:</b> <b>etcd</b> (Raft consensus) — same role, common in Kubernetes.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Key commands / API</h3>
+    <table class="cmd-tbl">
+      <tr><td>create /path data</td><td>persistent znode holding data</td></tr>
+      <tr><td>create -e /path</td><td><b>ephemeral</b> — auto-deleted when the session dies</td></tr>
+      <tr><td>create -s /path</td><td><b>sequential</b> — appends a monotonic counter (<code>/path0000000001</code>)</td></tr>
+      <tr><td>get /path [-w]</td><td>read data; <code>-w</code> sets a one-shot <b>watch</b></td></tr>
+      <tr><td>set /path data</td><td>update data (bumps version) → fires watches</td></tr>
+      <tr><td>delete /path</td><td>remove a znode (must be childless) → fires watches</td></tr>
+      <tr><td>ls /path</td><td>list children</td></tr>
+      <tr><td>getAcl / setAcl /path</td><td>read / set the access-control list</td></tr>
+      <tr><td>(Curator)</td><td>Java recipes library that wraps these primitives (locks, election, caches)</td></tr>
+    </table>
+
+    <h3>Use-case recipes</h3>
+
+    <div class="recipe">
+      <div class="rh">👑 Leader election</div>
+<pre class="code"><span class="c"># each candidate creates an ephemeral SEQUENTIAL znode</span>
+create -e -s /election/n_        <span class="c"># → /election/n_0000000007</span>
+<span class="c"># lowest sequence number == leader; others watch the NEXT-LOWER znode</span>
+ls /election                     <span class="c"># sort children; am I the smallest?</span>
+get -w /election/n_0000000006    <span class="c"># follower watches only its predecessor</span></pre>
+      <div class="why">When the leader's session dies its ephemeral znode <b>vanishes</b>, waking just the one follower watching it (no thundering herd) → that follower is now lowest → <b>new leader</b>.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🔒 Distributed lock</div>
+<pre class="code"><span class="c"># same ephemeral-sequential queue under a lock node</span>
+create -e -s /lock/req_          <span class="c"># take a ticket</span>
+ls /lock                         <span class="c"># you HOLD the lock iff you are lowest</span>
+get -w /lock/req_&lt;prev&gt;          <span class="c"># else watch the request just ahead of you</span></pre>
+      <div class="why">Ephemeral means a crashed holder auto-releases (no stuck locks). Watching only the predecessor turns it into a fair FIFO queue.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">⚙️ Config management</div>
+<pre class="code">set /config/db "host=primary"   <span class="c"># operator updates config</span>
+get -w /config/db                <span class="c"># every client watches it</span>
+<span class="c"># on the watch firing → re-read and hot-reload, then re-register the watch</span></pre>
+      <div class="why">One source of truth; clients learn of changes via the one-shot watch and reload without a restart or polling.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🧭 Service discovery</div>
+<pre class="code"><span class="c"># each instance registers itself as an ephemeral znode</span>
+create -e /services/payments/inst_a "10.0.0.7:8080"
+ls /services/payments            <span class="c"># consumers list live instances</span>
+<span class="c"># a dead instance's session expires → its znode auto-deregisters</span></pre>
+      <div class="why">No stale endpoints: the registry self-cleans because membership is tied to live sessions.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">👥 Group membership / barriers</div>
+<pre class="code"><span class="c"># each member announces presence with an ephemeral znode</span>
+create -e /group/members/node_3
+ls -w /group/members             <span class="c"># watch the set; reacts as members join/leave</span>
+<span class="c"># barrier: proceed only once child count reaches N</span></pre>
+      <div class="why">Live membership comes for free from ephemeral znodes; barriers gate a group until everyone has arrived (or departed).</div>
+    </div>
+  </div>
 </div>
 
 <script>

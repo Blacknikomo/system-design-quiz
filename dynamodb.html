@@ -72,6 +72,99 @@
       <div class="note info" style="margin-top:12px"><b>LSI vs GSI:</b> a <b>Local Secondary Index</b> shares the table's partition key (co-located on the same partitions), supports <b>strong reads</b>, and must be defined at table creation. A <b>Global Secondary Index</b> uses a <b>different key</b>, lives on <b>separate partitions</b>, is <b>eventually consistent only</b>, and can be added anytime.</div>
     </div>
   </div>
+
+  <!-- ===== REFERENCE ===== -->
+  <div class="card ref">
+    <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, API &amp; recipes</h2>
+    <div class="ref-cols">
+      <div>
+        <h3>Infrastructure &amp; deployment</h3>
+        <ul>
+          <li><b>Fully managed &amp; serverless</b> — no nodes to run; data is auto-partitioned and <b>replicated synchronously across 3 AZs</b> in a region. A write is acked once a quorum of replicas has it.</li>
+          <li><b>Capacity modes:</b> <b>on-demand</b> (pay per request, instant scaling — spiky/unknown traffic) or <b>provisioned</b> RCU/WCU with <b>auto-scaling</b> (cheaper for steady, predictable load).</li>
+          <li><b>DAX</b> — in-memory cache cluster in front of the table (microsecond reads), <b>read-through / write-through</b>; only helps eventually-consistent reads.</li>
+          <li><b>DynamoDB Streams</b> — ordered change data capture (per partition key) of item-level changes; the trigger for Lambda fan-out, replication, search indexing.</li>
+          <li><b>Global Tables</b> — multi-region <b>active-active</b> replication (async, last-writer-wins on conflicts) for low global latency / DR.</li>
+          <li><b>PITR</b> — continuous point-in-time recovery (restore to any second in the last 35 days) plus on-demand backups.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Sharding &amp; scaling</h3>
+        <ul>
+          <li><b>Partition key</b> is <b>hashed</b> to choose a physical partition; the SK orders items within it. Spread keys for even load.</li>
+          <li>Per-partition ceiling ≈ <b>3000 RCU / 1000 WCU</b>. A <b>hot partition</b> (skewed key) throttles even if total capacity is fine.</li>
+          <li><b>Write sharding:</b> append a random/calculated <b>suffix</b> to the PK (<code>event#&lt;1..N&gt;</code>) to fan a hot key across partitions; read by scattering across the N shards.</li>
+          <li><b>Adaptive capacity</b> auto-isolates and boosts hot partitions, but it isn't a substitute for a good key design.</li>
+          <li><b>Single-table design:</b> overload generic <code>PK</code>/<code>SK</code> + GSIs so one table serves many entity types &amp; access patterns (fewer round-trips, no joins).</li>
+          <li><b>Item ≤ 400KB</b> (incl. attribute names). Store large blobs in S3, keep a pointer.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Key API operations</h3>
+    <table class="cmd-tbl">
+      <tr><td>PutItem / GetItem</td><td>write / read one item by full primary key</td></tr>
+      <tr><td>GetItem ConsistentRead=true</td><td>strong read (latest, 2× RCU, leader only — <b>not on GSIs</b>)</td></tr>
+      <tr><td>Query (PK = :pk [AND SK ⋄ …])</td><td>items sharing a partition key, optional SK condition — efficient</td></tr>
+      <tr><td>Scan</td><td>reads the whole table — <b>avoid</b>; use Query / a GSI instead</td></tr>
+      <tr><td>UpdateItem … ADD / SET</td><td>partial update; <code>ADD</code> = atomic counter increment</td></tr>
+      <tr><td>ConditionExpression</td><td>conditional write → optimistic concurrency / idempotency</td></tr>
+      <tr><td>TransactWriteItems / TransactGetItems</td><td>ACID across up to 100 items (all-or-nothing)</td></tr>
+      <tr><td>BatchWriteItem / BatchGetItem</td><td>up to 25 writes / 100 reads per call (independent, not atomic)</td></tr>
+      <tr><td>ProjectionExpression</td><td>return only some attributes — saves <b>bandwidth, not RCU</b></td></tr>
+      <tr><td>GSI vs LSI</td><td>GSI: any key, separate partitions, eventual only · LSI: same PK, strong reads, define at create</td></tr>
+    </table>
+
+    <h3>Use-case recipes</h3>
+
+    <div class="recipe">
+      <div class="rh">🗂️ Single-table design</div>
+<pre class="code"><span class="c"># model access patterns FIRST, then keys. one table, overloaded PK/SK:</span>
+PK = "USER#123"   SK = "ORDER#456"      <span class="c"># a user's order</span>
+PK = "USER#123"   SK = "PROFILE"        <span class="c"># same partition = 1 Query</span>
+<span class="c"># Query PK="USER#123" → profile + all orders in one call (no joins)</span>
+<span class="c"># add a GSI per extra access pattern (e.g. orders-by-status)</span></pre>
+      <div class="why">Co-locating related items under one partition key serves many reads with a single <code>Query</code>. Each <b>secondary access pattern</b> becomes a GSI (which is <b>eventually consistent</b>).</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🔒 Optimistic locking</div>
+<pre class="code">UpdateItem
+  Key            = { PK: "ACCT#1" }
+  UpdateExpression       = "SET balance = :b, version = version + :one"
+  ConditionExpression    = "version = :v"     <span class="c"># only if unchanged</span>
+  ExpressionAttributeValues = { :v: 7, :one: 1, :b: 900 }
+<span class="c"># mismatch → ConditionalCheckFailedException → re-read & retry</span></pre>
+      <div class="why">No locks: the conditional write fails if another client bumped <code>version</code> first, so lost updates are impossible. Same trick with <code>attribute_not_exists(PK)</code> gives idempotent inserts.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">➕ Atomic counter</div>
+<pre class="code">UpdateItem
+  Key              = { PK: "POST#42" }
+  UpdateExpression = "SET likes = likes + :n"   <span class="c"># or:  ADD likes :n</span>
+  ExpressionAttributeValues = { :n: 1 }</pre>
+      <div class="why">The increment happens server-side under the item's lock, so concurrent clients never clobber each other. <code>ADD</code> also creates the attribute (treats missing as 0).</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">📣 Event sourcing / fan-out</div>
+<pre class="code"><span class="c"># enable DynamoDB Streams (NEW_AND_OLD_IMAGES) on the table</span>
+PutItem → Stream record → Lambda
+<span class="c"># Lambda fans out: update aggregates, push to OpenSearch,</span>
+<span class="c"># notify SNS/SQS, replicate. Streams are ordered per partition key.</span></pre>
+      <div class="why">Streams turn every write into an event log without dual-writes. Make the consumer <b>idempotent</b> (at-least-once delivery); Lambda checkpoints per shard.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">⚖️ Eventual vs strong read</div>
+<pre class="code"><span class="c"># default GetItem/Query = eventually consistent (0.5 RCU, may be stale)</span>
+GetItem Key={PK:"USER#123"}                      <span class="c"># eventual</span>
+GetItem Key={PK:"USER#123"} ConsistentRead=true  <span class="c"># strong, 2× RCU</span>
+<span class="c"># strong hits the leader replica — NOT available on a GSI</span></pre>
+      <div class="why">Use a strong read only when you must see your own just-written value (e.g. read-after-write). It costs 2× and can't be served from a GSI, which is always eventual.</div>
+    </div>
+  </div>
 </div>
 
 <script>

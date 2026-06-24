@@ -73,6 +73,94 @@
       </ol>
     </div>
   </div>
+
+  <!-- ===== REFERENCE ===== -->
+  <div class="card ref">
+    <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, commands &amp; recipes</h2>
+    <div class="ref-cols">
+      <div>
+        <h3>Infrastructure &amp; deployment</h3>
+        <ul>
+          <li><b>Masterless ring:</b> every node is a peer — no leader, any node can <b>coordinate</b> a request. Nodes share membership/state via <b>gossip</b>, biased toward a few <b>seed nodes</b> for bootstrap.</li>
+          <li><b>Replication</b> is set <b>per keyspace</b> (RF). Multi-DC via <code>NetworkTopologyStrategy</code> places replicas across racks/DCs.</li>
+          <li><b>Write path (LSM):</b> append to the <b>commit log</b> (durability) + an in-memory <b>memtable</b>; the memtable <b>flushes</b> to an immutable <b>SSTable</b> on disk. No in-place updates.</li>
+          <li><b>Compaction</b> merge-sorts SSTables (latest timestamp per key wins) and <b>purges tombstones</b> + superseded values — reclaiming space and speeding reads.</li>
+          <li><b>Tunable consistency per query:</b> <code>ONE</code> / <code>QUORUM</code> / <code>ALL</code> / <code>LOCAL_QUORUM</code> — trade latency for how many replicas must agree.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Sharding &amp; scaling</h3>
+        <ul>
+          <li><b>Placement:</b> the <b>partition key</b> is hashed to a <b>token</b> → the owning node(s) on the ring (<b>consistent hashing</b> with <b>vnodes</b> for even spread).</li>
+          <li><b>Strong-ish reads:</b> with <b>W + R &gt; RF</b> (e.g. QUORUM+QUORUM on RF=3) the read and write quorums overlap → <b>read-your-writes</b>.</li>
+          <li><b>Scales near-linearly</b> by adding nodes — vnodes redistribute token ranges automatically.</li>
+          <li><b>Partition design is critical:</b> avoid <b>unbounded / large partitions</b>. Add a time/size <b>bucket</b> to the key (e.g. Discord's <b>10-day bucket</b>) to keep partitions bounded.</li>
+          <li><b>Writes are cheap</b> (append-only) → <b>denormalize one table per query</b> rather than joining; store data the way you read it.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Key commands (CQL)</h3>
+    <table class="cmd-tbl">
+      <tr><td>CREATE KEYSPACE ks WITH replication = {'class':'NetworkTopologyStrategy','dc1':3}</td><td>per-keyspace RF; multi-DC topology</td></tr>
+      <tr><td>CREATE TABLE t (... PRIMARY KEY ((pk), ck))</td><td>composite key: <code>(pk)</code> = partition, <code>ck</code> = clustering (sort within partition)</td></tr>
+      <tr><td>INSERT INTO t (...) VALUES (...) USING TTL 86400</td><td>upsert; rows auto-expire (1 day)</td></tr>
+      <tr><td>SELECT * FROM t WHERE pk = ?</td><td>single-partition read (the only fast access pattern)</td></tr>
+      <tr><td>CONSISTENCY QUORUM</td><td>set the consistency level for following statements</td></tr>
+      <tr><td>UPDATE t SET v = ? WHERE pk = ? IF v = ?</td><td>lightweight transaction (Paxos compare-and-set) — slow</td></tr>
+      <tr><td>nodetool status · nodetool repair</td><td>ring/ownership view · anti-entropy repair of replicas</td></tr>
+    </table>
+
+    <h3>Use-case recipes</h3>
+
+    <div class="recipe">
+      <div class="rh">📈 Time-series (bounded partitions)</div>
+<pre class="code">CREATE TABLE readings (
+  device_id text,
+  day_bucket text,                 <span class="c"># e.g. '2026-06-24' — caps partition size</span>
+  ts timestamp,
+  value double,
+  PRIMARY KEY ((device_id, day_bucket), ts)
+) WITH CLUSTERING ORDER BY (ts DESC);
+
+SELECT * FROM readings
+  WHERE device_id = ? AND day_bucket = ?   <span class="c"># one partition, newest first</span>
+  LIMIT 100;</pre>
+      <div class="why">Bucketing the partition key keeps each partition <b>bounded</b>; <code>CLUSTERING ORDER BY ts DESC</code> means recent reads hit one partition and need no sort. Unbounded keys (<code>device_id</code> alone) grow forever → hotspot.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">✍️ Write-heavy ingest</div>
+<pre class="code">CONSISTENCY LOCAL_QUORUM;           <span class="c"># or QUORUM single-DC</span>
+INSERT INTO events (id, ts, payload)
+  VALUES (?, ?, ?);                 <span class="c"># pure append → commit log + memtable</span></pre>
+      <div class="why">Writes are appends (no read-before-write, no B-tree), so Cassandra absorbs huge throughput. <code>QUORUM</code>/<code>LOCAL_QUORUM</code> keeps durability while one replica can be down.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🔑 Read by partition key</div>
+<pre class="code">SELECT * FROM users WHERE user_id = ?;      <span class="c"># single-partition: fast</span>
+<span class="c"># AVOID: WHERE email = ?  with a secondary index —</span>
+<span class="c"># fans out to every node, slow at scale. Make a lookup table instead:</span>
+CREATE TABLE users_by_email (email text PRIMARY KEY, user_id uuid);</pre>
+      <div class="why">Design tables around the query. <b>Secondary indexes are a trap at scale</b> (scatter-gather); a second denormalized table keyed by the lookup column is the idiomatic fix.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🆕 Conditional create (LWT)</div>
+<pre class="code">INSERT INTO accounts (username, email)
+  VALUES (?, ?)
+  IF NOT EXISTS;                    <span class="c"># Paxos — guarantees uniqueness</span></pre>
+      <div class="why"><code>IF NOT EXISTS</code> / <code>IF</code> use <b>lightweight transactions</b> (Paxos consensus across replicas) — correct but <b>several round-trips slower</b>. Use sparingly, only where you truly need compare-and-set.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🌐 Multi-DC low latency</div>
+<pre class="code">CONSISTENCY LOCAL_QUORUM;           <span class="c"># quorum within the local DC only</span>
+SELECT * FROM sessions WHERE sid = ?;</pre>
+      <div class="why"><code>LOCAL_QUORUM</code> keeps reads/writes inside the caller's DC (no cross-region round-trip) while async replication carries data to other DCs — low latency with multi-DC durability.</div>
+    </div>
+  </div>
 </div>
 
 <script>

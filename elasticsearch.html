@@ -80,6 +80,120 @@
       </ol>
     </div>
   </div>
+
+  <!-- ===== REFERENCE ===== -->
+  <div class="card ref">
+    <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, commands &amp; recipes</h2>
+    <div class="ref-cols">
+      <div>
+        <h3>Infrastructure &amp; deployment</h3>
+        <ul>
+          <li><b>Cluster of nodes</b> with roles: <b>master-eligible</b> (cluster state, shard allocation), <b>data</b> (hold shards, run queries), <b>coordinating</b> (fan-out + merge), <b>ingest</b> (run pipelines pre-index). Small clusters share roles.</li>
+          <li><b>Index → primary shards</b>, each replicated to <b>replica shards</b> on other nodes for reads + HA. A query fans out to one copy of each shard and merges.</li>
+          <li>Each shard is a <b>full Lucene index</b> made of <b>immutable segments</b>; new docs go to a new segment, deletes are tombstones, segments are merged in the background.</li>
+          <li><b>Near-real-time:</b> a doc isn't searchable until a <b>refresh</b> opens a new segment — default <code>refresh_interval: 1s</code>. Durability is the per-shard <b>translog</b>.</li>
+          <li><b>Not a source of truth.</b> Keep a primary DB and sync ES from it (CDC) — treat the index as a rebuildable, derived view. Built on <b>Apache Lucene</b>.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Sharding &amp; scaling</h3>
+        <ul>
+          <li><b><code>number_of_shards</code> is fixed</b> at index creation — to change it you must <b>reindex</b> into a new index and swap an <b>alias</b> (zero-downtime cutover).</li>
+          <li><b><code>number_of_replicas</code> is live-adjustable</b> (<code>PUT /idx/_settings</code>) — add replicas to scale read throughput + availability, drop to 0 for fast bulk loads.</li>
+          <li><b>Routing:</b> shard = <code>hash(_routing) % number_of_shards</code>, <code>_routing</code> defaults to <code>_id</code>. Custom <code>_routing</code> co-locates related docs on one shard.</li>
+          <li><b>Time-based data</b> (logs/metrics): roll over to <b>time-based indices</b> behind a write <b>alias</b>, managed by <b>ILM</b> (hot → warm → cold → delete).</li>
+          <li><b>Avoid oversharding:</b> each shard has fixed overhead; aim for ~10–50 GB/shard and keep total shard count proportional to heap, not tiny shards everywhere.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Key API</h3>
+    <table class="cmd-tbl">
+      <tr><td>PUT /idx {settings, mappings}</td><td>create index — shard count, replicas, field types/analyzers</td></tr>
+      <tr><td>POST /idx/_doc {..}</td><td>index a doc (auto <code>_id</code>); <code>PUT /idx/_doc/ID</code> to set the id</td></tr>
+      <tr><td>GET /idx/_doc/ID</td><td>fetch a doc by id (real-time, bypasses refresh)</td></tr>
+      <tr><td>POST /idx/_search {query}</td><td>run a query — match / bool / aggs / sort / paging</td></tr>
+      <tr><td>POST /_bulk</td><td>batch index/update/delete (NDJSON) — the way to ingest at volume</td></tr>
+      <tr><td>GET /idx/_analyze {analyzer, text}</td><td>inspect how text is tokenized into terms</td></tr>
+      <tr><td>POST /_aliases {actions:[add/remove]}</td><td>atomically repoint an alias — reindex/rollover swaps</td></tr>
+      <tr><td>PUT /idx/_settings {number_of_replicas}</td><td>live-tune replicas, <code>refresh_interval</code>, etc.</td></tr>
+    </table>
+
+    <h3>Use-case recipes</h3>
+
+    <div class="recipe">
+      <div class="rh">🔍 Full-text search (match + fuzziness)</div>
+<pre class="code">POST /articles/_search
+{
+  "query": {
+    "match": {
+      "title": {
+        "query": "concrt tickets",
+        "operator": "and",
+        "fuzziness": "AUTO"   <span class="c"># tolerate typos (edit distance)</span>
+      }
+    }
+  }
+}
+<span class="c"># the field's analyzer (lowercase, stem, stopwords) runs on query + doc</span></pre>
+      <div class="why">Analyzed terms are looked up in the inverted index, not scanned. <code>fuzziness:AUTO</code> catches <code>concrt→concert</code>; tune relevance with <code>boost</code> / <code>minimum_should_match</code>.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🧮 Filter + aggregation (facets)</div>
+<pre class="code">POST /products/_search
+{
+  "query": {
+    "bool": {
+      "must":   [ { "match": { "name": "running shoe" } } ],
+      "filter": [ { "term":  { "brand": "acme" } },
+                  { "range": { "price": { "lte": 100 } } } ]   <span class="c"># cacheable, no scoring</span>
+    }
+  },
+  "aggs": {
+    "by_color":  { "terms": { "field": "color" } },          <span class="c"># facet counts</span>
+    "avg_price": { "avg":   { "field": "price" } }
+  }
+}</pre>
+      <div class="why"><code>must</code> scores relevance; <code>filter</code> is a yes/no bitset (cached, fast). <code>aggs</code> compute facets/metrics over the matched set in one round-trip.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">⌨️ Autocomplete (edge_ngram / completion)</div>
+<pre class="code"><span class="c"># option A: index-time edge_ngram analyzer → prefix terms "co","con","conc"...</span>
+PUT /idx { "settings": { "analysis": { "filter": {
+  "edge": { "type": "edge_ngram", "min_gram": 2, "max_gram": 15 } } } } }
+<span class="c"># option B: completion suggester (FST in memory, very fast)</span>
+POST /idx/_search
+{ "suggest": { "s": { "prefix": "conc",
+    "completion": { "field": "suggest" } } } }</pre>
+      <div class="why">edge_ngram = full search-as-you-type with filters; completion suggester = fastest prefix lookup but limited filtering. Pick by whether you need to combine with queries.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🔄 Sync from a primary DB (CDC)</div>
+<pre class="code"><span class="c"># primary DB stays the source of truth; ES is a derived index</span>
+Postgres/MySQL  →  Debezium (CDC)  →  Kafka  →  Kafka Connect ES sink  →  Elasticsearch
+<span class="c"># alternative: app dual-writes (DB then ES) — simpler, but risk of drift on failure</span>
+POST /_bulk
+{ "index": { "_index": "products", "_id": "42" } }
+{ "name": "Acme Runner", "price": 90, "brand": "acme" }</pre>
+      <div class="why">The index lags the DB slightly — fine for search. CDC gives ordered, replayable updates and lets you fully rebuild the index from the DB at any time.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">📄 Deep pagination (search_after)</div>
+<pre class="code"><span class="c"># BAD past a few pages: from/size re-collects everything up to the offset</span>
+POST /idx/_search { "from": 10000, "size": 10 }     <span class="c"># expensive, capped</span>
+<span class="c"># GOOD: search_after on a stable sort (tiebreak on _id)</span>
+POST /idx/_search
+{ "size": 10,
+  "sort": [ { "created": "desc" }, { "_id": "asc" } ],
+  "search_after": [ 1718000000000, "doc#123" ] }   <span class="c"># cursor from last hit</span>
+<span class="c"># for full exports use the scroll API / point-in-time (PIT)</span></pre>
+      <div class="why"><code>from/size</code> is O(offset) per shard and capped by <code>index.max_result_window</code>. <code>search_after</code> is a stateless cursor; <code>scroll</code>/PIT snapshots the index for large exports.</div>
+    </div>
+  </div>
 </div>
 
 <script>

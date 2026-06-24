@@ -84,6 +84,110 @@
       </ol>
     </div>
   </div>
+
+  <!-- ===== REFERENCE ===== -->
+  <div class="card ref">
+    <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, commands &amp; recipes</h2>
+    <div class="ref-cols">
+      <div>
+        <h3>Infrastructure &amp; deployment</h3>
+        <ul>
+          <li><b>Cluster:</b> multiple <b>brokers</b>; a <b>controller</b> manages metadata + leader election — <b>KRaft</b> (Raft quorum of controllers) today, <b>ZooKeeper</b> historically.</li>
+          <li><b>Topic → partitions:</b> each partition is an ordered append-only log; partitions spread across brokers for parallelism.</li>
+          <li><b>Replication:</b> each partition has one <b>leader</b> + follower <b>replicas</b> (<code>replication.factor=3</code>); only in-sync followers — the <b>ISR</b> — are eligible for promotion on leader failure.</li>
+          <li><b>Durability knobs:</b> <code>acks=0|1|all</code> (producer waits for none / leader / all ISR) paired with <code>min.insync.replicas=2</code> — together they bound how many copies hold a write before it's acked.</li>
+          <li><b>Producers</b> batch + compress (<code>linger.ms</code>, <code>compression.type</code>) for throughput.</li>
+          <li><b>Retention:</b> time/size (<code>retention.ms</code>) <i>or</i> <b>log compaction</b> (<code>cleanup.policy=compact</code> keeps the latest value per key).</li>
+          <li><b>Rule of thumb:</b> ~<b>1 TB</b> and ~<b>1M msgs/sec</b> per broker before you scale out.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Sharding &amp; scaling</h3>
+        <ul>
+          <li><b>Partition = unit of parallelism:</b> within a <b>consumer group</b> exactly one consumer reads a partition → <b>max parallelism = partition count</b>.</li>
+          <li><b>Placement:</b> <code>partition = murmur2(key) % numPartitions</code> — same key → same partition → per-key ordering. No key → round-robin.</li>
+          <li><b>Adding partitions</b> scales throughput but <b>breaks the existing key→partition mapping</b> (rehash) — over-provision instead of resharding live.</li>
+          <li><b>Consumer groups + rebalancing:</b> partitions are redistributed when consumers join/leave; offsets are committed per group.</li>
+          <li><b>Tiered storage:</b> offload old segments to object storage for cheap long retention without bloating brokers.</li>
+          <li><b>Hot partition:</b> a low-cardinality/hot key skews one partition — no extra consumers help past one-per-partition.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Key commands / config</h3>
+    <table class="cmd-tbl">
+      <tr><td>kafka-topics --create --partitions N --replication-factor R</td><td>create a topic with N partitions, R replicas</td></tr>
+      <tr><td>kafka-topics --describe --topic T</td><td>show partitions, leader, replicas, ISR</td></tr>
+      <tr><td>kafka-console-producer --topic T</td><td>produce records from stdin (<code>--property parse.key=true</code> for keys)</td></tr>
+      <tr><td>kafka-console-consumer --topic T --from-beginning</td><td>read a topic, replaying from offset 0</td></tr>
+      <tr><td>kafka-consumer-groups --describe --group G</td><td>per-partition <b>consumer lag</b> (log-end − committed offset)</td></tr>
+      <tr><td>kafka-consumer-groups --reset-offsets --to-earliest --execute</td><td>rewind/replay a group's offsets</td></tr>
+      <tr><td>acks=all · min.insync.replicas=2</td><td>write acked only when ≥2 ISR copies hold it</td></tr>
+      <tr><td>enable.idempotence=true</td><td>dedup producer retries (no duplicates on resend)</td></tr>
+      <tr><td>retention.ms · cleanup.policy=compact</td><td>time-based deletion vs keep-latest-per-key</td></tr>
+      <tr><td>key / partitioner.class</td><td>same key → same partition (ordering); custom routing</td></tr>
+    </table>
+
+    <h3>Use-case recipes</h3>
+
+    <div class="recipe">
+      <div class="rh">🧱 Durable event log</div>
+<pre class="code"><span class="c"># topic with 3 replicas</span>
+kafka-topics --create --topic orders --partitions 12 --replication-factor 3
+<span class="c"># broker/topic: require 2 in-sync copies before ack</span>
+min.insync.replicas=2
+<span class="c"># producer</span>
+acks=all                 <span class="c"># wait for all ISR</span>
+enable.idempotence=true  <span class="c"># no dup on retry</span></pre>
+      <div class="why"><code>acks=all</code> + <code>min.insync.replicas=2</code> means a write survives one broker loss; idempotence stops producer retries from duplicating. The classic "don't lose data" config.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🔢 Ordered processing</div>
+<pre class="code"><span class="c"># produce WITH a key so related events share a partition</span>
+kafka-console-producer --topic orders \
+  --property parse.key=true --property key.separator=:
+&gt; order-42:created
+&gt; order-42:paid
+&gt; order-42:shipped     <span class="c"># all → murmur2("order-42")%N → same partition</span></pre>
+      <div class="why">Ordering is per-partition only. Keying by entity id (<code>order-42</code>) lands its events on one partition, preserving order — there is no global order across partitions.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">👥 Multiple independent consumers</div>
+<pre class="code"><span class="c"># each team = its own group.id, its own committed offsets</span>
+kafka-console-consumer --topic orders --group analytics
+kafka-console-consumer --topic orders --group billing
+<span class="c"># replay one team without touching others</span>
+kafka-consumer-groups --group analytics \
+  --reset-offsets --to-earliest --topic orders --execute</pre>
+      <div class="why">A separate <code>group.id</code> per team reads the same retained data independently and tracks its own offset — so one team can replay from the start while others keep their position.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">♻️ Retry + DLQ</div>
+<pre class="code"><span class="c"># Kafka has NO native retry/DLQ — build topics for it</span>
+orders            <span class="c"># main</span>
+orders.retry.5s   <span class="c"># consumer re-publishes failures here, with delay</span>
+orders.dlq        <span class="c"># after N attempts → dead-letter topic</span>
+<span class="c"># consumer: try → on fail, produce to retry; exhausted → produce to dlq</span></pre>
+      <div class="why">Unlike SQS, Kafka won't retry or dead-letter for you. The pattern is explicit topics: a delayed retry topic and a terminal DLQ you can inspect/replay. Keep consumers idempotent.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🎯 Exactly-once (read-process-write)</div>
+<pre class="code"><span class="c"># producer config</span>
+enable.idempotence=true
+transactional.id=payments-tx-1
+<span class="c"># in code</span>
+producer.initTransactions();
+producer.beginTransaction();
+producer.send(outRecord);
+producer.sendOffsetsToTransaction(offsets, "consumer-grp");
+producer.commitTransaction();   <span class="c"># output + consumed offset commit atomically</span></pre>
+      <div class="why">Idempotent producer kills in-flight dup; <b>transactions</b> make the output write and the input-offset commit atomic, giving exactly-once for read-process-write pipelines (consumers read with <code>isolation.level=read_committed</code>).</div>
+    </div>
+  </div>
 </div>
 
 <script>

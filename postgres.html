@@ -74,6 +74,101 @@
       </ol>
     </div>
   </div>
+
+  <!-- ===== REFERENCE ===== -->
+  <div class="card ref">
+    <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, SQL &amp; recipes</h2>
+    <div class="ref-cols">
+      <div>
+        <h3>Infrastructure &amp; deployment</h3>
+        <ul>
+          <li><b>Primary + replicas:</b> one primary takes writes; <b>streaming replication</b> ships the <b>WAL</b> (write-ahead log) to replicas, which replay it. Replicas serve reads.</li>
+          <li><b>Sync vs async:</b> <code>synchronous_commit</code> + <code>synchronous_standby_names</code> makes the primary wait for a replica to fsync the WAL (no data loss, higher latency). <b>Async</b> (default) acks first → replicas lag.</li>
+          <li><b>Durability &amp; PITR:</b> changes hit the WAL before the heap; <b>checkpoints</b> flush dirty pages. A base backup + archived WAL gives <b>point-in-time recovery</b> (replay WAL to any moment).</li>
+          <li><b>Pooling:</b> a backend is a heavyweight OS process — put <b>PgBouncer</b> (transaction-pooling) in front so thousands of clients share a small pool of backends.</li>
+          <li><b>HA / failover:</b> <b>Patroni</b> (+ etcd/Consul) does leader election &amp; auto-promotes a replica when the primary dies.</li>
+          <li><b>Backups:</b> <code>pg_dump</code> (logical, per-DB) or a physical <b>base backup</b> (<code>pg_basebackup</code>) + WAL archive for PITR &amp; fast restore.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Sharding &amp; scaling</h3>
+        <ul>
+          <li><b>Scale reads</b> with read replicas — route SELECTs to them, but watch <b>replication lag</b> (a replica read can be stale).</li>
+          <li><b>Partitioning:</b> declarative <b>RANGE / LIST / HASH</b> partitions split one huge table into child tables; the planner prunes to the relevant partition.</li>
+          <li><b>Horizontal sharding:</b> the <b>Citus</b> extension distributes a table across worker nodes by a shard key and fans queries out.</li>
+          <li><b>Vertical scaling goes far:</b> a single beefy Postgres is comfortable into the low <b>TBs</b> — shard only when you must.</li>
+          <li><b>MVCC:</b> each UPDATE writes a new tuple version, so <b>readers don't block writers</b> (and vice-versa); dead tuples are reclaimed by <b>VACUUM</b>.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Key SQL</h3>
+    <table class="cmd-tbl">
+      <tr><td>CREATE INDEX … USING btree/gin/gist/brin</td><td>B-tree (default, eq/range); <b>GIN</b> full-text/JSONB; <b>GiST</b> geo/ranges; <b>BRIN</b> huge append-only</td></tr>
+      <tr><td>EXPLAIN (ANALYZE) &lt;query&gt;</td><td>show the plan + real row counts &amp; timings (Index Scan vs Seq Scan)</td></tr>
+      <tr><td>BEGIN · COMMIT · ROLLBACK</td><td>transaction boundaries (atomic, durable on commit)</td></tr>
+      <tr><td>SET TRANSACTION ISOLATION LEVEL …</td><td>Read Committed (default) · Repeatable Read · Serializable</td></tr>
+      <tr><td>SELECT … FOR UPDATE</td><td>take a row-level write lock (pessimistic concurrency)</td></tr>
+      <tr><td>INSERT … ON CONFLICT (key) DO UPDATE</td><td>atomic upsert</td></tr>
+      <tr><td>VACUUM · ANALYZE</td><td>reclaim dead tuples · refresh planner statistics</td></tr>
+      <tr><td>LISTEN ch · NOTIFY ch, 'payload'</td><td>lightweight async pub/sub between sessions</td></tr>
+    </table>
+
+    <h3>Use-case recipes</h3>
+
+    <div class="recipe">
+      <div class="rh">🔑 Indexing strategy</div>
+<pre class="code"><span class="c">-- composite: serves WHERE a=? AND b=? (leftmost-prefix rule)</span>
+CREATE INDEX ix_ab ON t (a, b);
+<span class="c">-- partial: only index the rows you query</span>
+CREATE INDEX ix_active ON users (email) WHERE active;
+<span class="c">-- covering: answer from the index alone (index-only scan)</span>
+CREATE INDEX ix_cov ON orders (user_id) INCLUDE (status, total);</pre>
+      <div class="why">A composite <code>(a,b)</code> index also serves <code>WHERE a=?</code> alone, but <b>not</b> <code>WHERE b=?</code>. Partial indexes shrink the index; <code>INCLUDE</code> lets Postgres skip the heap.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🔁 Optimistic concurrency (version column)</div>
+<pre class="code">UPDATE accounts SET balance = :new, version = version + 1
+WHERE id = :id AND version = :expected;   <span class="c">-- 0 rows ⇒ someone else won</span>
+<span class="c">-- app sees rowcount 0 → re-read and retry</span></pre>
+      <div class="why">No locks held between read and write. The <code>version</code> guard makes the UPDATE a no-op if another txn changed the row first — cheap when conflicts are rare.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🔒 Pessimistic lock (inventory)</div>
+<pre class="code">BEGIN;
+SELECT stock FROM items WHERE id = 42 FOR UPDATE;  <span class="c">-- locks the row</span>
+UPDATE items SET stock = stock - 1 WHERE id = 42;
+COMMIT;                                            <span class="c">-- lock released</span></pre>
+      <div class="why"><code>FOR UPDATE</code> blocks other writers of that row until COMMIT — use when conflicts are likely (hot inventory) and you can't afford a lost update.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">⬆️ Upsert</div>
+<pre class="code">INSERT INTO counters (k, n) VALUES ('hits', 1)
+ON CONFLICT (k) DO UPDATE SET n = counters.n + 1;</pre>
+      <div class="why">One atomic statement: insert if new, otherwise update. Needs a unique/PK constraint on the conflict target. <code>DO NOTHING</code> for insert-if-absent.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🔎 Full-text search</div>
+<pre class="code">ALTER TABLE docs ADD COLUMN ts tsvector
+  GENERATED ALWAYS AS (to_tsvector('english', body)) STORED;
+CREATE INDEX ix_ts ON docs USING gin (ts);
+SELECT * FROM docs WHERE ts @@ to_tsquery('english', 'postgres &amp; index');</pre>
+      <div class="why">A <code>tsvector</code> column + <b>GIN</b> index gives stemmed, ranked search without a separate engine for moderate volumes.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🧩 JSONB (flexible schema)</div>
+<pre class="code">CREATE TABLE events (id bigserial, payload jsonb);
+CREATE INDEX ix_payload ON events USING gin (payload);   <span class="c">-- containment/key lookups</span>
+SELECT * FROM events WHERE payload @&gt; '{"type":"click"}';
+SELECT payload-&gt;&gt;'userId' FROM events;</pre>
+      <div class="why">Store semi-structured data in one column; a <b>GIN</b> index on the JSONB makes <code>@&gt;</code> containment queries fast. Promote hot fields to real columns when they stabilize.</div>
+    </div>
+  </div>
 </div>
 
 <script>

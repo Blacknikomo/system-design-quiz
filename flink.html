@@ -85,6 +85,98 @@
       </ol>
     </div>
   </div>
+
+  <!-- ===== REFERENCE ===== -->
+  <div class="card ref">
+    <h2 style="margin-top:0">📖 Reference — infrastructure, scaling, API &amp; recipes</h2>
+    <div class="ref-cols">
+      <div>
+        <h3>Infrastructure &amp; deployment</h3>
+        <ul>
+          <li><b>Job Manager</b> (coordinator) — schedules tasks, triggers &amp; coordinates <b>checkpoints</b>, handles recovery. <b>Task Managers</b> (workers) run the actual work in <b>task slots</b> (one slot = one parallel pipeline of subtasks).</li>
+          <li><b>Cluster modes:</b> <b>session cluster</b> (long-lived, many jobs share it) vs <b>application cluster</b> (one job per cluster, isolated lifecycle). Deploy on <b>Kubernetes</b> or <b>YARN</b>.</li>
+          <li><b>State backends:</b> heap (small state, fast) vs embedded <b>RocksDB</b> (state larger than RAM, spills to local disk) — pick RocksDB for big keyed state.</li>
+          <li><b>Checkpoints:</b> periodic, automatic snapshots of all operator state to durable storage (<b>S3/HDFS</b>); on failure the job restores and replays from the last one → fault tolerance.</li>
+          <li><b>Savepoints:</b> manual, versioned snapshots you trigger for <b>upgrades, rescaling, or code changes</b> — restart the job from one to migrate safely.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Sharding &amp; scaling</h3>
+        <ul>
+          <li><b>Parallelism</b> is set per operator (or job-wide default); each parallel instance is a <b>subtask</b> running in a slot.</li>
+          <li><b>keyBy</b> partitions the stream by key (hash) so all events for a key — and that key's <b>keyed state</b> — live on one slot. The unit of state distribution.</li>
+          <li><b>Rescale:</b> take a <b>savepoint</b>, restart with new parallelism; Flink redistributes keyed state across the new slots (key-groups).</li>
+          <li><b>Event-time + watermarks</b> handle <b>out-of-order / late</b> data: a watermark of T asserts "no more events &lt; T expected" and triggers event-time windows/timers.</li>
+          <li><b>Backpressure</b> propagates naturally upstream through the network buffers — a slow sink throttles sources without dropping data.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Key API / concepts (DataStream)</h3>
+    <table class="cmd-tbl">
+      <tr><td>env.addSource(...) / env.fromSource(...)</td><td>ingest a stream (Kafka, files, sockets, …)</td></tr>
+      <tr><td>.keyBy(e -&gt; e.key)</td><td>partition by key → enables keyed state &amp; per-key windows</td></tr>
+      <tr><td>.window(TumblingEventTimeWindows.of(...)) · Sliding · Session</td><td>assign events to windows (fixed / overlapping / gap-based)</td></tr>
+      <tr><td>.process(ProcessFunction) · .aggregate(...) · .reduce(...)</td><td>low-level access (state+timers) vs incremental aggregation</td></tr>
+      <tr><td>ValueState · ListState · MapState (+ StateTtlConfig)</td><td>managed keyed state; <code>StateTtlConfig</code> auto-expires entries</td></tr>
+      <tr><td>.assignTimestampsAndWatermarks(WatermarkStrategy.forBoundedOutOfOrderness(...))</td><td>extract event time + emit watermarks with bounded lateness</td></tr>
+      <tr><td>.sinkTo(...) / .addSink(...)</td><td>emit results (Kafka, JDBC, S3, …)</td></tr>
+      <tr><td>env.enableCheckpointing(interval, EXACTLY_ONCE)</td><td>turn on periodic checkpoints + exactly-once guarantee</td></tr>
+    </table>
+
+    <h3>Use-case recipes</h3>
+
+    <div class="recipe">
+      <div class="rh">🪟 Windowed aggregation (clicks/min)</div>
+<pre class="code">stream
+  .keyBy(e -&gt; e.userId)
+  .window(TumblingEventTimeWindows.of(Time.minutes(1)))
+  .aggregate(new CountAgg());      <span class="c">// one count per user per minute</span></pre>
+      <div class="why">The bread-and-butter streaming job: per-key counts/sums over fixed windows. Use <code>aggregate</code>/<code>reduce</code> (incremental) over <code>process</code> on a window to avoid buffering all events.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🧹 Stateful dedup (drop duplicate event ids)</div>
+<pre class="code">ValueState&lt;Boolean&gt; seen;            <span class="c">// keyed by eventId</span>
+<span class="c">// in processElement:</span>
+if (seen.value() != null) return;    <span class="c">// already saw it → drop</span>
+seen.update(true);
+out.collect(event);
+<span class="c">// configure TTL so state doesn't grow forever</span>
+StateTtlConfig.newBuilder(Time.hours(24)).build();</pre>
+      <div class="why">Keyed <code>ValueState</code> per id remembers what's been seen. Always attach a <b>TTL</b> — unbounded keyspace (event ids) would otherwise blow up state size.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">⏰ Late data (allowedLateness + side output)</div>
+<pre class="code">OutputTag&lt;Event&gt; late = new OutputTag&lt;&gt;("late"){};
+stream.keyBy(k).window(TumblingEventTimeWindows.of(Time.minutes(1)))
+  .allowedLateness(Time.minutes(5))          <span class="c">// keep window state 5 min past watermark</span>
+  .sideOutputLateData(late)                  <span class="c">// truly-late events go here, not dropped</span>
+  .aggregate(new CountAgg());</pre>
+      <div class="why">By default events past the watermark are <b>dropped</b>. <code>allowedLateness</code> re-fires the window for slightly-late data; the side output captures the rest for repair/audit instead of silent loss.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🔗 Stream-stream join</div>
+<pre class="code">clicks.keyBy(c -&gt; c.adId)
+  .intervalJoin(impressions.keyBy(i -&gt; i.adId))
+  .between(Time.seconds(-5), Time.minutes(10))   <span class="c">// click within window of impression</span>
+  .process(new JoinFn());
+<span class="c">// or window join: .join(other).where(k).equalTo(k).window(...)</span></pre>
+      <div class="why">Join two keyed streams on a key within a bounded time interval/window. The interval bounds how much state is buffered — unbounded joins need careful TTL.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">✅ Exactly-once sink</div>
+<pre class="code">env.enableCheckpointing(60_000, EXACTLY_ONCE);
+KafkaSink.builder()
+  .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)  <span class="c">// 2-phase commit</span>
+  .setTransactionalIdPrefix("clicks-")
+  .build();</pre>
+      <div class="why">End-to-end exactly-once = checkpointing + a <b>transactional sink</b> that commits on checkpoint (Kafka two-phase commit). First ask: <b>do I need real-time?</b> Many problems are cheaper as a batch job (Spark) — only reach for Flink when low-latency stateful streaming truly matters.</div>
+    </div>
+  </div>
 </div>
 
 <script>

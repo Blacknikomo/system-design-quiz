@@ -116,3 +116,20 @@ label.fld{font-size:13px;color:var(--muted);display:flex;flex-direction:column;g
 .hub-card .ic{font-size:22px}
 .hub-card .nm{font-weight:700;margin:8px 0 4px;color:var(--txt)}
 .hub-card .ds{font-size:12.5px;color:var(--muted)}
+
+/* ===== Reference section (infra / sharding / commands / recipes) ===== */
+.ref-cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:720px){.ref-cols{grid-template-columns:1fr}}
+.ref h3{margin:16px 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+.ref ul{margin:0;padding-left:18px}
+.ref li{font-size:13.5px;margin:4px 0}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:var(--txt)}
+pre.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.5;background:#0b0f14;border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow-x:auto;margin:6px 0;white-space:pre;color:var(--txt)}
+pre.code .c{color:var(--muted)}
+.cmd-tbl{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0}
+.cmd-tbl td{border:1px solid var(--line);padding:6px 9px;vertical-align:top}
+.cmd-tbl td:first-child{font-family:ui-monospace,Menlo,monospace;color:var(--accent);white-space:nowrap;font-size:12px}
+.cmd-tbl tr td:first-child{width:1%}
+.recipe{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0}
+.recipe .rh{font-weight:700;margin-bottom:4px}
+.recipe .why{color:var(--muted);font-size:13px;margin-top:6px}

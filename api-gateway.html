@@ -81,6 +81,108 @@
       </ol>
     </div>
   </div>
+
+  <!-- ===== REFERENCE ===== -->
+  <div class="card ref">
+    <h2 style="margin-top:0">📖 Reference — infrastructure, scaling, responsibilities &amp; recipes</h2>
+    <div class="ref-cols">
+      <div>
+        <h3>Infrastructure &amp; deployment</h3>
+        <ul>
+          <li><b>Edge entry point:</b> a single front door in front of all backend services — clients only ever talk to the gateway, never to services directly.</li>
+          <li><b>Options:</b> managed <b>AWS API Gateway</b>, or self-hosted <b>Kong</b> / <b>NGINX</b> / <b>Envoy</b> / <b>Apigee</b>.</li>
+          <li><b>Stateless:</b> holds no per-request state → scale it <b>horizontally</b> behind a load balancer; any instance can serve any request.</li>
+          <li><b>TLS termination:</b> decrypts HTTPS at the edge so services speak plain HTTP internally.</li>
+          <li><b>Integrations:</b> an <b>identity provider</b> (JWT/OAuth) for auth and a shared <b>rate-limit store</b> (Redis) for counters; pairs with <b>service discovery</b> to resolve upstreams.</li>
+          <li><b>Topology:</b> deploy <b>per region</b> and front it with a <b>CDN</b> for edge caching + DDoS absorption.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Sharding &amp; scaling</h3>
+        <ul>
+          <li><b>Stateless → just add instances</b>; no resharding, no rebalancing.</li>
+          <li>Keep cross-cutting <b>state external</b>: rate-limit counters in a <b>centralized Redis</b>, session state carried in a <b>token</b> (JWT) — not in gateway memory.</li>
+          <li><b>Cache</b> cacheable <code>GET</code> responses at the gateway / CDN to offload upstreams.</li>
+          <li><b>Single choke point:</b> everything flows through it — give it <b>generous capacity</b>, <b>health checks</b>, and <b>circuit breakers</b> so a slow backend can't take the whole edge down.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Responsibilities / config</h3>
+    <table class="cmd-tbl">
+      <tr><td>routing</td><td>match path / host → upstream service (<code>/users/*</code> → users-svc)</td></tr>
+      <tr><td>authentication</td><td>validate API key / JWT; reject with <code>401</code> if missing/invalid</td></tr>
+      <tr><td>rate limiting</td><td>token bucket per client → <code>429</code> when over limit</td></tr>
+      <tr><td>request / response transform</td><td>rewrite headers, paths, bodies; strip internal fields</td></tr>
+      <tr><td>TLS termination</td><td>terminate HTTPS at the edge; plain HTTP to services</td></tr>
+      <tr><td>logging + tracing</td><td>access logs, metrics, propagate a <b>correlation id</b></td></tr>
+      <tr><td>CORS</td><td>handle preflight + <code>Access-Control-*</code> headers centrally</td></tr>
+      <tr><td>circuit breaking / retries / timeouts</td><td>fail fast, shed load, protect upstreams</td></tr>
+    </table>
+
+    <h3>Config recipes</h3>
+
+    <div class="recipe">
+      <div class="rh">🧭 Routing table</div>
+<pre class="code">routes:
+  - match: /users/*    <span class="c"># path prefix → upstream</span>
+    upstream: users-svc
+  - match: /orders/*
+    upstream: orders-svc
+  default: 404           <span class="c"># no match → Not Found</span></pre>
+      <div class="why">Longest/most-specific prefix wins. Anything unmatched returns <code>404</code> before touching a backend.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🔑 Auth at the edge</div>
+<pre class="code">jwt:
+  verify: signature        <span class="c"># reject if signature invalid</span>
+  check: exp               <span class="c"># reject if expired</span>
+  on_failure: return 401   <span class="c"># short-circuit — no service is hit</span></pre>
+      <div class="why">Authenticate once at the edge so each service doesn't reimplement it. Failure returns <code>401</code> before any upstream call.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🚦 Rate limiting</div>
+<pre class="code">rate_limit:
+  key: $api_key            <span class="c"># bucket per client</span>
+  algorithm: token_bucket
+  store: redis             <span class="c"># shared counters across instances</span>
+  on_exceed:
+    status: 429
+    headers: { Retry-After: 2 }</pre>
+      <div class="why">Counters live in centralized Redis so every stateless gateway instance sees the same limit. Over limit → <code>429</code> with <code>Retry-After</code>.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🧩 BFF / aggregation</div>
+<pre class="code"><span class="c"># one client call fans out to several services</span>
+GET /home  →  gateway
+  ├─ GET profile-svc/user/123
+  ├─ GET orders-svc/recent?user=123
+  └─ GET feed-svc/items?user=123
+<span class="c"># gateway composes one response</span></pre>
+      <div class="why">A Backend-for-Frontend collapses several round-trips into one and tailors the payload per client — at the cost of coupling the gateway to service shapes.</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🐤 Canary / blue-green</div>
+<pre class="code">upstream: orders
+  targets:
+    - orders-v1: 90%       <span class="c"># stable</span>
+    - orders-v2: 10%       <span class="c"># canary — shift weight to roll out</span></pre>
+      <div class="why">Route a slice of traffic to a new version by weight; ramp to 100% if healthy, or instantly flip back on errors (blue-green).</div>
+    </div>
+
+    <div class="recipe">
+      <div class="rh">🗃️ Caching</div>
+<pre class="code">cache:
+  methods: [GET]
+  ttl: 30s                 <span class="c"># short TTL to offload upstreams</span>
+  key: $uri + $query</pre>
+      <div class="why">Serve hot <code>GET</code>s from the gateway/CDN so backends see only misses. Keep TTLs short (or invalidate on write) to bound staleness.</div>
+    </div>
+  </div>
 </div>
 
 <script>

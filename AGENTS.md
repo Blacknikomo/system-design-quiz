@@ -187,6 +187,8 @@ Log/feedback/steps: `.log(.l/.t/.ok/.err/.warn/.info/.cmd)` · `.explain` · `.s
 
 Each simulator must (a) describe the technology, (b) let the user run its typical operations step-by-step, and (c) **visualize the signature internal mechanic** and call out the signature gotcha in a `.note.gotcha`. Examples already built: Redis async replication + stale reads + failover data loss; Kafka partitions/offsets/consumer-groups/replay; Cassandra ring + QUORUM + LSM write path; DynamoDB partitions + eventual-vs-strong + GSI; Flink tumbling windows + watermarks; ZooKeeper znodes + ephemeral leader election; etc.
 
+**Reference section (required on the 9 key-technology pages).** Below the simulator, each tech page ends with a `<div class="card ref">` titled "📖 Reference" containing: a `.ref-cols` grid of *Infrastructure & deployment* and *Sharding & scaling* bullets; a `<table class="cmd-tbl">` of key commands/API (cmd → meaning); and several `<div class="recipe">` use-case recipes (a `.rh` title, a `<pre class="code">` with real commands — comments via `<span class="c">`, escape `&lt;`/`&gt;` — and a `.why`). `redis.html` is the canonical example. Use the shared `.ref / .ref-cols / .cmd-tbl / pre.code / .recipe` classes in `style.css`; don't restyle. The DS pages (`ds-*.html`) don't need this — their complexity table + gotcha suffices.
+
 ---
 
 ## 6. Extension recipes
