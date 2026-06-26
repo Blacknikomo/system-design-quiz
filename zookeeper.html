@@ -105,6 +105,20 @@
     </div>
   </div>
 
+  <!-- ===== AT SCALE ===== -->
+  <div class="card scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Concrete figures to quote in a capacity discussion. Round aggressively — orders of magnitude are the point, not precision.</p>
+    <table class="cmd-tbl">
+      <tr><td>ensemble size</td><td><b>3 or 5 nodes</b> (odd, for quorum). <b>More nodes = slower writes</b> (bigger quorum to ack) — never scale writes by adding nodes.</td></tr>
+      <tr><td>write throughput</td><td>low by design — <b>~tens of thousands writes/s</b> cluster-wide max; every write is leader-ordered, quorum-acked, and fsynced.</td></tr>
+      <tr><td>read throughput</td><td>scales with followers (any replica serves reads), but a read can be slightly stale — issue <code>sync</code> first for the latest.</td></tr>
+      <tr><td>data size</td><td>whole dataset must fit in memory → <b>low GBs</b> total; per-znode payload capped at <b>~1 MB</b>. Store pointers/metadata, never your dataset.</td></tr>
+      <tr><td>liveness</td><td>thousands of sessions OK; ephemeral znodes track liveness via heartbeats.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Scale failure modes:</b> (1) <b>Using it as a data store</b> — large data or high write rate tips it over; it's a coordination service. (2) <b>Watch herd</b> — one change notifies thousands of watchers that all re-read at once. (3) <b>Session expiry under a GC pause</b> drops ephemeral nodes (and the locks they held) → use fencing tokens downstream. (4) A slow disk / full GC on the leader stalls all writes. Modern alternative: <b>etcd</b> (Raft).</div>
+  </div>
+
   <!-- ===== REFERENCE ===== -->
   <div class="card ref">
     <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, API &amp; recipes</h2>

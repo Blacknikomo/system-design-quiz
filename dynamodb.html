@@ -73,6 +73,20 @@
     </div>
   </div>
 
+  <!-- ===== AT SCALE ===== -->
+  <div class="card scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Concrete figures to quote in a capacity discussion. Round aggressively — orders of magnitude are the point, not precision.</p>
+    <table class="cmd-tbl">
+      <tr><td>partition limits</td><td>each physical partition caps at <b>3000 RCU / 1000 WCU / 10 GB</b>. Exceed any → DynamoDB auto-splits the partition.</td></tr>
+      <tr><td>item size</td><td>max <b>400 KB</b> (item + attribute names). Store blobs in S3, keep a pointer.</td></tr>
+      <tr><td>table capacity</td><td>effectively unlimited — scales horizontally by adding partitions transparently.</td></tr>
+      <tr><td>on-demand</td><td>instantly serves up to <b>2× the previous peak</b>; <b>adaptive capacity</b> reallocates throughput to hot partitions — but only within the per-partition ceiling.</td></tr>
+      <tr><td>consistency</td><td>eventually-consistent reads (default, ½ the RCU) vs strongly-consistent (<code>ConsistentRead</code>, full RCU, same-region only).</td></tr>
+    </table>
+    <div class="note gotcha"><b>Scale failure modes:</b> (1) <b>Hot partition</b> — a low-cardinality partition key concentrates traffic and throttles despite spare <i>table</i> capacity; add a write-sharding suffix. (2) <b>GSIs have their own capacity</b> — a throttled GSI back-pressures base-table writes. (3) <code>Scan</code> scatters across all partitions — design for <code>Query</code> on the key. (4) An LSI item-collection is capped at 10 GB.</div>
+  </div>
+
   <!-- ===== REFERENCE ===== -->
   <div class="card ref">
     <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, API &amp; recipes</h2>

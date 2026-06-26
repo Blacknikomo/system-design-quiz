@@ -74,6 +74,20 @@
     </div>
   </div>
 
+  <!-- ===== AT SCALE ===== -->
+  <div class="card scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Concrete figures to quote in a capacity discussion. Round aggressively — orders of magnitude are the point, not precision.</p>
+    <table class="cmd-tbl">
+      <tr><td>partition size</td><td>keep <b>&lt; 100 MB and &lt; ~100k rows</b>; hard limit <b>2 billion cells</b>/partition (you'll degrade long before). Model so partitions stay bounded.</td></tr>
+      <tr><td>data / node</td><td><b>~1 TB/node</b> recommended (denser is possible with SSD + tuning); beyond that, repair/compaction/streaming get painful.</td></tr>
+      <tr><td>write throughput</td><td>very high — LSM writes are sequential appends; ~tens of thousands writes/s per node, <b>scales linearly</b> with nodes (no single coordinator).</td></tr>
+      <tr><td>consistency</td><td>tune per query: QUORUM read + QUORUM write (R+W&gt;RF) = strong; RF=3, QUORUM=2 typical. ONE = fast but stale-risk.</td></tr>
+      <tr><td>scaling</td><td>add nodes → vnodes redistribute token ranges; linear scale-out. Masterless — every node can coordinate.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Scale failure modes:</b> (1) <b>Wide/hot partition</b> — an unbounded partition key (all events under one user) grows past limits and degrades the whole node. (2) <b>Tombstone overload</b> — heavy deletes/TTLs pile up; a query scanning &gt;100k tombstones warns then fails (<code>TombstoneOverwhelmingException</code>). (3) Large partitions → GC pressure + slow reads. (4) Secondary indexes / read-before-write scale poorly — model query-first and denormalize.</div>
+  </div>
+
   <!-- ===== REFERENCE ===== -->
   <div class="card ref">
     <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, commands &amp; recipes</h2>

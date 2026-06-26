@@ -133,3 +133,8 @@ pre.code .c{color:var(--muted)}
 .recipe{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0}
 .recipe .rh{font-weight:700;margin-bottom:4px}
 .recipe .why{color:var(--muted);font-size:13px;margin-top:6px}
+
+/* ===== At-Scale card (real numbers, limits, failure modes) ===== */
+.card.scale{border-color:#4a3a6e;background:linear-gradient(180deg,rgba(124,92,255,.07),transparent 70px)}
+.card.scale h2{color:var(--accent2)}
+.card.scale .cmd-tbl td:first-child{color:var(--accent2);font-family:inherit;font-size:13px;font-weight:600;white-space:nowrap}

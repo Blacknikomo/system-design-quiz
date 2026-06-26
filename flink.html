@@ -86,6 +86,20 @@
     </div>
   </div>
 
+  <!-- ===== AT SCALE ===== -->
+  <div class="card scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Concrete figures to quote in a capacity discussion. Round aggressively — orders of magnitude are the point, not precision.</p>
+    <table class="cmd-tbl">
+      <tr><td>throughput</td><td>scales horizontally to <b>millions of events/s</b> across a cluster; per-subtask throughput × parallelism. Parallelism is set per operator.</td></tr>
+      <tr><td>state size</td><td>keyed state in <b>RocksDB</b> spills to local disk → state can reach <b>TBs</b>; checkpointed to S3/HDFS for recovery.</td></tr>
+      <tr><td>checkpoints</td><td>periodic, async; interval trades recovery time vs overhead. <b>Backpressure</b> propagates upstream via network buffers (no data loss).</td></tr>
+      <tr><td>rescaling</td><td>take a <b>savepoint</b>, restart with new parallelism; Flink redistributes key-groups across slots.</td></tr>
+      <tr><td>latency</td><td>true streaming → ms-level; event-time + watermarks handle out-of-order data with bounded lateness.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Scale failure modes:</b> (1) <b>Key skew</b> — a hot key (one big tenant) sends all its events + state to one slot; the job is only as fast as the hottest slot. Pre-aggregate or salt the key. (2) <b>State explosion</b> — unbounded keyed state (no TTL) grows until checkpoints time out; set <code>StateTtlConfig</code>. (3) Checkpoint stalls under backpressure (alignment) → use unaligned checkpoints. (4) Watermark too tight drops late data; too loose fires windows late.</div>
+  </div>
+
   <!-- ===== REFERENCE ===== -->
   <div class="card ref">
     <h2 style="margin-top:0">📖 Reference — infrastructure, scaling, API &amp; recipes</h2>

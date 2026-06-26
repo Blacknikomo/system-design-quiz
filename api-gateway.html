@@ -82,6 +82,20 @@
     </div>
   </div>
 
+  <!-- ===== AT SCALE ===== -->
+  <div class="card scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Concrete figures to quote in a capacity discussion. Round aggressively — orders of magnitude are the point, not precision.</p>
+    <table class="cmd-tbl">
+      <tr><td>horizontal scale</td><td>stateless → add instances behind an LB for ~linear RPS; per-instance <b>~tens of thousands RPS</b> depending on work (auth, transform).</td></tr>
+      <tr><td>the real bottleneck</td><td>the gateway is cheap; the shared <b>rate-limit store</b> (Redis), the <b>auth/IdP</b>, and slow upstreams are the actual limits.</td></tr>
+      <tr><td>connection fan-in</td><td>terminates many client connections, multiplexes to a small keep-alive pool upstream — shields services from connection storms.</td></tr>
+      <tr><td>caching</td><td>cache cacheable GETs at the gateway/CDN to offload upstreams.</td></tr>
+      <tr><td>topology</td><td>deploy per region, front with a CDN/anycast for edge TLS + DDoS absorption.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Scale failure modes:</b> (1) <b>Single choke point</b> — a slow upstream can exhaust the gateway's connection/thread pool and take down the whole edge → circuit breakers, timeouts, bulkheads. (2) The <b>centralized rate-limit store</b> becomes the hot path — shard it or use local token buckets with async sync. (3) <b>Retry storms</b> — aggressive client retries amplify an outage; use exponential backoff + jitter + retry budgets. (4) TLS handshake CPU at the edge.</div>
+  </div>
+
   <!-- ===== REFERENCE ===== -->
   <div class="card ref">
     <h2 style="margin-top:0">📖 Reference — infrastructure, scaling, responsibilities &amp; recipes</h2>

@@ -71,6 +71,20 @@
     </div>
   </div>
 
+  <!-- ===== AT SCALE ===== -->
+  <div class="card scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Concrete figures to quote in a capacity discussion. Round aggressively — orders of magnitude are the point, not precision.</p>
+    <table class="cmd-tbl">
+      <tr><td>throughput / node</td><td><b>~100k ops/s</b> per core for simple GET/SET; <b>up to ~1M ops/s</b> with pipelining. Command execution is single-threaded → a write-hot single key cannot be scaled by adding replicas.</td></tr>
+      <tr><td>latency</td><td>sub-millisecond p99 in-DC (all in RAM). An O(n) command (<code>KEYS</code>, big <code>ZRANGE</code>, <code>SMEMBERS</code>) blocks <b>every</b> client while it runs.</td></tr>
+      <tr><td>memory / node</td><td>dataset must fit in RAM; practical nodes up to ~100s GB. Tens of bytes overhead per key — millions of tiny keys add up. Cost is RAM, not disk.</td></tr>
+      <tr><td>cluster</td><td><b>16384 hash slots</b>; linear scaling to <b>~1000 nodes</b>. Scale writes/space by adding masters + resharding slots; scale reads with replicas.</td></tr>
+      <tr><td>value size</td><td>hard cap 512 MB, but keep values small (&lt;~10 KB) — large values stall the event loop on serialize/transfer.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Scale failure modes:</b> (1) <b>Hot key</b> pins one master core — replicas help read-hot keys only, not write-hot; mitigate with client-side cache or key-splitting. (2) <b>O(n) command</b> on a large collection blocks all clients. (3) <b>Cache stampede</b> when a hot key expires — use a rebuild lock + TTL jitter. (4) <b>Async replication</b> drops the last acked writes on failover — never a system of record.</div>
+  </div>
+
   <!-- ===== REFERENCE ===== -->
   <div class="card ref">
     <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, commands &amp; recipes</h2>

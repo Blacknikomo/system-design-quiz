@@ -75,6 +75,20 @@
     </div>
   </div>
 
+  <!-- ===== AT SCALE ===== -->
+  <div class="card scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Concrete figures to quote in a capacity discussion. Round aggressively — orders of magnitude are the point, not precision.</p>
+    <table class="cmd-tbl">
+      <tr><td>vertical headroom</td><td>a single primary is comfortable into the <b>low tens of TB</b> and <b>~tens of thousands of TPS</b> on good hardware. Shard only when you must.</td></tr>
+      <tr><td>connections</td><td>each connection = an OS process (a few MB + <code>work_mem</code>). Practical ceiling <b>~a few hundred</b> direct connections → front with <b>PgBouncer</b> for thousands of clients.</td></tr>
+      <tr><td>read scaling</td><td>streaming replicas serve reads; async replicas lag, sync replicas add write latency.</td></tr>
+      <tr><td>partition / shard</td><td>partition (RANGE/HASH/LIST) when one table exceeds <b>~100s GB</b> so the planner can prune; <b>Citus</b> for true horizontal sharding.</td></tr>
+      <tr><td>write cost</td><td>every index slows writes; a HOT update avoids index bloat when no indexed column changes.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Scale failure modes:</b> (1) <b>Transaction-ID wraparound</b> — autovacuum must freeze old rows or the 32-bit XID space wraps and the DB stops accepting writes (the canonical Postgres-at-scale outage). (2) <b>Connection storms</b> — thousands of direct connections thrash; pool. (3) A long-running / <code>idle in transaction</code> session holds the xmin horizon, blocking VACUUM → bloat. (4) Lock contention on hot rows — use <code>SELECT … FOR UPDATE SKIP LOCKED</code> for queue tables.</div>
+  </div>
+
   <!-- ===== REFERENCE ===== -->
   <div class="card ref">
     <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, SQL &amp; recipes</h2>

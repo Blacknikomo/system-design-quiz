@@ -81,6 +81,20 @@
     </div>
   </div>
 
+  <!-- ===== AT SCALE ===== -->
+  <div class="card scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Concrete figures to quote in a capacity discussion. Round aggressively — orders of magnitude are the point, not precision.</p>
+    <table class="cmd-tbl">
+      <tr><td>shard size</td><td>aim <b>10–50 GB/shard</b>. Too small wastes per-shard overhead; too large makes recovery/rebalance slow.</td></tr>
+      <tr><td>heap / node</td><td><b>≤ ~31 GB</b> — above ~32 GB the JVM loses compressed object pointers and you get <i>less</i> usable heap. Leave the rest of RAM for the OS file cache (Lucene depends on it).</td></tr>
+      <tr><td>shards / node</td><td><b>≤ ~20 shards per GB of heap</b> → a 30 GB-heap node ~600 shards max. Oversharding is the #1 cluster killer.</td></tr>
+      <tr><td>shard count</td><td><code>number_of_shards</code> is fixed at index creation (reindex + alias swap to change). <code>number_of_replicas</code> is live-adjustable.</td></tr>
+      <tr><td>ingest</td><td><code>_bulk</code> (NDJSON) is the only way to index at volume; near-real-time — docs searchable after <code>refresh</code> (default 1 s).</td></tr>
+    </table>
+    <div class="note gotcha"><b>Scale failure modes:</b> (1) <b>Oversharding</b> — thousands of tiny shards exhaust heap with cluster-state/segment overhead and slow everything. (2) <b>Deep pagination</b> (<code>from+size</code> past ~10k) is O(n) across shards — use <code>search_after</code>. (3) Heavy aggregations / fielddata on text blow up heap → circuit breaker. (4) <b>Mapping explosion</b> (unbounded dynamic fields) can OOM the cluster. (5) Not a source of truth — rebuild from the primary DB via CDC.</div>
+  </div>
+
   <!-- ===== REFERENCE ===== -->
   <div class="card ref">
     <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, commands &amp; recipes</h2>

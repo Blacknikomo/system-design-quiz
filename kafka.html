@@ -85,6 +85,20 @@
     </div>
   </div>
 
+  <!-- ===== AT SCALE ===== -->
+  <div class="card scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Concrete figures to quote in a capacity discussion. Round aggressively — orders of magnitude are the point, not precision.</p>
+    <table class="cmd-tbl">
+      <tr><td>throughput / broker</td><td><b>~100s MB/s to ~1 GB/s</b> (sequential disk + NIC bound). Cluster scales to many GB/s by adding brokers.</td></tr>
+      <tr><td>partition = parallelism</td><td>one partition is read by <b>at most one consumer</b> in a group and tops out at <b>~tens of MB/s</b>. Add partitions to add throughput — but you can't reduce them later.</td></tr>
+      <tr><td>partitions / cluster</td><td>ZooKeeper era: <b>~4000/broker, ~200k/cluster</b> (controller reloaded all state on failover — ~14 s at 200k). <b>KRaft</b> removes that ceiling → <b>millions/cluster</b> (single broker tested to ~600k).</td></tr>
+      <tr><td>retention</td><td>bounded by disk (time- or size-based). <b>Tiered storage</b> offloads cold segments to object storage so retention isn't capped by local disk.</td></tr>
+      <tr><td>durability</td><td>RF=3 typical; <code>acks=all</code> + <code>min.insync.replicas=2</code>. Replication divides usable throughput by RF.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Scale failure modes:</b> (1) <b>Rebalance storms</b> — adding/removing a consumer (or a slow heartbeat) reshuffles all partitions and pauses consumption; use the <b>cooperative-sticky</b> assignor + <b>static membership</b>. (2) <b>Hot partition</b> from a skewed key (one big customer) saturates one consumer — raise key cardinality or custom-partition. (3) Too many partitions → more open files, slower leader elections, higher end-to-end latency. (4) <b>Consumer lag</b> is the health metric — alert on it.</div>
+  </div>
+
   <!-- ===== REFERENCE ===== -->
   <div class="card ref">
     <h2 style="margin-top:0">📖 Reference — infrastructure, sharding, commands &amp; recipes</h2>
