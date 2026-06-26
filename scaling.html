@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scaling — Consistent Hashing & Rebalancing</title>
+<link rel="stylesheet" href="style.css">
+<style>
+/* page-local: ring svg + chips (uses shared tokens only) */
+#ring{display:block;margin:0 auto;max-width:360px}
+.legend{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:10px}
+.legchip{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:3px 9px}
+.legdot{width:11px;height:11px;border-radius:50%}
+.pchip{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:3px 8px;margin:3px}
+.pchip.moved{border-color:var(--warn);color:var(--warn);animation:pop .5s ease}
+.tabs{display:flex;gap:8px;margin-bottom:4px}
+.tab{cursor:pointer;padding:7px 14px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--muted);font-size:13px;font-weight:600}
+.tab.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.statline{font-size:13px;margin-top:6px}
+.statline b{color:var(--txt)}
+.bigmoved{font-family:ui-monospace,Menlo,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>⚖️ Scaling — Consistent Hashing &amp; Rebalancing</h1>
+      <div class="sub">The mechanic behind every horizontally-sharded system. Add or remove a node and watch <b>how many keys have to move</b> — and why consistent hashing (Cassandra ring, DynamoDB partitions, Redis Cluster slots) beats naive <code>hash % N</code>. Second tab: Kafka <b>consumer-group rebalancing</b>.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">consistent hashing</span>
+      <span class="tag">virtual nodes</span>
+      <span class="tag">minimal key movement</span>
+      <span class="tag">consumer rebalance</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">Naive sharding (<code>hash(key) % N</code>) breaks the moment <b>N</b> changes: almost every key remaps to a new node, so adding one machine triggers a near-total reshuffle. <b>Consistent hashing</b> places keys and nodes on a ring; a key belongs to the next node clockwise, so adding/removing a node only moves the <b>~1/N</b> of keys adjacent to the change. <b>Virtual nodes</b> give each physical node many points on the ring so load stays even and a lost node's keys spread across all survivors — not onto one neighbor.</p>
+    <div class="note gotcha"><b>The gotcha:</b> without virtual nodes, ranges are uneven (one node owns a huge arc) and removing a node dumps <b>all</b> its keys onto a single successor — an instant hotspot. With vnodes, both problems vanish. This is exactly why Cassandra and Dynamo use vnodes.</div>
+  </div>
+
+  <!-- mode tabs + controls -->
+  <div class="card">
+    <div class="tabs">
+      <div class="tab on" id="tabRing">🔵 Hash ring (DB sharding)</div>
+      <div class="tab" id="tabGroup">🟧 Consumer group (Kafka)</div>
+    </div>
+
+    <div id="ctlRing">
+      <h3>Ring controls</h3>
+      <div class="row">
+        <button class="btn" id="addNode">＋ Add node</button>
+        <button class="btn sec" id="rmNode">－ Remove node</button>
+        <button class="btn ghost" id="addKeys">＋ Add 5 keys</button>
+        <button class="btn ghost" id="vnodeBtn">Virtual nodes: OFF</button>
+        <button class="btn ghost" id="resetRing">↺ Reset</button>
+      </div>
+    </div>
+
+    <div id="ctlGroup" style="display:none">
+      <h3>Consumer-group controls</h3>
+      <div class="row">
+        <button class="btn" id="addCons">＋ Add consumer</button>
+        <button class="btn sec" id="rmCons">－ Remove consumer</button>
+        <button class="btn ghost" id="addPart">＋ Add partition</button>
+        <button class="btn ghost" id="assignorBtn">Assignor: cooperative-sticky</button>
+        <button class="btn ghost" id="resetGroup">↺ Reset</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage" style="min-height:300px">
+      <div id="ringWrap">
+        <svg id="ring" viewBox="0 0 360 360" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div id="groupWrap" style="display:none">
+        <div class="nodes" id="consumers"></div>
+      </div>
+    </div>
+    <div class="explain" id="explain">Add or remove a node and watch the moved-key counter.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Event log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small" id="steps">
+        <li>Keys and nodes hash onto a <b>ring</b> (0…1). A key is owned by the <b>next node clockwise</b>.</li>
+        <li><b>Add a node</b> → it only steals the keys in the arc just before it (~1/N). Everything else stays put.</li>
+        <li><b>Remove a node</b> → only its keys move, to their next clockwise successor.</li>
+        <li><b>Virtual nodes</b> spread each node across many ring points → even load + even redistribution.</li>
+        <li>Compare with <b>naive hash % N</b>: the counter shows how many keys it <i>would</i> have moved (almost all).</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ================= shared =================
+const COLORS = ['#4f9cf9','#7c5cff','#2ecc71','#ffb84d','#ff5c5c','#16c0c0','#e879f9','#a3e635'];
+function h32(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+  // murmur3 fmix finalizer — strong avalanche so short/sequential strings spread evenly on the ring
+  h^=h>>>16; h=Math.imul(h,2246822507)>>>0; h^=h>>>13; h=Math.imul(h,3266489909)>>>0; h^=h>>>16;
+  return h>>>0;}
+function frac(s){return h32(s)/4294967296;}
+function logLine(cls,msg){const t=new Date().toLocaleTimeString();const el=document.getElementById('log');el.innerHTML+=`<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;el.scrollTop=el.scrollHeight;}
+function explain(html){document.getElementById('explain').innerHTML=html;}
+
+let mode='ring';
+function setMode(m){
+  mode=m;
+  document.getElementById('tabRing').classList.toggle('on',m==='ring');
+  document.getElementById('tabGroup').classList.toggle('on',m==='group');
+  document.getElementById('ctlRing').style.display = m==='ring'?'':'none';
+  document.getElementById('ctlGroup').style.display = m==='group'?'':'none';
+  document.getElementById('ringWrap').style.display = m==='ring'?'':'none';
+  document.getElementById('groupWrap').style.display = m==='group'?'':'none';
+  document.getElementById('log').innerHTML='';
+  if(m==='ring'){ resetRing(); } else { resetGroup(); }
+}
+
+// ================= MODE 1: hash ring =================
+const CX=180, CY=180, R=120, LBLR=150;
+let rNodes=[];      // [{name,color}]
+let rKeys=[];       // [{id,frac}]
+let useVnodes=true;
+const VN=4;         // virtual nodes per physical node
+let keyCounter=0, nodeCounter=0;
+
+function ringPoints(nodesArr=rNodes){
+  const pts=[];
+  nodesArr.forEach((n,idx)=>{
+    if(useVnodes){ for(let v=0;v<VN;v++) pts.push({frac:frac(n.name+'#v'+v), node:idx}); }
+    else pts.push({frac:frac(n.name), node:idx});
+  });
+  pts.sort((a,b)=>a.frac-b.frac);
+  return pts;
+}
+function ownerConsistent(kf, pts){
+  for(const p of pts){ if(p.frac>=kf) return p.node; }
+  return pts.length? pts[0].node : -1;   // wrap to first
+}
+function ownersSnapshot(nodesArr){
+  const pts=ringPoints(nodesArr);
+  return rKeys.map(k=>ownerConsistent(k.frac,pts));
+}
+function angle(f){ return f*2*Math.PI - Math.PI/2; }
+function xy(f,r){ const a=angle(f); return [CX+r*Math.cos(a), CY+r*Math.sin(a)]; }
+
+function renderRing(movedSet){
+  const pts=ringPoints();
+  const svg=document.getElementById('ring');
+  let s=`<circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="#2d3744" stroke-width="2"/>`;
+  // key dots
+  rKeys.forEach(k=>{
+    const owner=ownerConsistent(k.frac,pts);
+    const [x,y]=xy(k.frac,R);
+    const col = owner>=0? rNodes[owner].color : '#666';
+    const moved = movedSet && movedSet.has(k.id);
+    s+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${moved?6:4.5}" fill="${col}" stroke="${moved?'#ffb84d':'#0f1419'}" stroke-width="${moved?2:1}"/>`;
+  });
+  // node markers (+ labels for physical nodes once)
+  pts.forEach(p=>{
+    const [x,y]=xy(p.frac,R);
+    const col=rNodes[p.node].color;
+    s+=`<rect x="${(x-6).toFixed(1)}" y="${(y-6).toFixed(1)}" width="12" height="12" rx="3" fill="${col}" stroke="#0f1419" stroke-width="1.5" transform="rotate(45 ${x.toFixed(1)} ${y.toFixed(1)})"/>`;
+  });
+  // physical node labels at first vnode position
+  rNodes.forEach((n,idx)=>{
+    const f=useVnodes? frac(n.name+'#v0') : frac(n.name);
+    const [x,y]=xy(f,LBLR);
+    s+=`<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" fill="${n.color}" font-size="13" font-weight="700" text-anchor="middle" dominant-baseline="middle">${n.name}</text>`;
+  });
+  svg.innerHTML=s;
+  // legend with per-node load
+  const counts=rNodes.map(()=>0);
+  rKeys.forEach(k=>{const o=ownerConsistent(k.frac,pts); if(o>=0)counts[o]++;});
+  document.getElementById('legend').innerHTML = rNodes.map((n,i)=>
+    `<span class="legchip"><span class="legdot" style="background:${n.color}"></span>${n.name}: <b style="color:var(--txt)">${counts[i]}</b> keys</span>`
+  ).join('') + `<span class="legchip">total: <b style="color:var(--txt)">${rKeys.length}</b> keys · ${rNodes.length} nodes${useVnodes?` · ${VN} vnodes each`:''}</span>`;
+}
+
+function naiveMovedOnAdd(N){ // N current nodes → N+1
+  let m=0; rKeys.forEach(k=>{ if((h32(k.id)%N)!==(h32(k.id)%(N+1))) m++; }); return m;
+}
+
+function resetRing(){
+  rNodes=[{name:'A',color:COLORS[0]},{name:'B',color:COLORS[1]},{name:'C',color:COLORS[2]}];
+  rKeys=[]; keyCounter=0; nodeCounter=3; useVnodes=true;
+  document.getElementById('vnodeBtn').textContent='Virtual nodes: ON';
+  for(let i=0;i<16;i++) rKeys.push({id:'key'+(keyCounter++), frac:0});
+  rKeys.forEach(k=>k.frac=frac(k.id));
+  document.getElementById('log').innerHTML='';
+  logLine('info',`Ring ready: 3 nodes (A, B, C), 16 keys, ${VN} virtual nodes each (even load). A key is owned by the next node clockwise.`);
+  renderRing();
+  explain('Press <b>Add node</b>: it claims ~1/N of the keys (spread across the others), while <b>naive hash%N</b> would reshuffle nearly all of them — watch the counter. Toggle <b>Virtual nodes OFF</b> to see why single-point placement gets lumpy.');
+}
+
+function addNode(){
+  const N=rNodes.length;
+  if(N>=8){ logLine('warn','8 nodes max in this demo'); return; }
+  const before=ownersSnapshot(rNodes);
+  const name=String.fromCharCode(65+nodeCounter); nodeCounter++;
+  const naiveWould=naiveMovedOnAdd(N);
+  rNodes.push({name,color:COLORS[N%COLORS.length]});
+  const after=ownersSnapshot(rNodes);
+  const moved=new Set(); rKeys.forEach((k,i)=>{ if(before[i]!==after[i]) moved.add(k.id); });
+  renderRing(moved);
+  const pct=Math.round(100*moved.size/rKeys.length), npct=Math.round(100*naiveWould/rKeys.length);
+  logLine('ok',`Added node ${name}. Consistent hashing moved ${moved.size}/${rKeys.length} keys (${pct}%). Naive hash%N would have moved ${naiveWould}/${rKeys.length} (${npct}%).`);
+  explain(`Node <b>${name}</b> joined. <b class="bigmoved" style="color:var(--accent)">${moved.size}/${rKeys.length}</b> keys moved (~1/N ≈ ${Math.round(100/(N+1))}%) — only those in ${name}'s new arc. <b>Naive <code>hash%N</code></b> would have remapped <b class="bigmoved" style="color:var(--bad)">${naiveWould}/${rKeys.length}</b> (${npct}%) — a near-total reshuffle. ${useVnodes?'With vnodes the new node took a slice from <i>several</i> nodes, keeping load even.':'Turn on <b>Virtual nodes</b> to spread the new node\'s share across all of them.'}`);
+}
+
+function rmNode(){
+  if(rNodes.length<=2){ logLine('warn','keep at least 2 nodes'); return; }
+  const before=ownersSnapshot(rNodes);
+  const removed=rNodes[rNodes.length-1];
+  rNodes.pop();
+  const after=ownersSnapshot(rNodes);
+  const moved=new Set(); rKeys.forEach((k,i)=>{ if(before[i]!==after[i]) moved.add(k.id); });
+  renderRing(moved);
+  const pct=Math.round(100*moved.size/rKeys.length);
+  logLine('warn',`Removed node ${removed.name}. ${moved.size}/${rKeys.length} keys (${pct}%) moved to their next clockwise node.`);
+  explain(`Node <b>${removed.name}</b> left. Only its <b class="bigmoved" style="color:var(--warn)">${moved.size}/${rKeys.length}</b> keys moved${useVnodes?' — and because of <b>virtual nodes</b> they spread across <i>all</i> survivors, not piled onto one neighbor.':' — all onto the single next node clockwise. <b>That neighbor is now a hotspot.</b> Turn on virtual nodes and remove again to see the difference.'}`);
+}
+
+function addKeys(){
+  if(rKeys.length>=40){ logLine('warn','40 keys max in this demo'); return; }
+  for(let i=0;i<5;i++) rKeys.push({id:'key'+keyCounter, frac:frac('key'+keyCounter)}), keyCounter++;
+  renderRing();
+  logLine('info',`Added 5 keys (now ${rKeys.length}). They hash onto the ring and join whichever node owns their arc.`);
+  explain(`Now ${rKeys.length} keys on the ring. More keys make the per-node load counts (in the legend) smoother — and make the <b>~1/N</b> movement rule easier to see on the next add/remove.`);
+}
+
+function toggleVnodes(){
+  useVnodes=!useVnodes;
+  document.getElementById('vnodeBtn').textContent='Virtual nodes: '+(useVnodes?'ON':'OFF');
+  renderRing();
+  const pts=ringPoints();
+  const counts=rNodes.map(()=>0); rKeys.forEach(k=>counts[ownerConsistent(k.frac,pts)]++);
+  const max=Math.max(...counts), min=Math.min(...counts);
+  logLine('info',`Virtual nodes ${useVnodes?'ON ('+VN+' points/node)':'OFF (1 point/node)'}. Load spread: min ${min}, max ${max} keys/node.`);
+  explain(useVnodes
+    ? `Each physical node now sits at <b>${VN} points</b> on the ring. Load is far more even (min ${min}, max ${max} per node), and when a node dies its keys scatter across <b>all</b> survivors instead of dumping on one neighbor.`
+    : `Back to <b>1 point per node</b>. Notice how uneven the arcs are (min ${min}, max ${max} keys/node) — one node can own a huge slice. This is why real systems use virtual nodes.`);
+}
+
+// ================= MODE 2: consumer-group rebalance =================
+let cPart=6;
+let cCons=['c1','c2'];
+let cAssign=[];               // length cPart → consumer index
+let assignor='sticky';        // 'sticky' | 'eager'
+let consCounter=2;
+
+function rangeAssign(P,C){ const a=[]; for(let i=0;i<P;i++) a.push(i%C); return a; }
+
+function balanceSticky(prev, P, C){
+  // keep prev where the consumer still exists; rebalance only the minimum
+  const a = prev.slice();
+  // any partition pointing at a now-removed consumer (index>=C) → mark unassigned
+  for(let i=0;i<P;i++){ if(a[i]==null||a[i]>=C) a[i]=-1; }
+  const count=()=>{const c=new Array(C).fill(0); a.forEach(v=>{if(v>=0)c[v]++;}); return c;};
+  // assign unassigned to least-loaded
+  for(let i=0;i<P;i++){ if(a[i]===-1){ const c=count(); let m=0; for(let j=1;j<C;j++) if(c[j]<c[m]) m=j; a[i]=m; } }
+  // balance: move from over-loaded (> ceil) to under-loaded (< floor)
+  const ceil=Math.ceil(P/C), floor=Math.floor(P/C);
+  let guard=0;
+  while(guard++<100){
+    const c=count(); let hi=-1,lo=-1;
+    for(let j=0;j<C;j++){ if(c[j]>ceil&&(hi<0||c[j]>c[hi]))hi=j; if(c[j]<floor&&(lo<0||c[j]<c[lo]))lo=j; }
+    if(hi<0||lo<0) break;
+    const idx=a.findIndex(v=>v===hi); if(idx<0) break; a[idx]=lo;
+  }
+  return a;
+}
+
+function renderGroup(movedSet){
+  const wrap=document.getElementById('consumers');
+  const byC=cCons.map(()=>[]);
+  cAssign.forEach((ci,p)=>{ if(ci>=0&&ci<cCons.length) byC[ci].push(p); });
+  wrap.innerHTML = cCons.map((name,i)=>{
+    const chips = byC[i].length
+      ? byC[i].map(p=>`<span class="pchip${movedSet&&movedSet.has(p)?' moved':''}">p${p}</span>`).join('')
+      : '<span class="small muted">(idle — no partition)</span>';
+    const col=COLORS[i%COLORS.length];
+    return `<div class="node" style="min-width:150px;border-color:${col}">
+        <div class="title">🟧 ${name} <span class="badge" style="color:${col};border-color:${col}">${byC[i].length} part</span></div>
+        <div style="margin-top:6px">${chips}</div>
+      </div>`;
+  }).join('');
+}
+
+function resetGroup(){
+  cPart=6; cCons=['c1','c2']; consCounter=2; assignor='sticky';
+  document.getElementById('assignorBtn').textContent='Assignor: cooperative-sticky';
+  cAssign=rangeAssign(cPart,cCons.length);
+  document.getElementById('log').innerHTML='';
+  logLine('info',`Topic "events": ${cPart} partitions, group with ${cCons.length} consumers. A partition is read by exactly one consumer in the group.`);
+  renderGroup();
+  explain('A consumer group splits the topic\'s partitions across its consumers. <b>Add a consumer</b> and watch how the assignor reshuffles — cooperative-sticky moves the minimum; eager revokes everything (stop-the-world).');
+}
+
+function reassign(label){
+  const C=cCons.length, prev=cAssign.slice();
+  let next;
+  if(assignor==='eager'){ next=rangeAssign(cPart,C); }
+  else { next=balanceSticky(prev,cPart,C); }
+  const moved=new Set();
+  for(let p=0;p<cPart;p++){ if(prev[p]!==next[p]) moved.add(p); }
+  cAssign=next; renderGroup(moved);
+  return {moved, C};
+}
+
+function addCons(){
+  if(cCons.length>=6){ logLine('warn','6 consumers max in this demo'); return; }
+  cCons.push('c'+(++consCounter));
+  const {moved,C}=reassign();
+  const idle = C>cPart ? C-cPart : 0;
+  if(assignor==='eager'){
+    logLine('err',`Added ${cCons[cCons.length-1]} (eager). ⏸ STOP-THE-WORLD: all ${cPart} partitions revoked & reassigned — ${moved.size} changed owner.`);
+    explain(`<b>Eager</b> assignor: every consumer <b>revokes all partitions</b> and consumption <b>pauses across the whole group</b> while it recomputes from scratch — <b class="bigmoved" style="color:var(--bad)">${moved.size}/${cPart}</b> partitions moved. This is the rebalance storm you avoid in production.`);
+  } else {
+    logLine('ok',`Added ${cCons[cCons.length-1]} (cooperative-sticky). Only ${moved.size}/${cPart} partitions moved; the rest kept consuming.`);
+    explain(`<b>Cooperative-sticky</b>: only <b class="bigmoved" style="color:var(--accent)">${moved.size}/${cPart}</b> partitions were handed to the new consumer; everyone else kept their assignment and never stopped. ${idle?`There are now <b>${idle} idle consumer(s)</b> — more consumers than partitions means the extras get nothing (partition = unit of parallelism).`:''}`);
+  }
+}
+
+function rmCons(){
+  if(cCons.length<=1){ logLine('warn','need at least 1 consumer'); return; }
+  const gone=cCons.pop();
+  const {moved}=reassign();
+  if(assignor==='eager'){
+    logLine('err',`Removed ${gone} (eager). ⏸ STOP-THE-WORLD reshuffle — ${moved.size}/${cPart} partitions changed owner.`);
+    explain(`<b>Eager</b>: ${gone} left, triggering a full revoke-and-reassign — <b class="bigmoved" style="color:var(--bad)">${moved.size}/${cPart}</b> partitions moved and the group paused. Compare with cooperative-sticky.`);
+  } else {
+    logLine('warn',`Removed ${gone} (cooperative-sticky). Its partitions redistributed; ${moved.size}/${cPart} moved, others untouched.`);
+    explain(`<b>Cooperative-sticky</b>: only ${gone}'s orphaned partitions were reassigned to the least-loaded survivors — <b class="bigmoved" style="color:var(--warn)">${moved.size}/${cPart}</b> moved. The rest kept consuming without interruption.`);
+  }
+}
+
+function addPart(){
+  if(cPart>=10){ logLine('warn','10 partitions max in this demo'); return; }
+  cPart++;
+  // new partition starts unassigned; sticky gives it to least-loaded, eager recomputes
+  const prev=cAssign.slice(); prev.push(-1); cAssign=prev;
+  const {moved}=reassign();
+  logLine('info',`Added partition p${cPart-1} (now ${cPart}). ${assignor==='eager'?'Eager recomputed all assignments.':'Sticky assigned it to the least-loaded consumer.'}`);
+  explain(`Now <b>${cPart} partitions</b>. Partitions are the unit of parallelism — you scale consumer throughput by adding partitions, but you can never reduce them. ${moved.size} assignment(s) changed.`);
+}
+
+function toggleAssignor(){
+  assignor = assignor==='sticky'?'eager':'sticky';
+  document.getElementById('assignorBtn').textContent='Assignor: '+(assignor==='sticky'?'cooperative-sticky':'eager (stop-the-world)');
+  logLine('info',`Assignor set to ${assignor==='sticky'?'cooperative-sticky (incremental)':'eager (revoke-all)'}. Add/remove a consumer to see the difference.`);
+  explain(assignor==='sticky'
+    ? 'Now using <b>cooperative-sticky</b> (the modern default): rebalances are <b>incremental</b> — only the partitions that must move are revoked, the rest keep flowing.'
+    : 'Now using <b>eager</b> (legacy): every rebalance is <b>stop-the-world</b> — all partitions revoked, group pauses, then reassigns from scratch. Add a consumer to feel the pain.');
+}
+
+// ================= wire up =================
+document.getElementById('tabRing').onclick=()=>setMode('ring');
+document.getElementById('tabGroup').onclick=()=>setMode('group');
+document.getElementById('addNode').onclick=addNode;
+document.getElementById('rmNode').onclick=rmNode;
+document.getElementById('addKeys').onclick=addKeys;
+document.getElementById('vnodeBtn').onclick=toggleVnodes;
+document.getElementById('resetRing').onclick=resetRing;
+document.getElementById('addCons').onclick=addCons;
+document.getElementById('rmCons').onclick=rmCons;
+document.getElementById('addPart').onclick=addPart;
+document.getElementById('assignorBtn').onclick=toggleAssignor;
+document.getElementById('resetGroup').onclick=resetGroup;
+resetRing();
+</script>
+</body>
+</html>

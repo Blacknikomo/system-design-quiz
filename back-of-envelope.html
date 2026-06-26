@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Back-of-the-Envelope Estimation — Reference</title>
+<link rel="stylesheet" href="style.css">
+<style>
+/* page-local data tables + drill reveal (shared tokens only) */
+.dtbl{width:100%;border-collapse:collapse;font-size:13.5px;margin:8px 0}
+.dtbl th,.dtbl td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+.dtbl th{background:var(--panel2);color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.dtbl td:last-child{font-family:ui-monospace,Menlo,monospace;color:var(--accent)}
+.dtbl.lead td:first-child{font-family:inherit;color:var(--txt)}
+.anchor{font-size:13px;color:var(--muted);margin-top:6px}
+.drill{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:0;margin:9px 0;overflow:hidden}
+.drill summary{cursor:pointer;padding:11px 14px;font-weight:600;font-size:14px;list-style:none;display:flex;justify-content:space-between;gap:10px;align-items:center}
+.drill summary::-webkit-details-marker{display:none}
+.drill summary::after{content:'▸ reveal approach';color:var(--accent);font-size:12px;font-weight:600;white-space:nowrap}
+.drill[open] summary::after{content:'▾ hide';color:var(--muted)}
+.drill .ans{padding:0 14px 13px;font-size:13.5px;color:var(--muted);border-top:1px solid var(--line);margin-top:2px;padding-top:10px}
+.drill .ans b{color:var(--txt)}
+.tag.q{background:var(--chip);color:var(--accent);border-color:#2c4a6e}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back"><a href="index.html">← All technologies</a></div>
+      <h1>🧮 Back-of-the-Envelope Estimation</h1>
+      <div class="sub">Estimate QPS, storage, bandwidth, and memory fast and out loud under interview pressure. Precision doesn't matter — landing within ~2–3× with clean reasoning does. Round aggressively, keep the math in your head.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">QPS</span><span class="tag">storage</span><span class="tag">bandwidth</span><span class="tag">memory</span><span class="tag">peak factor</span>
+    </div>
+    <div class="note info">In the Systems Architecture round you must produce capacity numbers quickly and defend the <b>magnitude</b>. Interviewers care that you state assumptions, reason cleanly, and sanity-check powers of ten — not that you're exact.</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Method — 5 steps</h2>
+    <ol class="steps small" style="counter-reset:s">
+      <li><b>Clarify scale assumptions.</b> Ask for / state DAU, read:write ratio, object size, retention. Write them down — they drive everything.</li>
+      <li><b>Average, then peak.</b> Compute average QPS from daily volume, then apply a peak factor (<b>peak ≈ 2× average</b> default; bursty products 3–5×).</li>
+      <li><b>Storage = objects × size × retention.</b> New objects/day × bytes/object × days kept. Add replication (×3 common) if asked.</li>
+      <li><b>Bandwidth = QPS × payload.</b> Separate read vs write; reads usually dominate.</li>
+      <li><b>Sanity-check magnitudes.</b> GB vs PB? hundreds vs millions of QPS? Re-check powers of ten before committing.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Numbers to memorize</h2>
+
+    <h3>Latency numbers every engineer should know</h3>
+    <table class="dtbl lead">
+      <tr><th>Operation</th><th>Time</th></tr>
+      <tr><td>L1 cache reference</td><td>~1 ns</td></tr>
+      <tr><td>Branch mispredict</td><td>~3 ns</td></tr>
+      <tr><td>L2 cache reference</td><td>~4 ns</td></tr>
+      <tr><td>Mutex lock/unlock</td><td>~17 ns</td></tr>
+      <tr><td>Main memory (RAM) reference</td><td>~100 ns</td></tr>
+      <tr><td>Compress 1 KB (Snappy)</td><td>~2 µs</td></tr>
+      <tr><td>Read 1 MB sequentially from memory</td><td>~10 µs</td></tr>
+      <tr><td>SSD random read</td><td>~16 µs</td></tr>
+      <tr><td>Read 1 MB sequentially from SSD</td><td>~100 µs</td></tr>
+      <tr><td>Round trip within same datacenter</td><td>~500 µs</td></tr>
+      <tr><td>Read 1 MB sequentially from disk (HDD)</td><td>~2 ms</td></tr>
+      <tr><td>Disk seek</td><td>~10 ms</td></tr>
+      <tr><td>Round trip CA ↔ Netherlands</td><td>~150 ms</td></tr>
+    </table>
+    <div class="note info"><b>Anchors:</b> memory is ~100,000× faster than a disk seek; same-DC round trip (0.5 ms) is cheap, cross-continent (150 ms) is not; SSD random access ~100× faster than HDD.</div>
+
+    <h3>Powers of 2 / data sizes</h3>
+    <table class="dtbl lead">
+      <tr><th>Power</th><th>Approx</th><th>Name</th></tr>
+      <tr><td>2<sup>10</sup></td><td>~1 thousand</td><td>1 KB</td></tr>
+      <tr><td>2<sup>20</sup></td><td>~1 million</td><td>1 MB</td></tr>
+      <tr><td>2<sup>30</sup></td><td>~1 billion</td><td>1 GB</td></tr>
+      <tr><td>2<sup>40</sup></td><td>~1 trillion</td><td>1 TB</td></tr>
+      <tr><td>2<sup>50</sup></td><td>~1 quadrillion</td><td>1 PB</td></tr>
+    </table>
+    <div class="anchor">Rule: every 10 powers of 2 ≈ 3 orders of magnitude (×1000).</div>
+
+    <h3>Time shortcuts</h3>
+    <ul>
+      <li>Seconds in a day ≈ <b>86,400 ≈ 100,000 (10<sup>5</sup>)</b> — the single most useful shortcut.</li>
+      <li>Seconds in a month ≈ 2.5 million (2.5 × 10<sup>6</sup>); in a year ≈ 31.5 million (~3 × 10<sup>7</sup>).</li>
+      <li>5 years ≈ 1,825 ≈ <b>~2,000 days</b>.</li>
+    </ul>
+
+    <h3>Typical object sizes (assume if not told)</h3>
+    <table class="dtbl lead">
+      <tr><th>Object</th><th>Size</th></tr>
+      <tr><td>Short text / tweet / metadata row</td><td>~200 B – 1 KB</td></tr>
+      <tr><td>URL (short or long)</td><td>~100 B</td></tr>
+      <tr><td>Chat message</td><td>~1 KB</td></tr>
+      <tr><td>Web page (HTML)</td><td>~100 KB</td></tr>
+      <tr><td>Photo (compressed)</td><td>~200 KB – 1 MB</td></tr>
+      <tr><td>Minute of HD video (~5 Mbps)</td><td>~40 MB</td></tr>
+      <tr><td>Minute of audio (MP3)</td><td>~1 MB</td></tr>
+    </table>
+
+    <h3>QPS from DAU — rule of thumb</h3>
+    <div class="recipe">
+<pre class="code"><span class="c"># 1. Average QPS</span>
+avg_QPS = (DAU × actions_per_user_per_day) / 86,400
+        ≈ (DAU × actions) / 100,000        <span class="c"># 10^5 shortcut</span>
+<span class="c"># 2. Peak QPS</span>
+peak_QPS ≈ 2 × avg_QPS                      <span class="c"># 3–5× for bursty/event-driven</span>
+<span class="c"># 3. Split reads vs writes</span>
+apply read:write ratio (often 10:1 … 100:1)</pre>
+      <div class="why">Memorize the 10<sup>5</sup> shortcut: divide daily volume by 100,000 to get average QPS in one step.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Worked example — URL shortener (end to end)</h2>
+    <p class="small muted" style="margin-top:0"><b>Assumptions (state first):</b> 100 M DAU × 1 new URL/day → 100 M writes/day · read:write 100:1 → 10 B reads/day · object ~500 B · retention 5 years.</p>
+    <div class="recipe">
+      <div class="rh">1 · Write QPS</div>
+<pre class="code">100 M / 86,400 ≈ 100 M / 10^5 = <b>~1,000 writes/s</b> avg
+peak ≈ 2× → <b>~2,000 writes/s</b></pre>
+    </div>
+    <div class="recipe">
+      <div class="rh">2 · Read QPS</div>
+<pre class="code">10 B / 10^5 = <b>~100,000 reads/s</b> avg
+peak ≈ 2× → <b>~200,000 reads/s</b></pre>
+    </div>
+    <div class="recipe">
+      <div class="rh">3 · Storage (5 years)</div>
+<pre class="code">100 M/day × 365 ≈ 36.5 B/year → 5 yr ≈ ~180 B objects
+× 500 B = 9 × 10^13 B = <b>~90 TB</b>  (×3 replication → ~270 TB)</pre>
+    </div>
+    <div class="recipe">
+      <div class="rh">4 · Bandwidth</div>
+<pre class="code">write: 2,000 × 500 B = 1 MB/s        <span class="c"># negligible</span>
+read: 200,000 × 500 B = 100 MB/s = <b>~0.8 Gbps</b> peak</pre>
+    </div>
+    <div class="recipe">
+      <div class="rh">5 · Cache memory (80/20)</div>
+<pre class="code">cache hot 20% of distinct daily objects:
+20 M × 500 B = <b>~10 GB</b>           <span class="c"># a few cache nodes</span></pre>
+    </div>
+    <div class="note info"><b>Sanity check:</b> ~1k writes/s, ~100k reads/s — a read-heavy mid-large service; ~90 TB over 5 years; sub-Gbps bandwidth. All believable magnitudes. ✅</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Practice drills</h2>
+    <p class="small muted" style="margin-top:0">~3–5 min each, out loud, assumptions first. Work the magnitude yourself, <i>then</i> reveal. Targets land within ~2–3×.</p>
+    <div class="row" style="margin:6px 0 10px">
+      <button class="btn sec" id="revealAll">Reveal all</button>
+      <button class="btn ghost" id="collapseAll">Collapse all</button>
+    </div>
+
+    <details class="drill"><summary>🔗 URL shortener — write QPS, read QPS, 5-yr storage (100 M DAU)</summary>
+      <div class="ans">See the worked example above: <b>~1k write QPS</b> (peak ~2k), <b>~100k read QPS</b> (peak ~200k), <b>~90 TB</b> over 5 years (×3 ≈ 270 TB).</div></details>
+
+    <details class="drill"><summary>🐦 Twitter timeline — home-timeline read QPS + 5-yr tweet storage</summary>
+      <div class="ans">300 M DAU × a few timeline loads/day ÷ 10<sup>5</sup> ≈ <b>low-hundreds-of-thousands read QPS</b> at peak. Tweets: ~500 M/day × ~300 B ≈ ~150 GB/day → <b>~270 TB</b> over 5 years (pre-replication). Reads dominate massively → cache + fan-out.</div></details>
+
+    <details class="drill"><summary>📷 Photo storage — write QPS + 5-yr storage (100 M DAU, 1 photo/day)</summary>
+      <div class="ans">100 M writes/day → <b>~1,000 write QPS</b> (peak ~2k). Storage: 100 M × ~500 KB × 365 × 5 ≈ <b>~90 PB</b>. The headline is <b>petabytes</b> → object store, not a DB. Bandwidth dominated by reads/CDN.</div></details>
+
+    <details class="drill"><summary>🎬 Video streaming — egress bandwidth for 10 M concurrent HD streams</summary>
+      <div class="ans">10 M × 5 Mbps = <b>50 Tbps</b> egress. The number is enormous → <b>CDN edge caching is the entire design point</b>, not origin bandwidth.</div></details>
+
+    <details class="drill"><summary>💬 Chat — message QPS + daily storage (500 M DAU × 40 msg/day)</summary>
+      <div class="ans">500 M × 40 = 20 B msg/day ÷ 10<sup>5</sup> = <b>~200k write QPS</b> avg, peak ~400k–1M. Storage: 20 B × 1 KB = <b>20 TB/day</b> → retention drives it (90 days ≈ ~1.8 PB).</div></details>
+
+    <details class="drill"><summary>🚦 Rate limiter — RAM to track per-user counts for 100 M active users</summary>
+      <div class="ans">100 M × ~16–50 B/counter (user id + count + window) ≈ <b>2–5 GB</b>. Fits in memory on a few Redis nodes, sharded by user.</div></details>
+
+    <details class="drill"><summary>📣 News-feed fan-out — write amplification when a 10 M-follower user posts</summary>
+      <div class="ans">Celebrity post = <b>10 M timeline writes per post</b> (fan-out-on-write). This is the classic argument for <b>hybrid</b>: fan-out-on-write for normal users, fan-out-on-read (pull) for high-follower accounts.</div></details>
+
+    <details class="drill"><summary>🔍 Search index — index storage for 10 B docs × 10 KB each</summary>
+      <div class="ans">10 B × 10 KB = <b>100 TB raw</b>. The inverted index is a fraction of raw text, but postings + positions can rival it → estimate <b>tens to hundreds of TB</b> with replication. Sharded across many machines.</div></details>
+
+    <details class="drill"><summary>🔔 Notifications — peak QPS to push to 50 M users within 5 minutes</summary>
+      <div class="ans">50 M ÷ 300 s ≈ <b>~167k QPS</b> sustained. Needs a queue + many workers; provision peak above sustained.</div></details>
+
+    <details class="drill"><summary>📊 Analytics counter — event QPS + 1-yr storage for 1 B page views/day</summary>
+      <div class="ans">1 B ÷ 10<sup>5</sup> = <b>~10k events/s</b> avg, peak ~20–50k. Raw storage: 1 B × ~100 B = <b>100 GB/day</b> → aggregate / roll up rather than store raw long-term.</div></details>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">📖 Sources</h3>
+    <ul>
+      <li><a href="https://www.educative.io/courses/grokking-the-system-design-interview/lta/put-back-of-the-envelope-numbers-in-perspective" target="_blank" rel="noopener">Educative · Grokking the System Design Interview — Back-of-the-envelope numbers in perspective</a></li>
+      <li><a href="https://www.hellointerview.com/learn/system-design/deep-dives/numbers-to-know" target="_blank" rel="noopener">HelloInterview · Numbers to Know</a></li>
+    </ul>
+  </div>
+</div>
+
+<script>
+document.getElementById('revealAll').onclick=()=>document.querySelectorAll('details.drill').forEach(d=>d.open=true);
+document.getElementById('collapseAll').onclick=()=>document.querySelectorAll('details.drill').forEach(d=>d.open=false);
+</script>
+</body>
+</html>

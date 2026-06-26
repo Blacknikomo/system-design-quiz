@@ -19,6 +19,10 @@ interactive/
 ├── system-design-quiz.html   # the quiz (single self-contained file)
 ├── walkthroughs.html    # 42 step-by-step design "decision chains" (Reveal + Quiz-me modes); data in const APPS
 ├── cheatsheets.html     # terse FR/NFR/tech-why recall cards per HI design problem
+├── scaling.html         # SCALE simulator: consistent-hashing ring rebalance (vnodes, naive-vs-consistent
+│                        # moved-key counter) + Kafka consumer-group rebalance (sticky vs eager). 2 tab modes.
+├── back-of-envelope.html # estimation REFERENCE: latency/powers-of-2/object-size/QPS tables, worked
+│                        # URL-shortener example, 10 reveal-able drills. Cites Educative + HI numbers-to-know.
 ├── redis.html           # 9 technology simulators, one file each:
 ├── kafka.html
 ├── elasticsearch.html
@@ -188,7 +192,9 @@ Log/feedback/steps: `.log(.l/.t/.ok/.err/.warn/.info/.cmd)` · `.explain` · `.s
 
 Each simulator must (a) describe the technology, (b) let the user run its typical operations step-by-step, and (c) **visualize the signature internal mechanic** and call out the signature gotcha in a `.note.gotcha`. Examples already built: Redis async replication + stale reads + failover data loss; Kafka partitions/offsets/consumer-groups/replay; Cassandra ring + QUORUM + LSM write path; DynamoDB partitions + eventual-vs-strong + GSI; Flink tumbling windows + watermarks; ZooKeeper znodes + ephemeral leader election; etc.
 
-**Reference section (required on the 9 key-technology pages).** Below the simulator, each tech page ends with a `<div class="card ref">` titled "📖 Reference" containing: a `.ref-cols` grid of *Infrastructure & deployment* and *Sharding & scaling* bullets; a `<table class="cmd-tbl">` of key commands/API (cmd → meaning); and several `<div class="recipe">` use-case recipes (a `.rh` title, a `<pre class="code">` with real commands — comments via `<span class="c">`, escape `&lt;`/`&gt;` — and a `.why`). `redis.html` is the canonical example. Use the shared `.ref / .ref-cols / .cmd-tbl / pre.code / .recipe` classes in `style.css`; don't restyle. The DS pages (`ds-*.html`) don't need this — their complexity table + gotcha suffices.
+**At Scale card (required on the 9 key-technology pages).** Between the simulator and the Reference card, each tech page has a `<div class="card scale">` titled "⚖️ At scale — numbers, limits & failure modes": a `<table class="cmd-tbl">` of concrete capacity figures (per-node throughput, per-partition/shard ceilings, sizing rules of thumb) followed by a `.note.gotcha` listing the failure modes that only emerge at scale (hot partitions, rebalance storms, XID wraparound, oversharding, etc.). Styled via `.card.scale` in `style.css` (purple accent + first-col override). **Verify every hard number before writing it** — these are interview talking points; accuracy is non-negotiable (§2). Standalone scale *mechanics* (consistent-hashing rebalance, consumer-group rebalance) live in `scaling.html`, not bolted onto the delicate tech simulators.
+
+**Reference section (required on the 9 key-technology pages).** Below the At Scale card, each tech page ends with a `<div class="card ref">` titled "📖 Reference" containing: a `.ref-cols` grid of *Infrastructure & deployment* and *Sharding & scaling* bullets; a `<table class="cmd-tbl">` of key commands/API (cmd → meaning); and several `<div class="recipe">` use-case recipes (a `.rh` title, a `<pre class="code">` with real commands — comments via `<span class="c">`, escape `&lt;`/`&gt;` — and a `.why`). `redis.html` is the canonical example. Use the shared `.ref / .ref-cols / .cmd-tbl / pre.code / .recipe` classes in `style.css`; don't restyle. The DS pages (`ds-*.html`) don't need this — their complexity table + gotcha suffices.
 
 ---
 
