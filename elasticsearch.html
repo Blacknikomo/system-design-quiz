@@ -10,7 +10,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🔎 Elasticsearch — inverted index &amp; search</h1>
       <div class="sub">Watch documents get <i>tokenized</i> into an <b>inverted index</b> (term → list of doc IDs), then see why a search hits only the relevant terms — while a SQL <code>LIKE '%term%'</code> has to scan every row.</div>
     </div>
@@ -442,5 +442,6 @@ document.getElementById('docText').addEventListener('keydown', e=>{ if(e.key==='
 document.getElementById('queryText').addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(e.target.value); });
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

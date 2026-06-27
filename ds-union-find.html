@@ -23,7 +23,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🔗 Union-Find — disjoint sets</h1>
       <div class="sub">Track which elements belong to the same group as a <i>forest of trees</i>. Watch <b>union by rank</b> keep trees flat, <b>path compression</b> flatten them further on every find, and <b>cycle detection</b> when two already-connected nodes are unioned.</div>
     </div>
@@ -336,5 +336,6 @@ document.getElementById('findBtn').onclick=doFind;
 document.getElementById('resetBtn').onclick=reset;
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

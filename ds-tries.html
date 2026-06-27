@@ -12,16 +12,12 @@
     background:var(--panel);border:2px solid var(--line);display:flex;align-items:center;justify-content:center;
     font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:14px;transition:.2s;transform:translate(-50%,-50%);z-index:2}
   .trnode.root{background:var(--panel2);color:var(--muted);font-size:11px;border-style:dashed}
-  .trnode.end{box-shadow:0 0 0 3px rgba(46,204,113,.35)}
+  .trnode.end{box-shadow:0 0 0 3px rgba(var(--ok-rgb),.35)}
   .trnode.end::after{content:'•';position:absolute;bottom:-15px;color:var(--ok);font-size:18px}
-  .trnode.visit{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,156,249,.45)}
-  .trnode.newn{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(124,92,255,.5)}
+  .trnode.visit{border-color:var(--accent);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.45)}
+  .trnode.newn{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(var(--accent2-rgb),.5)}
   .trnode.collect{border-color:var(--accent2);background:var(--panel2)}
   .tredge{position:absolute;height:2px;background:var(--line);transform-origin:0 0;z-index:1}
-  .ctable{border-collapse:collapse;font-size:12.5px;margin-top:10px}
-  .ctable th,.ctable td{border:1px solid var(--line);padding:5px 10px;text-align:left}
-  .ctable th{color:var(--muted);font-weight:600;background:var(--panel2)}
-  .ctable code{color:var(--accent)}
   .resbox{font-family:ui-monospace,Menlo,monospace;font-size:13px;margin-top:8px;color:var(--ok)}
   .words{font-size:12px;color:var(--muted);margin-top:6px}
   .words b{color:var(--txt)}
@@ -31,7 +27,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🌿 Tries (Prefix Trees)</h1>
       <div class="sub">A tree keyed by characters: each edge is one letter, each path spells a prefix, and marked nodes end words. Lookups cost <i>O(L)</i> in the key length — completely independent of how many words you've stored.</div>
     </div>
@@ -362,5 +358,6 @@ document.getElementById('resetBtn').onclick = reset;
 window.addEventListener('resize', ()=>{ if(!busy) render(); });
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

@@ -10,7 +10,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🚪 API Gateway — auth, rate limiting &amp; routing</h1>
       <div class="sub">A single entry point in front of your services. Watch a request flow through the pipeline: <i>authenticate → rate-limit → route</i> to the right backend — and see exactly where 401s, 429s and 404s get returned.</div>
     </div>
@@ -433,5 +433,6 @@ document.getElementById('resetBtn').onclick = reset;
 document.getElementById('client').addEventListener('input', renderBucket);
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

@@ -4,6 +4,10 @@
   --txt:#e6edf3; --muted:#8b98a8; --accent:#4f9cf9; --accent2:#7c5cff;
   --ok:#2ecc71; --okbg:#11331f; --bad:#ff5c5c; --badbg:#3a1518;
   --warn:#ffb84d; --warnbg:#3a2e15; --chip:#26313f;
+  /* RGB triplets of the accent colors — for rgba(var(--*-rgb), a) glows.
+     Single source of truth: change a color above AND its triplet here. */
+  --accent-rgb:79,156,249; --accent2-rgb:124,92,255;
+  --ok-rgb:46,204,113; --bad-rgb:255,92,92; --warn-rgb:255,184,77;
 }
 *{box-sizing:border-box}
 body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -54,9 +58,9 @@ label.fld{font-size:13px;color:var(--muted);display:flex;flex-direction:column;g
 .node.replica{border-color:var(--accent2)}
 .node.replica .badge{color:var(--accent2);border-color:var(--accent2)}
 .node.dead{opacity:.35;border-color:var(--bad)!important;filter:grayscale(.6)}
-.node.active{box-shadow:0 0 0 3px rgba(79,156,249,.35);border-color:var(--accent)}
-.node.flash-ok{box-shadow:0 0 0 3px rgba(46,204,113,.5)}
-.node.flash-bad{box-shadow:0 0 0 3px rgba(255,92,92,.5)}
+.node.active{box-shadow:0 0 0 3px rgba(var(--accent-rgb),.35);border-color:var(--accent)}
+.node.flash-ok{box-shadow:0 0 0 3px rgba(var(--ok-rgb),.5)}
+.node.flash-bad{box-shadow:0 0 0 3px rgba(var(--bad-rgb),.5)}
 
 /* key-value / row entries inside a node */
 .kv{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--panel2);
@@ -117,6 +121,12 @@ label.fld{font-size:13px;color:var(--muted);display:flex;flex-direction:column;g
 .hub-card .nm{font-weight:700;margin:8px 0 4px;color:var(--txt)}
 .hub-card .ds{font-size:12.5px;color:var(--muted)}
 
+/* complexity / comparison table — shared by DS pages (.cx and legacy .ctable alias) */
+table.cx,.ctable{border-collapse:collapse;font-size:12.5px;margin-top:10px;width:100%}
+table.cx td,table.cx th,.ctable td,.ctable th{border:1px solid var(--line);padding:5px 9px;text-align:left}
+table.cx th,.ctable th{color:var(--muted);font-weight:600;background:var(--panel2)}
+table.cx code,.ctable code{color:var(--accent)}
+
 /* ===== Reference section (infra / sharding / commands / recipes) ===== */
 .ref-cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 @media(max-width:720px){.ref-cols{grid-template-columns:1fr}}
@@ -135,6 +145,6 @@ pre.code .c{color:var(--muted)}
 .recipe .why{color:var(--muted);font-size:13px;margin-top:6px}
 
 /* ===== At-Scale card (real numbers, limits, failure modes) ===== */
-.card.scale{border-color:#4a3a6e;background:linear-gradient(180deg,rgba(124,92,255,.07),transparent 70px)}
+.card.scale{border-color:#4a3a6e;background:linear-gradient(180deg,rgba(var(--accent2-rgb),.07),transparent 70px)}
 .card.scale h2{color:var(--accent2)}
 .card.scale .cmd-tbl td:first-child{color:var(--accent2);font-family:inherit;font-size:13px;font-weight:600;white-space:nowrap}

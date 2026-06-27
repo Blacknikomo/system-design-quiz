@@ -16,8 +16,8 @@
   .znode.eph{border-color:#5a4520;background:var(--warnbg)}
   .znode.eph .nm{color:var(--warn)}
   .znode.watched{box-shadow:inset 3px 0 0 var(--accent2)}
-  .znode.flash-ok{box-shadow:0 0 0 2px rgba(46,204,113,.6)}
-  .znode.flash-bad{box-shadow:0 0 0 2px rgba(255,92,92,.6)}
+  .znode.flash-ok{box-shadow:0 0 0 2px rgba(var(--ok-rgb),.6)}
+  .znode.flash-bad{box-shadow:0 0 0 2px rgba(var(--bad-rgb),.6)}
   .znode .leadtag{font-size:10px;padding:1px 7px;border-radius:20px;border:1px solid var(--ok);color:var(--ok)}
   .stagecols{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
   .clientcol{display:flex;flex-direction:column;gap:10px;min-width:200px}
@@ -30,7 +30,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🦓 ZooKeeper — znodes, watches &amp; leader election</h1>
       <div class="sub">A hierarchical namespace of <i>znodes</i> coordinates a distributed system. <b>Persistent</b> nodes hold config; <b>ephemeral</b> nodes vanish when their client's session dies — giving you automatic failure detection and the canonical <i>leader-election</i> pattern.</div>
     </div>
@@ -524,5 +524,6 @@ document.getElementById('reviveBtn').onclick = reviveClient;
 document.getElementById('resetBtn').onclick  = reset;
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

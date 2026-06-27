@@ -28,17 +28,13 @@
   .lfbar .fill{height:100%;background:var(--ok);transition:.3s}
   .lfbar.hot .fill{background:var(--warn)}
   .lfbar .mark{position:absolute;top:-3px;bottom:-3px;left:75%;width:2px;background:var(--bad)}
-  table.cx{border-collapse:collapse;font-size:12.5px;margin-top:10px;width:100%}
-  table.cx td,table.cx th{border:1px solid var(--line);padding:5px 9px;text-align:left}
-  table.cx th{color:var(--muted);font-weight:600;background:var(--panel2)}
-  table.cx code{color:var(--accent)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🗂️ Hash Tables, Maps &amp; Sets</h1>
       <div class="sub">A string <i>hash</i> maps each key to a bucket index. Insert, look up, and delete; watch two keys <i>collide</i> into one bucket's chain, and the table <i>resize + rehash</i> when the load factor crosses 0.75.</div>
     </div>
@@ -283,5 +279,6 @@ document.getElementById('collideBtn').onclick = demoCollision;
 document.getElementById('resetBtn').onclick = reset;
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

@@ -15,9 +15,12 @@ interactive/
 ├── AGENTS.md            # this file
 ├── .gitignore           # ignores .DS_Store, _patches/
 ├── index.html           # hub: links every simulator + the quiz
-├── style.css            # SHARED theme + visual primitives (all pages link it)
-├── system-design-quiz.html   # the quiz (single self-contained file)
-├── walkthroughs.html    # 42 step-by-step design "decision chains" (Reveal + Quiz-me modes); data in const APPS
+├── style.css            # SHARED theme + visual primitives (EVERY page links it, incl. both quizzes)
+├── site.js              # SHARED chrome: fills each sub-page's <div class="back" data-nav> with the back-nav
+├── system-design-quiz.html   # the quiz ENGINE (UI + logic); question bank lives in questions.js
+├── questions.js         # window.QUESTIONS = [...] — the 341-question bank (loaded before the quiz engine)
+├── walkthroughs.html    # 42 decision-chain ENGINE (Reveal + Quiz-me modes); data lives in walkthroughs-data.js
+├── walkthroughs-data.js # window.APPS = [...] — the decision-chain data (loaded before the walkthroughs engine)
 ├── cheatsheets.html     # terse FR/NFR/tech-why recall cards per HI design problem
 ├── scaling.html         # SCALE simulator: consistent-hashing ring rebalance (vnodes, naive-vs-consistent
 │                        # moved-key counter) + Kafka consumer-group rebalance (sticky vs eager). 2 tab modes.
@@ -51,8 +54,9 @@ Related, **outside this repo** (in the parent `FAANG Interviews/` folder):
 
 - **Self-contained, vanilla, offline.** Each page is plain HTML + CSS + vanilla JS. No build step, no frameworks, no external libraries, no network calls. A page must work by double-clicking it (over `file://`).
 - **No external CDNs.** Do not add script/style `src` to remote hosts.
-- **Theming via `style.css`.** Every page links `<link rel="stylesheet" href="style.css">` and uses the shared CSS variables/classes (see §5). Do **not** redefine the theme inline; small page-specific layout tweaks in a tiny `<style>` are acceptable only when necessary.
-- **Dark theme tokens** live in `:root` of `style.css` (`--bg --panel --accent --ok --bad --warn ...`). Use the variables, never hard-coded hex (except inside `style.css`).
+- **Theming via `style.css`.** Every page links `<link rel="stylesheet" href="style.css">` (the two quizzes included) and uses the shared CSS variables/classes (see §5). Do **not** redefine the theme inline; small page-specific layout tweaks in a tiny `<style>` are acceptable only when necessary (and, being after the link, they win on conflict).
+- **Dark theme tokens** live in `:root` of `style.css` (`--bg --panel --accent --ok --bad --warn ...`). Use the variables, never hard-coded hex (except inside `style.css`). For translucent glows use `rgba(var(--accent-rgb), a)` (also `--ok-rgb --bad-rgb --accent2-rgb --warn-rgb`) — never hard-code `rgba(79,156,249,…)`.
+- **Shared back-nav via `site.js`.** Every sub-page carries an empty `<div class="back" data-nav></div>` and loads `site.js`, which fills it. To change the nav (label, target, add links), edit `NAV_HTML` in `site.js` once — don't hard-code a back-link per page. `index.html` is the hub and has no back-nav.
 - **`localStorage` is allowed here** (these are real local files, not sandboxed artifacts). The quiz uses it for history. Migrate old shapes defensively.
 - **Accuracy over everything.** This is interview-prep material. A wrong "correct" answer or an accidentally-true distractor is worse than a dull one. When unsure of a fact, verify against `hi-knowledge/` or HelloInterview before writing.
 
@@ -60,11 +64,11 @@ Related, **outside this repo** (in the parent `FAANG Interviews/` folder):
 
 ## 3. The quiz — architecture (`system-design-quiz.html`)
 
-A single file. All logic in one `<script>`. Sections, in order: question bank → `SOURCES` map + helpers → storage → setup view → quiz engine → results → stats → view routing.
+The **engine** (UI + logic) lives in `system-design-quiz.html`; the **question bank** is `window.QUESTIONS` in `questions.js`, loaded by `<script src="questions.js">` *before* the engine. Engine sections, in order: `SOURCES` map + helpers → storage → setup view → quiz engine → results → stats → view routing. (Same data/engine split for `walkthroughs.html` ↔ `walkthroughs-data.js`.)
 
 ### 3.1 Question object schema
 
-The bank is `const QUESTIONS = [ ... ]`. Every question is one object:
+The bank is `window.QUESTIONS = [ ... ]` (in `questions.js`). Every question is one object:
 
 ```js
 {
@@ -185,6 +189,7 @@ Every `<tech>.html` follows the same skeleton so they look and behave consistent
 Layout: `.wrap .topbar .back .card .row .cols .fld .pill .small .muted`
 Buttons: `.btn` + `.sec .ghost .warn .bad`
 Tags/notes: `.tag(.accent/.topic/.tricky/.lvl-Mid/.lvl-Senior/.lvl-Staff)` · `.note(.info/.warn/.gotcha)`
+Tables: `table.cx` / `.ctable` (complexity & comparison tables — shared, DS pages) · `.cmd-tbl` (command/API reference — tech pages)
 Stage: `.stage .nodes .node(.primary/.replica/.active/.dead/.flash-ok/.flash-bad)` · `.node .title` · `.badge` · `.kv(.new/.stale)` · `.kv .k` · `.packet(.repl/.read/.bad)`
 Log/feedback/steps: `.log(.l/.t/.ok/.err/.warn/.info/.cmd)` · `.explain` · `.steps li(.done/.current)`
 
@@ -228,11 +233,14 @@ const s=[...h.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(x=>x[1]).join("\n;\
 fs.writeFileSync("/tmp/q.js",s);' && node --check /tmp/q.js
 ```
 
+Also syntax-check the extracted data files directly: `node --check questions.js walkthroughs-data.js`.
+
 Question-bank integrity + length-balance metric:
 
 ```bash
-node -e 'const fs=require("fs");let h=fs.readFileSync("system-design-quiz.html","utf8");
-const m=h.match(/const QUESTIONS = (\[[\s\S]*?\n\];)/);let arr;eval("arr="+m[1].replace(/;$/,""));
+node -e 'const fs=require("fs");
+global.window={}; require("./questions.js"); const arr=window.QUESTIONS;   // bank now lives in questions.js
+const h=fs.readFileSync("system-design-quiz.html","utf8");                 // SOURCES still lives in the engine html
 const keys=new Set([...h.match(/const SOURCES = \{([\s\S]*?)\n\};/)[1].matchAll(/"([^"]+)":/g)].map(x=>x[1]));  // ALL source keys (B+… HI links AND full external URLs)
 let errs=0,seen=new Set();
 arr.forEach(q=>{

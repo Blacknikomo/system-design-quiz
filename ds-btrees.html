@@ -13,9 +13,9 @@
     padding:5px;transition:.25s;position:relative}
   .bnode.leaf{border-color:var(--accent2)}
   .bnode.internal{border-color:var(--accent)}
-  .bnode.active{box-shadow:0 0 0 3px rgba(79,156,249,.4);border-color:var(--accent)}
-  .bnode.hit{box-shadow:0 0 0 3px rgba(46,204,113,.55);border-color:var(--ok)}
-  .bnode.over{box-shadow:0 0 0 3px rgba(255,184,77,.55);border-color:var(--warn)}
+  .bnode.active{box-shadow:0 0 0 3px rgba(var(--accent-rgb),.4);border-color:var(--accent)}
+  .bnode.hit{box-shadow:0 0 0 3px rgba(var(--ok-rgb),.55);border-color:var(--ok)}
+  .bnode.over{box-shadow:0 0 0 3px rgba(var(--warn-rgb),.55);border-color:var(--warn)}
   .cell{font-family:ui-monospace,Menlo,monospace;font-size:13px;font-weight:700;padding:5px 9px;
     border-radius:6px;background:var(--panel2);border:1px solid var(--line);min-width:26px;text-align:center}
   .cell.key{color:var(--txt)}
@@ -25,17 +25,13 @@
   .leafchain{position:absolute;right:-15px;top:50%;transform:translateY(-50%);color:var(--accent2);font-weight:700;font-size:14px}
   .depthbar{display:flex;gap:14px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
   .depthbar .pill.big{font-size:13px;padding:4px 12px;color:var(--accent);border-color:#2c4a6e}
-  table.cx{border-collapse:collapse;font-size:12.5px;margin-top:8px}
-  table.cx td,table.cx th{border:1px solid var(--line);padding:5px 10px;text-align:left}
-  table.cx th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:10.5px;letter-spacing:.04em}
-  table.cx td code{color:var(--accent)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🗃️ B-Trees & B+Trees — how DB indexes stay shallow</h1>
       <div class="sub">A balanced, high-fan-out tree built to <i>minimize disk I/O</i>. Watch keys route down, nodes <b>split</b> on overflow (median pushed up), and range scans walk the <b>linked leaf chain</b>.</div>
     </div>
@@ -401,5 +397,6 @@ document.getElementById('demoBtn').onclick = buildSample;
 document.getElementById('resetBtn').onclick = reset;
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

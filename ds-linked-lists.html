@@ -12,12 +12,12 @@
   .lnode .val{padding:12px 14px;min-width:30px;text-align:center}
   .lnode .nptr{padding:12px 8px;border-left:1px solid var(--line);font-size:11px;color:var(--muted);font-weight:400}
   .lnode .pptr{padding:12px 8px;border-right:1px solid var(--line);font-size:11px;color:var(--muted);font-weight:400}
-  .lnode.active{box-shadow:0 0 0 3px rgba(79,156,249,.45);border-color:var(--accent)}
-  .lnode.slow{box-shadow:0 0 0 3px rgba(46,204,113,.55);border-color:var(--ok)}
-  .lnode.fast{box-shadow:0 0 0 3px rgba(255,184,77,.55);border-color:var(--warn)}
-  .lnode.both{box-shadow:0 0 0 3px rgba(255,92,92,.6);border-color:var(--bad)}
-  .lnode.flash-ok{box-shadow:0 0 0 3px rgba(46,204,113,.5);border-color:var(--ok)}
-  .lnode.flash-bad{box-shadow:0 0 0 3px rgba(255,92,92,.5);border-color:var(--bad)}
+  .lnode.active{box-shadow:0 0 0 3px rgba(var(--accent-rgb),.45);border-color:var(--accent)}
+  .lnode.slow{box-shadow:0 0 0 3px rgba(var(--ok-rgb),.55);border-color:var(--ok)}
+  .lnode.fast{box-shadow:0 0 0 3px rgba(var(--warn-rgb),.55);border-color:var(--warn)}
+  .lnode.both{box-shadow:0 0 0 3px rgba(var(--bad-rgb),.6);border-color:var(--bad)}
+  .lnode.flash-ok{box-shadow:0 0 0 3px rgba(var(--ok-rgb),.5);border-color:var(--ok)}
+  .lnode.flash-bad{box-shadow:0 0 0 3px rgba(var(--bad-rgb),.5);border-color:var(--bad)}
   .lnode .ptag{position:absolute;top:-22px;left:50%;transform:translateX(-50%);font-size:10px;
     white-space:nowrap;font-weight:700;font-family:inherit}
   .arrow{font-size:20px;color:var(--accent);padding:0 6px;user-select:none}
@@ -25,17 +25,13 @@
   .term{color:var(--muted);font-family:ui-monospace,Menlo,monospace;font-size:13px;padding:0 6px}
   .head-tag{font-size:10px;color:var(--accent);font-weight:700;margin-right:4px;font-family:inherit}
   .legend{display:flex;gap:16px;justify-content:center;font-size:12px;color:var(--muted);margin-top:18px;flex-wrap:wrap}
-  table.cx{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
-  table.cx th,table.cx td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line)}
-  table.cx th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.04em}
-  table.cx code{color:var(--accent)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🔗 Linked Lists — nodes & pointers</h1>
       <div class="sub">Nodes scattered in memory, chained by <code>next</code> pointers. Insert/delete at a known node is O(1); finding it is O(n). Toggle doubly-linked, reverse the list, and run Floyd's cycle detection.</div>
     </div>
@@ -319,5 +315,6 @@ document.getElementById('dblBtn').onclick=toggleDoubly;
 document.getElementById('resetBtn').onclick=reset;
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

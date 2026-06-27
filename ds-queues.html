@@ -12,27 +12,23 @@
     align-items:center;justify-content:center;font-family:ui-monospace,Menlo,monospace;font-size:14px;
     background:var(--panel);transition:.2s}
   .cell .box.filled{border-color:var(--accent);background:#15233a;color:var(--txt)}
-  .cell .box.head{box-shadow:0 0 0 3px rgba(46,204,113,.45)}
-  .cell .box.tail{box-shadow:0 0 0 3px rgba(124,92,255,.45)}
-  .cell .box.headtail{box-shadow:0 0 0 3px rgba(46,204,113,.45),0 0 0 6px rgba(124,92,255,.45)}
-  .cell .box.flash-ok{box-shadow:0 0 0 3px rgba(46,204,113,.6)}
-  .cell .box.flash-bad{box-shadow:0 0 0 3px rgba(255,92,92,.6)}
+  .cell .box.head{box-shadow:0 0 0 3px rgba(var(--ok-rgb),.45)}
+  .cell .box.tail{box-shadow:0 0 0 3px rgba(var(--accent2-rgb),.45)}
+  .cell .box.headtail{box-shadow:0 0 0 3px rgba(var(--ok-rgb),.45),0 0 0 6px rgba(var(--accent2-rgb),.45)}
+  .cell .box.flash-ok{box-shadow:0 0 0 3px rgba(var(--ok-rgb),.6)}
+  .cell .box.flash-bad{box-shadow:0 0 0 3px rgba(var(--bad-rgb),.6)}
   .cell .idx{font-size:11px;color:var(--muted)}
   .cell .ptr{font-size:10px;font-weight:700;height:14px;display:flex;gap:4px}
   .ptr .h{color:var(--ok)}
   .ptr .t{color:var(--accent2)}
   .wraphint{text-align:center;color:var(--muted);font-size:12px;margin-top:10px}
-  table.cx{border-collapse:collapse;font-size:12.5px;margin-top:10px;width:100%}
-  table.cx td,table.cx th{border:1px solid var(--line);padding:5px 9px;text-align:left}
-  table.cx th{color:var(--muted);font-weight:600;background:var(--panel2)}
-  table.cx code{color:var(--accent)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🎟️ Queues, Deque &amp; Ring Buffer</h1>
       <div class="sub">FIFO in a fixed-size array. Watch a <i>ring buffer</i> enqueue at the tail and dequeue at the head, both indices marching forward with <code>% capacity</code> so the buffer wraps around — true O(1) at both ends.</div>
     </div>
@@ -224,5 +220,6 @@ document.getElementById('peekBtn').onclick = peek;
 document.getElementById('resetBtn').onclick = reset;
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

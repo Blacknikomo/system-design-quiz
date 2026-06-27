@@ -3,3 +3,6 @@
 
 # transient build artifacts (quiz option-rebalancing slices/patches/backups)
 _patches/
+
+# FUSE/iCloud temp artifacts
+.fuse_hidden*

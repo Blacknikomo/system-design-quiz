@@ -16,9 +16,9 @@
     font-weight:700;font-size:15px;transform:translate(-50%,-50%);transition:.25s;cursor:default;z-index:2}
   .vtx .dist{position:absolute;top:-14px;right:-12px;font-size:10px;background:var(--accent);color:#fff;
     border-radius:8px;padding:0 5px;font-weight:700;opacity:0;transition:.2s}
-  .vtx.start{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,156,249,.35)}
-  .vtx.frontier{border-color:var(--warn);box-shadow:0 0 0 3px rgba(255,184,77,.5)}
-  .vtx.current{border-color:var(--accent);background:var(--accent);color:#fff;box-shadow:0 0 0 4px rgba(79,156,249,.45)}
+  .vtx.start{border-color:var(--accent);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.35)}
+  .vtx.frontier{border-color:var(--warn);box-shadow:0 0 0 3px rgba(var(--warn-rgb),.5)}
+  .vtx.current{border-color:var(--accent);background:var(--accent);color:#fff;box-shadow:0 0 0 4px rgba(var(--accent-rgb),.45)}
   .vtx.visited{border-color:var(--ok);background:var(--okbg);color:var(--ok)}
   .vtx.dist-on .dist{opacity:1}
   .frontierbox{display:flex;flex-direction:column;gap:8px}
@@ -30,17 +30,13 @@
   .orderline{font-family:ui-monospace,Menlo,monospace;font-size:13px;margin-top:6px}
   .orderline .v{display:inline-block;background:var(--okbg);border:1px solid var(--ok);color:var(--ok);
     border-radius:6px;padding:2px 8px;margin:2px;font-weight:700}
-  table.cx{border-collapse:collapse;font-size:12.5px;margin-top:8px}
-  table.cx td,table.cx th{border:1px solid var(--line);padding:5px 10px;text-align:left}
-  table.cx th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:10.5px;letter-spacing:.04em}
-  table.cx td code{color:var(--accent)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🕸️ Graphs — BFS / DFS / Topo sort</h1>
       <div class="sub">An adjacency-list graph. Watch <b>BFS</b> fan out level-by-level with a <b>queue</b> (shortest paths in an unweighted graph), <b>DFS</b> plunge deep with a <b>stack</b>, and <b>topological sort</b> order a DAG.</div>
     </div>
@@ -387,5 +383,6 @@ document.getElementById('resetBtn').onclick = reset;
 window.addEventListener('resize', ()=>{ if(!busy) render({start:document.getElementById('start').value}); });
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

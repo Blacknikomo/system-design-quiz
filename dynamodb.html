@@ -10,7 +10,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>⚡ DynamoDB — partitions, consistency &amp; GSIs</h1>
       <div class="sub">Managed key-value / wide-column store. Watch how the <i>partition key</i> hashes to a partition, how a leader replica acks writes before followers catch up, and why an <i>eventually-consistent</i> read can be stale while a <i>strongly-consistent</i> one isn't.</div>
     </div>
@@ -455,5 +455,6 @@ document.getElementById('qgsiBtn').onclick = queryGSI;
 document.getElementById('resetBtn').onclick = reset;
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

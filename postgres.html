@@ -10,7 +10,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🐘 PostgreSQL — indexes, transactions &amp; MVCC</h1>
       <div class="sub">Relational system of record. Watch an <i>Index Scan</i> jump straight to a row vs a <i>Seq Scan</i> reading every row, see a transaction stay invisible until <b>COMMIT</b>, and watch an UPDATE write a <b>new row version</b> instead of overwriting in place.</div>
     </div>
@@ -529,5 +529,6 @@ document.head.appendChild(st);
 
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

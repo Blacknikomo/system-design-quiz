@@ -10,7 +10,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🟦 Cassandra — ring, QUORUM & the write path</h1>
       <div class="sub">Masterless peer-to-peer ring. Hash a partition key to find its 3 replica owners, write/read at <b>QUORUM</b>, watch the <i>LSM write path</i> (commit log + memtable → SSTables), and see how tunable consistency survives a node failure.</div>
     </div>
@@ -508,5 +508,6 @@ document.getElementById('killBtn').onclick=toggleNode;
 document.getElementById('resetBtn').onclick=reset;
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

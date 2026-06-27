@@ -26,7 +26,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🟧 Kafka — partitions, offsets &amp; consumer groups</h1>
       <div class="sub">A topic is a partitioned, append-only log. Produce a record, watch it get <i>hashed</i> to a partition, then see two consumer groups read the same retained data <i>independently</i> — and replay it from the start. Records without a key are spread by the producer's default sticky partitioner (it fills a batch on one partition, then moves on) — even spread without the per-record cost of old round-robin.</div>
     </div>
@@ -373,5 +373,6 @@ document.getElementById('replayBtn').onclick = replay;
 document.getElementById('resetBtn').onclick = reset;
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

@@ -24,7 +24,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🌊 Flink — windows, state &amp; watermarks</h1>
       <div class="sub">Count events per key in <i>tumbling</i> 10-second windows. Send events (even <i>out-of-order</i> ones), advance the <b>event-time clock</b>, and watch the <b>watermark</b> trail behind to decide exactly when each window <i>closes and emits</i> — and what happens to events that arrive too <i>late</i>.</div>
     </div>
@@ -387,5 +387,6 @@ document.getElementById('advBtn').onclick = advance;
 document.getElementById('resetBtn').onclick = reset;
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

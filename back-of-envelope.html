@@ -27,7 +27,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🧮 Back-of-the-Envelope Estimation</h1>
       <div class="sub">Estimate QPS, storage, bandwidth, and memory fast and out loud under interview pressure. Precision doesn't matter — landing within ~2–3× with clean reasoning does. Round aggressively, keep the math in your head.</div>
     </div>
@@ -199,5 +199,6 @@ read: 200,000 × 500 B = 100 MB/s = <b>~0.8 Gbps</b> peak</pre>
 document.getElementById('revealAll').onclick=()=>document.querySelectorAll('details.drill').forEach(d=>d.open=true);
 document.getElementById('collapseAll').onclick=()=>document.querySelectorAll('details.drill').forEach(d=>d.open=false);
 </script>
+<script src="site.js"></script>
 </body>
 </html>

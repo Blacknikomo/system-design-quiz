@@ -10,7 +10,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>🟥 Redis — replication & reads</h1>
       <div class="sub">In-memory key-value store. Watch a write hit the primary, replicate <i>asynchronously</i> to replicas, and see why a replica read can be stale — and how failover can drop acknowledged writes.</div>
     </div>
@@ -393,5 +393,6 @@ document.getElementById('failBtn').onclick=failover;
 document.getElementById('resetBtn').onclick=reset;
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

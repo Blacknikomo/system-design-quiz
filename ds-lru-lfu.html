@@ -26,8 +26,8 @@
     border-radius:10px;padding:1px 6px;font-weight:700}
   .dnode.head{border-color:var(--ok)}
   .dnode.tail{border-color:var(--warn)}
-  .dnode.flash-ok{box-shadow:0 0 0 3px rgba(46,204,113,.5)}
-  .dnode.flash-bad{box-shadow:0 0 0 3px rgba(255,92,92,.5)}
+  .dnode.flash-ok{box-shadow:0 0 0 3px rgba(var(--ok-rgb),.5)}
+  .dnode.flash-bad{box-shadow:0 0 0 3px rgba(var(--bad-rgb),.5)}
   .darrow{color:var(--muted);font-size:18px}
   .endcap{font-size:10px;color:var(--muted);align-self:center;text-transform:uppercase;letter-spacing:.04em}
   /* LFU buckets */
@@ -47,7 +47,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>♻️ LRU & LFU Caches</h1>
       <div class="sub">A cache with a bound: when it's full, something has to go. <b>LRU</b> evicts the <i>least-recently-used</i> entry; <b>LFU</b> evicts the <i>least-frequently-used</i>. Watch the hash map + doubly linked list keep every op O(1).</div>
     </div>
@@ -397,5 +397,6 @@ document.getElementById('seqBtn').onclick=demoScan;
 document.getElementById('resetBtn').onclick=reset;
 reset();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

@@ -25,7 +25,7 @@
 <div class="wrap">
   <div class="topbar">
     <div>
-      <div class="back"><a href="index.html">← All technologies</a></div>
+      <div class="back" data-nav></div>
       <h1>⚖️ Scaling — Consistent Hashing &amp; Rebalancing</h1>
       <div class="sub">The mechanic behind every horizontally-sharded system. Add or remove a node and watch <b>how many keys have to move</b> — and why consistent hashing (Cassandra ring, DynamoDB partitions, Redis Cluster slots) beats naive <code>hash % N</code>. Second tab: Kafka <b>consumer-group rebalancing</b>.</div>
     </div>
@@ -378,5 +378,6 @@ document.getElementById('assignorBtn').onclick=toggleAssignor;
 document.getElementById('resetGroup').onclick=resetGroup;
 resetRing();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

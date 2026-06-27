@@ -4,13 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Behavioral Interview Quiz — FAANG EM Prep</title>
+<link rel="stylesheet" href="style.css">
 <style>
-  :root{
-    --bg:#0f1419; --panel:#1a212b; --panel2:#222b38; --line:#2d3744;
-    --txt:#e6edf3; --muted:#8b98a8; --accent:#4f9cf9; --accent2:#7c5cff;
-    --ok:#2ecc71; --okbg:#11331f; --bad:#ff5c5c; --badbg:#3a1518;
-    --warn:#ffb84d; --chip:#26313f;
-  }
+  /* Theme tokens (colors) come from the shared style.css :root.
+     Rules below are quiz-specific and intentionally override the shared
+     primitives (e.g. narrower .wrap) — they load after style.css so they win. */
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     background:var(--bg);color:var(--txt);line-height:1.5;font-size:15px}
@@ -92,7 +90,7 @@
 <div class="wrap">
   <div class="toprow">
     <div>
-      <div class="back"><a href="index.html">← All materials</a></div>
+      <div class="back" data-nav></div>
       <h1>Behavioral Interview Quiz</h1>
       <div class="sub">FAANG EM behavioral / leadership prep · 8 competencies · tracks weak areas · saves history</div>
     </div>
@@ -686,5 +684,6 @@ renderTopicChips();
 updatePoolInfo();
 show("setup");
 </script>
+<script src="site.js"></script>
 </body>
 </html>
