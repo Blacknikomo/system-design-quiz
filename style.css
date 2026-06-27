@@ -127,6 +127,18 @@ table.cx td,table.cx th,.ctable td,.ctable th{border:1px solid var(--line);paddi
 table.cx th,.ctable th{color:var(--muted);font-weight:600;background:var(--panel2)}
 table.cx code,.ctable code{color:var(--accent)}
 
+/* collapsible section — <details class="fold" [open]><summary>…</summary> …cards… </details> */
+details.fold{margin:0 0 16px}
+details.fold>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;
+  padding:12px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  font-weight:600;font-size:15px;color:var(--txt);user-select:none;transition:.15s}
+details.fold>summary::-webkit-details-marker{display:none}
+details.fold>summary::before{content:"▸";color:var(--accent);font-size:12px;transition:transform .15s}
+details.fold[open]>summary::before{transform:rotate(90deg)}
+details.fold>summary:hover{border-color:var(--accent)}
+details.fold[open]>summary{margin-bottom:14px}
+details.fold>summary .fold-hint{margin-left:auto;font-weight:400;font-size:12px;color:var(--muted)}
+
 /* ===== Reference section (infra / sharding / commands / recipes) ===== */
 .ref-cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 @media(max-width:720px){.ref-cols{grid-template-columns:1fr}}

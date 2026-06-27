@@ -5,6 +5,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Elasticsearch — Interactive</title>
 <link rel="stylesheet" href="style.css">
+<style>
+  /* page-specific: write-path simulator internals (theme tokens from style.css) */
+  .wcols3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:6px}
+  @media(max-width:720px){.wcols3{grid-template-columns:1fr}}
+  .wlane{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 4px}
+  .wbox{border:1px dashed var(--line);border-radius:8px;padding:8px;min-height:42px;display:flex;flex-wrap:wrap;gap:6px;align-items:flex-start}
+  .wbox.buf{border-color:var(--warn)}
+  .wbox.tlog{border-color:var(--accent)}
+  .wbox.seg{border-color:var(--ok);border-style:solid}
+  .wdoc{font-family:ui-monospace,Menlo,monospace;font-size:11px;padding:2px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel2)}
+  .wdoc.buf{border-color:var(--warn);color:var(--warn)}
+  .wdoc.tlog{border-color:var(--accent);color:var(--accent)}
+  .seg1{border:1px solid var(--ok);border-radius:8px;padding:6px 8px;background:var(--okbg);margin:0 6px 6px 0}
+  /* query+fetch + delete */
+  .wdoc.hit{border-color:var(--accent);color:var(--accent);outline:2px solid var(--accent)}
+  .wdoc.del{opacity:.5;text-decoration:line-through;border-color:var(--bad);color:var(--bad)}
+  .scorebar{height:6px;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--accent2));display:inline-block;vertical-align:middle;min-width:2px}
+  .wrow{display:flex;align-items:center;gap:8px;margin:3px 0;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+  .wrow .id{min-width:42px}
+  .wrow .sc{color:var(--muted);width:30px;text-align:right}
+  .wrow.cut{opacity:.4}
+  .wrow.win .id{color:var(--ok);font-weight:700}
+</style>
 </head>
 <body>
 <div class="wrap">
@@ -28,6 +51,9 @@
     <div class="note info"><b>Sharding:</b> an index is split into <b>primary shards</b>, and each shard is a <b>complete, self-contained Lucene index</b> with its own inverted index. A query fans out to every shard and the results are merged. (Fuzzy matching uses edit-distance on terms to catch typos like <code>concrt → concert</code>.)</div>
     <div class="note gotcha"><b>The gotcha:</b> Elasticsearch is <b>not your source of truth</b> — keep a primary database and sync ES via <b>CDC</b> (change-data-capture). Also, the <b>primary shard count is fixed at index creation</b>; changing it requires a full <b>reindex</b> into a new index.</div>
   </div>
+
+  <details class="fold" open>
+    <summary>🔎 Interactive · inverted index — index documents &amp; search <span class="fold-hint">click to collapse</span></summary>
 
   <!-- controls -->
   <div class="card">
@@ -80,6 +106,181 @@
       </ol>
     </div>
   </div>
+  </details>
+
+  <!-- ===== WRITE PATH (NEW) ===== -->
+  <details class="fold" open>
+    <summary>✍️ Interactive · how a WRITE (index) request is routed &amp; stored <span class="fold-hint">click to collapse</span></summary>
+
+    <div class="card">
+      <div class="row" style="gap:8px">
+        <span class="tag accent">coordinating node</span>
+        <span class="tag">routing = hash(_id) % primaries</span>
+        <span class="tag">primary → replica</span>
+        <span class="tag">buffer + translog</span>
+        <span class="tag">refresh → segment</span>
+        <span class="tag">near-real-time</span>
+      </div>
+      <p class="small" style="margin-bottom:6px">A write travels four hops: <b>① coordinating node</b> (any node can receive it) → <b>② find the shard</b> via <code>shard = hash(_routing) % number_of_primaries</code> → <b>③ find the node</b> that holds that <b>primary</b> shard (cluster routing table) → <b>④ build the index</b> on the primary: analyze → <b>in-memory buffer</b> + <b>translog</b>, then a <i>refresh</i> turns the buffer into a searchable Lucene <b>segment</b>. The primary also <b>replicates</b> to its replica before acking the client.</p>
+      <div class="note gotcha"><b>The gotcha — near-real-time:</b> a doc is <b>durable</b> the instant it's in the <b>translog</b>, but <b>not searchable</b> until the next <b>refresh</b> (default <code>refresh_interval: 1s</code>) opens a segment. The in-memory buffer is invisible to search. <code>_flush</code> later fsyncs a Lucene commit and truncates the translog; background <b>merges</b> compact small segments into bigger ones.</div>
+    </div>
+
+    <div class="card">
+      <h3>Index a document</h3>
+      <div class="row">
+        <label class="fld">_id / _routing
+          <input type="text" id="wId" value="user-42" size="16">
+        </label>
+        <span class="pill" style="align-self:flex-end">index <code>products</code> · 3 primaries + 1 replica</span>
+        <button class="btn" id="wIndexBtn">✍️ Index</button>
+        <button class="btn sec" id="wRefreshBtn">🔄 Refresh (buffer → segment)</button>
+        <button class="btn ghost" id="wResetBtn">↺ Reset</button>
+      </div>
+      <div class="small muted" style="margin-top:6px">Change <code>_id</code> to route to a different shard. Node A is the coordinator here (any node can play that role).</div>
+    </div>
+
+    <div class="card">
+      <div class="stage" id="wstage">
+        <div class="nodes" id="wtop" style="align-items:stretch;margin-bottom:16px">
+          <div class="node" id="wclient" style="min-width:150px;flex:1">
+            <div class="title">🧑‍💻 Client</div>
+            <div class="small muted" style="font-family:ui-monospace,Menlo,monospace">PUT /products/_doc/<span id="wcid">user-42</span></div>
+          </div>
+          <div class="node" id="wroute" style="min-width:280px;flex:2">
+            <div class="title">🧭 Routing <span class="badge">computed on coordinator</span></div>
+            <div id="wrouteBody" class="small muted">awaiting write…</div>
+          </div>
+        </div>
+        <div class="nodes" id="wnodes" style="align-items:stretch"></div>
+        <div id="wshardWrap" style="margin-top:16px"></div>
+      </div>
+      <div class="explain" id="wexplain">Hit <b>Index</b> to route a write through the cluster, then <b>Refresh</b> to make it searchable.</div>
+    </div>
+
+    <div class="cols">
+      <div class="card"><h3>Command log</h3><div class="log" id="wlog"></div></div>
+      <div class="card">
+        <h3>What you're seeing</h3>
+        <ol class="steps small" id="wsteps">
+          <li data-step="1"><b>Coordinating node</b> — any node receives the write &amp; coordinates it (owns routing + fan-out; needn't hold the shard).</li>
+          <li data-step="2"><b>Find the shard</b> — <code>shard = hash(_routing) % number_of_primaries</code>; <code>_routing</code> defaults to <code>_id</code>.</li>
+          <li data-step="3"><b>Find the node</b> — the cluster <b>routing table</b> says which data node holds that <b>primary</b> shard; forward there.</li>
+          <li data-step="4"><b>Build the index</b> — primary analyzes the doc → appends to <b>in-memory buffer</b> + <b>translog</b> (durable, not yet searchable).</li>
+          <li data-step="5"><b>Replicate &amp; ack</b> — primary → <b>replica</b> shard; once <code>wait_for_active_shards</code> ack, client gets <code>201 created</code>.</li>
+          <li data-step="6"><b>Refresh</b> (~1s) — buffer → immutable <b>segment</b> → <b>now searchable</b>. (<b>flush</b> fsyncs + clears translog; <b>merge</b> compacts segments.)</li>
+        </ol>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== QUERY + FETCH (NEW) ===== -->
+  <details class="fold" open>
+    <summary>🔭 Interactive · how a search reads data — query then fetch (top-N) <span class="fold-hint">click to collapse</span></summary>
+
+    <div class="card">
+      <div class="row" style="gap:8px">
+        <span class="tag accent">scatter / gather</span>
+        <span class="tag">query phase: {id, score}</span>
+        <span class="tag">coordinator merge</span>
+        <span class="tag">fetch phase: _source</span>
+      </div>
+      <p class="small" style="margin-bottom:6px">A search runs in <b>two phases</b>. <b>Query phase:</b> the coordinator scatters the query to <b>one copy of every shard</b>; each shard finds its <b>local top-N</b> and returns just <code>{_id, _score}</code> — cheap, no document body. <b>Merge:</b> the coordinator sorts all shards' hits and keeps the <b>global top-N</b> (e.g. top-20). <b>Fetch phase:</b> it asks only the shards holding those final IDs for the real <code>_source</code>, assembles, and returns.</p>
+      <div class="note gotcha"><b>The gotcha — deep pagination:</b> for <code>from:10000, size:20</code> every shard must ship <code>from+size = 10020</code> hits to the coordinator, which sorts ~that×shards just to keep 20. Cost grows with the offset → use <code>search_after</code> (cursor) or <code>scroll</code>/PIT for big exports.</div>
+    </div>
+
+    <div class="card">
+      <h3>Run a search</h3>
+      <div class="row">
+        <label class="fld">query
+          <input type="text" id="qText" value="running shoes" size="18">
+        </label>
+        <label class="fld">size (top-N)
+          <input type="number" id="qSize" value="3" min="1" max="9" style="width:64px">
+        </label>
+        <button class="btn" id="qRunBtn">🔭 Search</button>
+        <button class="btn ghost" id="qResetBtn">↺ Reset</button>
+      </div>
+      <div class="small muted" style="margin-top:6px">Scores are pre-seeded so the merge is deterministic. Each shard returns its local top-<i>size</i>; the coordinator keeps the global top-<i>size</i> (set it to 20 for a real-world "top-20").</div>
+    </div>
+
+    <div class="card">
+      <div class="stage" id="qstage">
+        <div class="nodes" style="margin-bottom:16px">
+          <div class="node" id="qcoord" style="flex:1"><div class="title">🧭 Coordinating node</div><div class="small muted">scatter → gather → merge → fetch</div></div>
+        </div>
+        <div class="nodes" id="qshards" style="align-items:stretch"></div>
+        <div class="cols" style="margin-top:16px">
+          <div class="node" style="flex:1"><div class="title">🧮 Coordinator merge <span class="badge">sorted by _score</span></div><div id="qmerge" class="small muted" style="margin-top:6px">run a search…</div></div>
+          <div class="node" style="flex:1"><div class="title">📦 Final hits <span class="badge">+ _source after fetch</span></div><div id="qresults" class="small muted" style="margin-top:6px">—</div></div>
+        </div>
+      </div>
+      <div class="explain" id="qexplain">Hit <b>Search</b> to watch the query phase (gather IDs+scores), the merge, then the fetch phase (pull _source for the winners).</div>
+    </div>
+
+    <div class="cols">
+      <div class="card"><h3>Command log</h3><div class="log" id="qlog"></div></div>
+      <div class="card">
+        <h3>What you're seeing</h3>
+        <ol class="steps small" id="qsteps">
+          <li data-step="1"><b>Coordinator</b> receives <code>_search</code> and scatters it to one copy of every shard.</li>
+          <li data-step="2"><b>Query phase</b>: each shard ranks locally, returns its top-<i>size</i> as <code>{_id,_score}</code> only.</li>
+          <li data-step="3"><b>Merge</b>: coordinator sorts all returned hits, keeps the global top-<i>size</i>.</li>
+          <li data-step="4"><b>Fetch phase</b>: coordinator pulls <code>_source</code> for just those winners from their shards.</li>
+          <li data-step="5"><b>Return</b>: the assembled top-<i>size</i> documents go back to the client.</li>
+        </ol>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== DELETE (NEW) ===== -->
+  <details class="fold" open>
+    <summary>🗑️ Interactive · how a delete works — tombstone in a segment, purged at merge <span class="fold-hint">click to collapse</span></summary>
+
+    <div class="card">
+      <div class="row" style="gap:8px">
+        <span class="tag accent">immutable segments</span>
+        <span class="tag">delete = mark in liveDocs</span>
+        <span class="tag">tombstone</span>
+        <span class="tag">purged on merge</span>
+      </div>
+      <p class="small" style="margin-bottom:6px">Lucene <b>segments are immutable</b> — you can't edit one in place. A <b>delete</b> just flips the doc's bit in the segment's <b>liveDocs</b> bitset (a <code>.liv</code> <b>tombstone</b>): the doc vanishes from results immediately but is <b>still on disk</b>. The space is reclaimed only when a background <b>merge</b> rewrites the live docs into a fresh segment and drops the old ones. (An <b>update</b> is just delete-then-reindex — the old version becomes a tombstone.)</p>
+      <div class="note gotcha"><b>Terminology check:</b> this is the <b>Lucene</b> model — <b>segments</b> + a <b>liveDocs tombstone</b>, purged at <b>merge</b>. Same <i>idea</i> as an LSM tree's <b>SSTable tombstone + compaction</b> (Cassandra), but Elasticsearch is <b>not</b> built on SSTables — don't mix the names in an interview. Heavy delete/update churn ⇒ many tombstones ⇒ merge pressure &amp; wasted disk until merges catch up.</div>
+    </div>
+
+    <div class="card">
+      <h3>Delete &amp; merge</h3>
+      <div class="row">
+        <label class="fld">doc to delete
+          <select id="dSel"></select>
+        </label>
+        <button class="btn bad" id="dDelBtn">🗑️ Delete</button>
+        <button class="btn sec" id="dMergeBtn">🧹 Merge segments</button>
+        <button class="btn ghost" id="dResetBtn">↺ Reset</button>
+      </div>
+      <div class="small muted" style="margin-top:6px">One shard, a few immutable segments. Delete marks a tombstone; merge physically removes deleted docs and reclaims space.</div>
+    </div>
+
+    <div class="card">
+      <div class="stage" id="dstage">
+        <div class="nodes" id="dsegs" style="align-items:stretch"></div>
+        <div style="margin-top:14px" id="dstats" class="small muted"></div>
+      </div>
+      <div class="explain" id="dexplain">Pick a doc and <b>Delete</b> it (becomes a tombstone), then <b>Merge</b> to physically purge deleted docs into a new segment.</div>
+    </div>
+
+    <div class="cols">
+      <div class="card"><h3>Command log</h3><div class="log" id="dlog"></div></div>
+      <div class="card">
+        <h3>What you're seeing</h3>
+        <ol class="steps small" id="dsteps">
+          <li data-step="1"><b>Segments are immutable</b> — a doc lives inside one and can't be edited in place.</li>
+          <li data-step="2"><b>Delete</b> flips the doc's bit in <b>liveDocs</b> (<code>.liv</code> tombstone) — filtered from results, still on disk.</li>
+          <li data-step="3"><b>Searches</b> read segments but skip docs absent from liveDocs (the deleted count grows).</li>
+          <li data-step="4"><b>Merge</b> rewrites only live docs into a new segment and drops the old ones — space reclaimed.</li>
+        </ol>
+      </div>
+    </div>
+  </details>
 
   <!-- ===== AT SCALE ===== -->
   <div class="card scale">
@@ -441,6 +642,354 @@ document.getElementById('resetBtn').onclick = reset;
 document.getElementById('docText').addEventListener('keydown', e=>{ if(e.key==='Enter') doIndex(e.target.value); });
 document.getElementById('queryText').addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(e.target.value); });
 reset();
+</script>
+
+<script>
+/* ===== Write-path simulator — self-contained, own scope (IIFE) ===== */
+(function(){
+  const NODES = ['A','B','C'];
+  const SHARDS = { 0:{p:'A',r:'B'}, 1:{p:'B',r:'C'}, 2:{p:'C',r:'A'} }; // routing table: shard -> {primary, replica}
+  const NPRIM = 3, COORD = 'A';
+  let shardState, currentShard, wbusy=false;
+
+  const wsleep = ms => new Promise(r=>setTimeout(r,ms));
+  function wesc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function $(id){ return document.getElementById(id); }
+  function wlog(cls,msg){ const el=$('wlog'); el.innerHTML += `<div class="l"><span class="t">${new Date().toLocaleTimeString()}</span> <span class="${cls}">${msg}</span></div>`; el.scrollTop=el.scrollHeight; }
+  function wexplain(html){ $('wexplain').innerHTML=html; }
+  function whash(s){ let h=2166136261; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; } // FNV-1a (real ES uses Murmur3)
+
+  function wfly(fromSel,toSel,label,cls){
+    return new Promise(res=>{
+      const stage=$('wstage'); if(!stage){res();return;}
+      const sr=stage.getBoundingClientRect();
+      const a=(typeof fromSel==='string'?document.querySelector(fromSel):fromSel);
+      const b=(typeof toSel==='string'?document.querySelector(toSel):toSel);
+      if(!a||!b){res();return;}
+      const ar=a.getBoundingClientRect(), br=b.getBoundingClientRect();
+      const p=document.createElement('div');
+      p.className='packet '+(cls||''); p.textContent=label;
+      p.style.left=(ar.left-sr.left+ar.width/2-20)+'px';
+      p.style.top =(ar.top -sr.top +ar.height/2-10)+'px';
+      stage.appendChild(p);
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        p.style.left=(br.left-sr.left+br.width/2-20)+'px';
+        p.style.top =(br.top -sr.top +br.height/2-10)+'px';
+      }));
+      setTimeout(()=>{ p.style.opacity=0; setTimeout(()=>{p.remove();res();},250); },640);
+    });
+  }
+
+  function shardsOf(node){
+    const out=[];
+    for(const s in SHARDS){ if(SHARDS[s].p===node)out.push({s:+s,role:'P'}); if(SHARDS[s].r===node)out.push({s:+s,role:'R'}); }
+    return out.sort((x,y)=>x.s-y.s);
+  }
+
+  function wrenderNodes(opts){
+    opts=opts||{};
+    const {primary,replica,activeShard}=opts;
+    $('wnodes').innerHTML = NODES.map(n=>{
+      const isP=primary===n, isR=replica===n;
+      let cls='node'; if(isP)cls+=' primary'; else if(isR)cls+=' replica';
+      const coord = n===COORD ? '<span class="badge">coordinator</span>' : '';
+      const shards = shardsOf(n).map(sh=>{
+        const color = sh.role==='P' ? 'var(--accent)' : 'var(--accent2)';
+        const tgt = (sh.s===activeShard && ((sh.role==='P'&&isP)||(sh.role==='R'&&isR)));
+        return `<span class="pill" style="border-color:${color};color:${color}${tgt?';outline:2px solid '+color:''}">${sh.role}${sh.s}</span>`;
+      }).join(' ');
+      return `<div class="${cls}" id="wnode-${n}" style="min-width:150px;flex:1"><div class="title">🖥️ Node ${n} ${coord}</div><div class="row" style="gap:6px;margin-top:6px">${shards}</div></div>`;
+    }).join('');
+  }
+
+  function wrenderShard(shardNum){
+    const wrap=$('wshardWrap');
+    if(shardNum==null){ wrap.innerHTML=''; return; }
+    const st=shardState[shardNum];
+    const chips=(arr,cls)=> arr.length ? arr.map(d=>`<span class="wdoc ${cls}">${wesc(d)}</span>`).join('') : '<span class="small muted">(empty)</span>';
+    const segs = st.segments.length
+      ? st.segments.map((seg,i)=>`<span class="seg1"><span class="small" style="color:var(--ok)">seg_${i} · ${seg.length} doc(s)</span><br>${seg.map(d=>`<span class="wdoc">${wesc(d)}</span>`).join(' ')}</span>`).join('')
+      : '<span class="small muted">(no segments → nothing searchable yet)</span>';
+    wrap.innerHTML = `<div class="node" style="flex:1">
+      <div class="title">🧩 Primary shard P${shardNum} internals <span class="badge">on Node ${SHARDS[shardNum].p}</span></div>
+      <div class="wcols3">
+        <div><div class="wlane">in-memory buffer · not searchable</div><div class="wbox buf">${chips(st.buffer,'buf')}</div></div>
+        <div><div class="wlane">translog · durable</div><div class="wbox tlog">${chips(st.translog,'tlog')}</div></div>
+        <div><div class="wlane">segments · searchable</div><div class="wbox seg">${segs}</div></div>
+      </div></div>`;
+  }
+
+  function wstep(n){ document.querySelectorAll('#wsteps li').forEach(li=>{ const s=+li.dataset.step; li.classList.toggle('done',s<n); li.classList.toggle('current',s===n); }); }
+  function wstepsDone(upTo){ document.querySelectorAll('#wsteps li').forEach(li=>{ const s=+li.dataset.step; li.classList.toggle('done',s<=upTo); li.classList.remove('current'); }); }
+
+  async function wIndex(){
+    if(wbusy) return; wbusy=true;
+    const id=($('wId').value||'').trim()||'doc';
+    $('wcid').textContent=id;
+
+    wstep(1);
+    wlog('cmd', `> PUT /products/_doc/${id}`);
+    wrenderNodes({});
+    await wfly('#wclient','#wnode-'+COORD, id, '');
+    wexplain(`① <b>Coordinating node</b>: Node ${COORD} received the request and becomes the <b>coordinator</b>. <b>Any</b> node can do this — it owns routing &amp; fan-out and needn't hold the target shard.`);
+    await wsleep(350);
+
+    wstep(2);
+    const h=whash(id), shardNum=h%NPRIM;
+    currentShard=shardNum;
+    $('wrouteBody').innerHTML =
+      `<div style="font-family:ui-monospace,Menlo,monospace">_routing = _id = "<b>${wesc(id)}</b>"</div>`+
+      `<div style="font-family:ui-monospace,Menlo,monospace">hash("${wesc(id)}") = ${h}</div>`+
+      `<div style="font-family:ui-monospace,Menlo,monospace">${h} % ${NPRIM} = <b style="color:var(--accent)">shard ${shardNum}</b> → P${shardNum}</div>`;
+    wlog('info', `routing: hash("${id}")=${h} % ${NPRIM} = ${shardNum} → primary P${shardNum}`);
+    wrenderNodes({activeShard:shardNum});
+    wexplain(`② <b>Find the shard</b>: <code>shard = hash(_routing) % number_of_primaries = ${h} % ${NPRIM} = ${shardNum}</code>. (<code>_routing</code> defaults to <code>_id</code>; real ES hashes with Murmur3.) This is exactly why the <b>primary count is immutable</b> — changing it would remap every doc.`);
+    await wsleep(550);
+
+    wstep(3);
+    const pNode=SHARDS[shardNum].p, rNode=SHARDS[shardNum].r;
+    wlog('info', `cluster routing table → P${shardNum} on Node ${pNode}, replica R${shardNum} on Node ${rNode}`);
+    wrenderNodes({primary:pNode,replica:rNode,activeShard:shardNum});
+    if(pNode!==COORD){
+      await wfly('#wnode-'+COORD, '#wnode-'+pNode, 'write P'+shardNum, 'repl');
+      wexplain(`③ <b>Find the node</b>: the cluster <b>routing table</b> maps P${shardNum} → <b>Node ${pNode}</b>, so the coordinator forwards the write there — a <b>different</b> node than the coordinator (Node ${COORD}).`);
+    } else {
+      wexplain(`③ <b>Find the node</b>: the routing table maps P${shardNum} → <b>Node ${pNode}</b>, which happens to be the coordinator itself — no extra network hop this time.`);
+    }
+    await wsleep(400);
+
+    wstep(4);
+    shardState[shardNum].buffer.push(id);
+    shardState[shardNum].translog.push(id);
+    wrenderShard(shardNum);
+    wlog('ok', `primary P${shardNum}: analyzed doc → in-memory buffer + translog (fsync) · durable`);
+    wexplain(`④ <b>Build the index</b>: the primary analyzes the doc and appends it to the <b>in-memory buffer</b> and the <b>translog</b>. It is <b>durable now</b> (translog survives a crash) but <b>not searchable</b> — it isn't in a segment yet.`);
+    await wsleep(500);
+
+    wstep(5);
+    await wfly('#wnode-'+pNode, '#wnode-'+rNode, 'replicate', 'repl');
+    wlog('info', `replicate P${shardNum} → R${shardNum} (Node ${rNode}); replica writes its own buffer+translog`);
+    await wfly('#wnode-'+pNode, '#wnode-'+COORD, 'ack', 'read');
+    await wfly('#wnode-'+COORD, '#wclient', '201', 'read');
+    wlog('ok', `client ← {"result":"created","_id":"${id}","_shard":"P${shardNum}","_version":1}`);
+    wexplain(`⑤ <b>Replicate &amp; ack</b>: the primary forwards to replica <b>R${shardNum}</b> on Node ${rNode}. Once <code>wait_for_active_shards</code> copies confirm, the client gets <code>201 created</code>. The doc is safe — but <b>still not searchable</b>. Hit <b>Refresh</b>.`);
+    wstepsDone(5);
+    wbusy=false;
+  }
+
+  async function wRefresh(){
+    if(wbusy) return; wbusy=true;
+    const touched=[]; let moved=0;
+    for(const s of [0,1,2]){
+      const st=shardState[s];
+      if(st.buffer.length){ st.segments.push(st.buffer.slice()); moved+=st.buffer.length; st.buffer=[]; touched.push(s); }
+    }
+    if(!moved){ wlog('warn','refresh: buffer empty on all shards — no new segment'); wbusy=false; return; }
+    wlog('cmd','> POST /products/_refresh');
+    wrenderShard(currentShard!=null?currentShard:touched[0]);
+    wstepsDone(6);
+    wlog('ok', `refresh: new segment opened on shard(s) [${touched.join(', ')}] → ${moved} doc(s) now searchable`);
+    wexplain(`🔄 <b>Refresh</b>: each shard's buffer became a new <b>immutable segment</b> — the doc is <b>now searchable</b>. ES auto-refreshes every <code>refresh_interval</code> (default <b>1s</b>); that lag is the "near-real-time" in NRT search. The <b>translog still holds</b> the ops until a <b>flush</b> fsyncs a Lucene commit and truncates it; background <b>merges</b> later combine segments.`);
+    wbusy=false;
+  }
+
+  function wreset(){
+    wbusy=false;
+    shardState={0:{buffer:[],translog:[],segments:[]},1:{buffer:[],translog:[],segments:[]},2:{buffer:[],translog:[],segments:[]}};
+    currentShard=null;
+    $('wlog').innerHTML='';
+    $('wrouteBody').innerHTML='awaiting write…';
+    $('wcid').textContent=($('wId').value||'user-42');
+    wrenderNodes({});
+    wrenderShard(null);
+    document.querySelectorAll('#wsteps li').forEach(li=>li.classList.remove('done','current'));
+    wexplain('Hit <b>Index</b> to route a write through the cluster, then <b>Refresh</b> to make it searchable. Try different <code>_id</code> values (e.g. <code>order-9</code>, <code>cart-7</code>) to land on different shards.');
+    wlog('info','cluster ready · 3 data nodes · index "products" = 3 primaries + 1 replica each');
+  }
+
+  $('wIndexBtn').onclick=wIndex;
+  $('wRefreshBtn').onclick=wRefresh;
+  $('wResetBtn').onclick=wreset;
+  $('wId').addEventListener('keydown', e=>{ if(e.key==='Enter') wIndex(); });
+  $('wId').addEventListener('input', ()=>{ $('wcid').textContent=$('wId').value||'user-42'; });
+  wreset();
+})();
+</script>
+
+<script>
+/* ===== Query+Fetch simulator — self-contained (IIFE) ===== */
+(function(){
+  const SEED = {
+    0:{node:'A', docs:[{id:'p17',s:9.2},{id:'p4',s:7.1},{id:'p9',s:5.5},{id:'p22',s:3.0},{id:'p31',s:1.4}]},
+    1:{node:'B', docs:[{id:'p5',s:8.6},{id:'p12',s:6.3},{id:'p8',s:5.0},{id:'p27',s:2.1},{id:'p2',s:0.9}]},
+    2:{node:'C', docs:[{id:'p19',s:9.9},{id:'p1',s:7.8},{id:'p14',s:4.2},{id:'p7',s:2.7},{id:'p33',s:0.5}]}
+  };
+  const MAXS=9.9;
+  let qbusy=false;
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  const $=id=>document.getElementById(id);
+  function log(c,m){const e=$('qlog');e.innerHTML+=`<div class="l"><span class="t">${new Date().toLocaleTimeString()}</span> <span class="${c}">${m}</span></div>`;e.scrollTop=e.scrollHeight;}
+  function explain(h){$('qexplain').innerHTML=h;}
+  function step(n){document.querySelectorAll('#qsteps li').forEach(li=>{const s=+li.dataset.step;li.classList.toggle('done',s<n);li.classList.toggle('current',s===n);});}
+  function stepsDone(u){document.querySelectorAll('#qsteps li').forEach(li=>{const s=+li.dataset.step;li.classList.toggle('done',s<=u);li.classList.remove('current');});}
+
+  function fly(fromSel,toSel,label,cls){
+    return new Promise(res=>{
+      const stage=$('qstage'); if(!stage){res();return;}
+      const sr=stage.getBoundingClientRect();
+      const a=document.querySelector(fromSel), b=document.querySelector(toSel);
+      if(!a||!b){res();return;}
+      const ar=a.getBoundingClientRect(), br=b.getBoundingClientRect();
+      const p=document.createElement('div'); p.className='packet '+(cls||''); p.textContent=label;
+      p.style.left=(ar.left-sr.left+ar.width/2-20)+'px'; p.style.top=(ar.top-sr.top+ar.height/2-10)+'px';
+      stage.appendChild(p);
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{ p.style.left=(br.left-sr.left+br.width/2-20)+'px'; p.style.top=(br.top-sr.top+br.height/2-10)+'px'; }));
+      setTimeout(()=>{ p.style.opacity=0; setTimeout(()=>{p.remove();res();},220); },520);
+    });
+  }
+
+  function renderShards(returned){
+    $('qshards').innerHTML=[0,1,2].map(s=>{
+      const sh=SEED[s];
+      const chips=sh.docs.map(d=>{
+        const hit=returned&&returned[s]&&returned[s].has(d.id);
+        return `<span class="wdoc${hit?' hit':''}">${d.id}·${d.s.toFixed(1)}</span>`;
+      }).join(' ');
+      return `<div class="node" id="qshard-${s}" style="flex:1;min-width:170px"><div class="title">🧩 Shard ${s} <span class="badge">Node ${sh.node}</span></div><div class="row" style="gap:6px;margin-top:6px">${chips}</div></div>`;
+    }).join('');
+  }
+  function renderMerge(cands,size){
+    if(!cands||!cands.length){$('qmerge').innerHTML='run a search…';return;}
+    $('qmerge').innerHTML=cands.map((c,i)=>{
+      const win=i<size, w=Math.round((c.s/MAXS)*60)+'px';
+      return `<div class="wrow ${win?'win':'cut'}"><span class="id">${c.id}</span><span class="scorebar" style="width:${w}"></span><span class="sc">${c.s.toFixed(1)}</span>${win?'<span style="color:var(--ok)">✓ top-'+size+'</span>':'<span class="muted">dropped</span>'}</div>`;
+    }).join('');
+  }
+  function renderResults(winners,fetched){
+    if(!winners||!winners.length){$('qresults').innerHTML='—';return;}
+    $('qresults').innerHTML=winners.map((c,i)=>`<div class="wrow win"><span class="id">#${i+1} ${c.id}</span><span class="sc">${c.s.toFixed(1)}</span>${fetched?`<span class="muted">{ "name": "Product ${c.id}" }</span>`:'<span class="muted">fetching…</span>'}</div>`).join('');
+  }
+
+  async function run(){
+    if(qbusy)return; qbusy=true;
+    const size=Math.max(1,Math.min(9,parseInt($('qSize').value)||3));
+    const q=($('qText').value||'').trim()||'(match_all)';
+    step(1);
+    log('cmd',`> POST /products/_search {"q":"${q}","size":${size}}`);
+    renderShards(null); renderMerge(null); renderResults(null);
+    explain(`① <b>Coordinator</b> receives the search and scatters it to <b>one copy of each of the 3 shards</b> (primary or replica).`);
+    await sleep(300);
+
+    step(2);
+    const returned={}, cand=[];
+    for(const s of [0,1,2]){ await fly('#qcoord','#qshard-'+s,'query','read'); }
+    for(const s of [0,1,2]){
+      const top=SEED[s].docs.slice().sort((a,b)=>b.s-a.s).slice(0,size);
+      returned[s]=new Set(top.map(d=>d.id));
+      top.forEach(d=>cand.push({id:d.id,s:d.s,shard:s}));
+      log('info',`shard ${s}: local top-${size} → [ ${top.map(d=>d.id+'('+d.s.toFixed(1)+')').join(', ')} ]  (ids+scores only)`);
+    }
+    renderShards(returned);
+    for(const s of [0,1,2]){ await fly('#qshard-'+s,'#qcoord','top'+size,'read'); }
+    explain(`② <b>Query phase</b>: each shard ranked locally and returned only its top-${size} <code>{_id,_score}</code> — <b>no document bodies</b>. The coordinator now holds ${cand.length} candidates.`);
+    await sleep(250);
+
+    step(3);
+    cand.sort((a,b)=>b.s-a.s);
+    renderMerge(cand,size);
+    const winners=cand.slice(0,size);
+    log('ok',`merge: sorted ${cand.length} candidates → global top-${size}: [ ${winners.map(w=>w.id).join(', ')} ]`);
+    explain(`③ <b>Merge</b>: the coordinator sorted all ${cand.length} returned hits by <code>_score</code> and kept the global <b>top-${size}</b>; the other ${cand.length-winners.length} are dropped.`);
+    await sleep(400);
+
+    step(4);
+    renderResults(winners,false);
+    for(const w of winners){ await fly('#qcoord','#qshard-'+w.shard,'GET '+w.id,'repl'); }
+    log('info',`fetch phase: GET _source for [ ${winners.map(w=>w.id).join(', ')} ] from their shards`);
+    renderResults(winners,true);
+    stepsDone(5);
+    log('ok',`returned ${winners.length} hit(s) with _source`);
+    explain(`④ <b>Fetch phase</b> + <b>⑤ return</b>: the coordinator pulled <code>_source</code> for only the ${winners.length} winner(s) — not all candidates — assembled them and returned. That two-phase split is why <code>from+size</code> deep paging hurts: the query phase must carry <code>from+size</code> hits <i>per shard</i>.`);
+    qbusy=false;
+  }
+  function reset(){
+    qbusy=false;
+    $('qlog').innerHTML='';
+    renderShards(null); renderMerge(null); renderResults(null);
+    document.querySelectorAll('#qsteps li').forEach(li=>li.classList.remove('done','current'));
+    explain('Hit <b>Search</b> to watch the query phase (gather IDs+scores), the merge, then the fetch phase (pull _source for the winners). Change <b>size</b> to move the cut.');
+    log('info','3 shards seeded with scored docs · coordinator ready');
+  }
+  $('qRunBtn').onclick=run;
+  $('qResetBtn').onclick=reset;
+  reset();
+})();
+</script>
+
+<script>
+/* ===== Delete simulator — self-contained (IIFE) ===== */
+(function(){
+  let segs, delCount, segCounter, dbusy=false;
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  const $=id=>document.getElementById(id);
+  function log(c,m){const e=$('dlog');e.innerHTML+=`<div class="l"><span class="t">${new Date().toLocaleTimeString()}</span> <span class="${c}">${m}</span></div>`;e.scrollTop=e.scrollHeight;}
+  function explain(h){$('dexplain').innerHTML=h;}
+  function step(n){document.querySelectorAll('#dsteps li').forEach(li=>{const s=+li.dataset.step;li.classList.toggle('done',s<n);li.classList.toggle('current',s===n);});}
+
+  function liveIds(){ const out=[]; segs.forEach(sg=>sg.docs.forEach(d=>{if(!d.del)out.push(d.id);})); return out; }
+  function render(){
+    $('dsegs').innerHTML=segs.map(sg=>{
+      const live=sg.docs.filter(d=>!d.del).length;
+      const chips=sg.docs.map(d=>`<span class="wdoc${d.del?' del':''}">${d.id}${d.del?' ✗':''}</span>`).join(' ');
+      return `<div class="node" style="flex:1;min-width:150px"><div class="title">🧱 ${sg.name} <span class="badge">${live}/${sg.docs.length} live</span></div><div class="row" style="gap:6px;margin-top:6px">${chips||'<span class="small muted">(empty)</span>'}</div></div>`;
+    }).join('');
+    const total=segs.reduce((a,s)=>a+s.docs.length,0);
+    $('dstats').innerHTML=`on disk: <b>${total}</b> doc(s) in <b>${segs.length}</b> segment(s) · <b style="color:var(--bad)">${delCount}</b> tombstoned (deleted, not purged) · <b style="color:var(--ok)">${total-delCount}</b> searchable`;
+    $('dSel').innerHTML=liveIds().map(id=>`<option>${id}</option>`).join('');
+  }
+
+  function del(){
+    if(dbusy)return;
+    const id=$('dSel').value; if(!id){log('warn','no live docs left to delete');return;}
+    dbusy=true; step(2);
+    let seg=null;
+    for(const sg of segs){ const d=sg.docs.find(x=>x.id===id&&!x.del); if(d){d.del=true;seg=sg;break;} }
+    delCount++;
+    log('cmd',`> DELETE /products/_doc/${id}`);
+    log('ok',`marked ${id} in ${seg.name}.liveDocs (tombstone) — filtered from results, still on disk`);
+    render(); step(3);
+    explain(`🗑️ <b>${id}</b> was flipped off in <b>${seg.name}</b>'s <b>liveDocs</b> bitset — a <b>tombstone</b>. Gone from search immediately, but the bytes stay in the immutable segment until a <b>merge</b>.`);
+    dbusy=false;
+  }
+  async function merge(){
+    if(dbusy)return; dbusy=true; step(4);
+    const live=[]; segs.forEach(sg=>sg.docs.forEach(d=>{if(!d.del)live.push({id:d.id,del:false});}));
+    const purged=delCount;
+    log('cmd','> POST /products/_forcemerge  (or background merge)');
+    await sleep(150);
+    segs=[{name:'seg_'+(segCounter++), docs:live}];
+    delCount=0; render();
+    log('ok',`merge: rewrote ${live.length} live doc(s) into one new segment; purged ${purged} tombstone(s) & reclaimed space; old segments dropped`);
+    explain(`🧹 <b>Merge</b>: Lucene rewrote only the <b>live</b> docs into a fresh segment and deleted the old ones. The ${purged} tombstoned doc(s) are now <b>physically gone</b> and disk is reclaimed. Real merges run continuously in the background; <code>_forcemerge</code> triggers it manually.`);
+    dbusy=false;
+  }
+  function reset(){
+    dbusy=false; segCounter=2; delCount=0;
+    segs=[
+      {name:'seg_0', docs:[{id:'a1',del:false},{id:'a2',del:false},{id:'a3',del:false}]},
+      {name:'seg_1', docs:[{id:'a4',del:false},{id:'a5',del:false},{id:'a6',del:false}]}
+    ];
+    $('dlog').innerHTML='';
+    render();
+    document.querySelectorAll('#dsteps li').forEach(li=>li.classList.remove('done','current'));
+    explain('Pick a doc and <b>Delete</b> it (becomes a tombstone in its segment), then <b>Merge</b> to physically purge deleted docs into a new segment and reclaim space.');
+    log('info','1 shard · 2 immutable segments · 6 live docs');
+  }
+  $('dDelBtn').onclick=del;
+  $('dMergeBtn').onclick=merge;
+  $('dResetBtn').onclick=reset;
+  reset();
+})();
 </script>
 <script src="site.js"></script>
 </body>
