@@ -127,17 +127,22 @@ table.cx td,table.cx th,.ctable td,.ctable th{border:1px solid var(--line);paddi
 table.cx th,.ctable th{color:var(--muted);font-weight:600;background:var(--panel2)}
 table.cx code,.ctable code{color:var(--accent)}
 
-/* collapsible section — <details class="fold" [open]><summary>…</summary> …cards… </details> */
-details.fold{margin:0 0 16px}
+/* collapsible section — ONE cohesive panel; the summary is its header.
+   Structure: <details class="fold" [open]><summary>…</summary><div class="fold-body">…</div></details> */
+details.fold{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin:0 0 16px}
 details.fold>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;
-  padding:12px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;
-  font-weight:600;font-size:15px;color:var(--txt);user-select:none;transition:.15s}
+  padding:14px 18px;border-radius:14px;font-weight:600;font-size:15px;color:var(--txt);user-select:none;transition:background .15s}
 details.fold>summary::-webkit-details-marker{display:none}
 details.fold>summary::before{content:"▸";color:var(--accent);font-size:12px;transition:transform .15s}
+details.fold[open]>summary{border-bottom:1px solid var(--line);border-radius:14px 14px 0 0}
 details.fold[open]>summary::before{transform:rotate(90deg)}
-details.fold>summary:hover{border-color:var(--accent)}
-details.fold[open]>summary{margin-bottom:14px}
+details.fold>summary:hover{background:var(--panel2)}
 details.fold>summary .fold-hint{margin-left:auto;font-weight:400;font-size:12px;color:var(--muted)}
+details.fold>.fold-body{padding:16px 18px 2px}
+/* flatten inner cards so the whole section reads as one block, not nested panels */
+details.fold .card{background:transparent;border:none;border-radius:0;padding:0;margin:0 0 16px}
+details.fold>.fold-body>.card+.card,
+details.fold>.fold-body>.cols{border-top:1px solid var(--line);padding-top:16px}
 
 /* ===== Reference section (infra / sharding / commands / recipes) ===== */
 .ref-cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}

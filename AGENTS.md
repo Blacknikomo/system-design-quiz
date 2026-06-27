@@ -190,6 +190,7 @@ Layout: `.wrap .topbar .back .card .row .cols .fld .pill .small .muted`
 Buttons: `.btn` + `.sec .ghost .warn .bad`
 Tags/notes: `.tag(.accent/.topic/.tricky/.lvl-Mid/.lvl-Senior/.lvl-Staff)` · `.note(.info/.warn/.gotcha)`
 Tables: `table.cx` / `.ctable` (complexity & comparison tables — shared, DS pages) · `.cmd-tbl` (command/API reference — tech pages)
+Collapsible: `<details class="fold" open><summary>… <span class="fold-hint">click to collapse</span></summary><div class="fold-body">…cards…</div></details>` — renders as ONE cohesive panel (summary = header, body inside the same border); inner `.card`s auto-flatten. Use to fold long pages with multiple simulators.
 Stage: `.stage .nodes .node(.primary/.replica/.active/.dead/.flash-ok/.flash-bad)` · `.node .title` · `.badge` · `.kv(.new/.stale)` · `.kv .k` · `.packet(.repl/.read/.bad)`
 Log/feedback/steps: `.log(.l/.t/.ok/.err/.warn/.info/.cmd)` · `.explain` · `.steps li(.done/.current)`
 
