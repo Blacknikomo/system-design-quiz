@@ -6,7 +6,8 @@
 <title>Kafka — Interactive</title>
 <link rel="stylesheet" href="style.css">
 <style>
-  /* tiny layout tweaks only — partition columns + group cursors */
+  /* tiny layout tweaks only — theme tokens come from style.css */
+  /* fold A: produce/consume partition columns + group cursors */
   .plog{display:flex;flex-direction:column;gap:4px;margin-top:6px}
   .cell{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--panel2);
     border:1px solid var(--line);border-radius:6px;padding:4px 8px;display:flex;align-items:center;gap:8px}
@@ -20,6 +21,47 @@
   .cursors .cur{display:flex;align-items:center;gap:6px;font-family:ui-monospace,Menlo,monospace}
   .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
   .dot.an{background:var(--ok)} .dot.bi{background:var(--accent2)}
+
+  /* shared: offset record cells (ISR + offset folds) */
+  .recrow{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;align-items:center}
+  .orec{font-family:ui-monospace,Menlo,monospace;font-size:11px;border-radius:6px;padding:3px 7px;
+    border:1px solid var(--line);background:var(--panel2);min-width:30px;text-align:center;position:relative}
+  .orec .o{display:block;font-size:9px;color:var(--muted)}
+  .orec.committed{border-color:var(--ok);color:var(--ok)}
+  .orec.read{border-color:var(--accent);color:var(--accent)}
+  .orec.uncommitted{border-style:dashed;border-color:var(--warn);color:var(--warn)}
+  .orec.unread{opacity:.5}
+  .orec.lost{border-color:var(--bad);color:var(--bad);text-decoration:line-through;opacity:.55}
+  .orec.redeliver{border-color:var(--bad);color:var(--bad);box-shadow:0 0 0 2px rgba(var(--bad-rgb),.45)}
+  .hwtick{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--muted);align-self:flex-end}
+  .metrics{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .metric{display:inline-flex;flex-direction:column;align-items:center;background:var(--panel2);
+    border:1px solid var(--line);border-radius:8px;padding:6px 12px;min-width:58px}
+  .metric .mv{font-size:18px;font-weight:700;font-family:ui-monospace,Menlo,monospace}
+  .metric .ml{font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+  .metric.hi{border-color:var(--accent)} .metric.hi .mv{color:var(--accent)}
+  .metric.ok{border-color:var(--ok)} .metric.ok .mv{color:var(--ok)}
+  .metric.warn{border-color:var(--warn)} .metric.warn .mv{color:var(--warn)}
+
+  /* topology pills (fold C) */
+  .ppill{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;padding:2px 7px;
+    border-radius:6px;border:1px solid var(--line);margin:2px;color:var(--muted)}
+  .ppill.lead{border-color:var(--accent);color:var(--accent)}
+  .ppill.foll{border-color:var(--accent2);color:var(--accent2)}
+  .ppill.promoted{border-color:var(--ok);color:var(--ok)}
+  .ppill.under{box-shadow:0 0 0 2px rgba(var(--warn-rgb),.55)}
+  .ptopic{font-size:10.5px;color:var(--muted);margin:7px 0 1px;text-transform:uppercase;letter-spacing:.03em}
+
+  /* consumer-group assignment (fold D) */
+  .cgcol{display:flex;flex-direction:column;gap:12px}
+  .cgline{display:flex;gap:8px;flex-wrap:wrap;align-items:stretch}
+  .pbox{font-family:ui-monospace,Menlo,monospace;font-size:12px;padding:8px 10px;border-radius:8px;
+    border:2px solid var(--line);background:var(--panel2);min-width:46px;text-align:center}
+  .cbox{font-size:12px;padding:8px 12px;border-radius:10px;border:2px solid var(--line);background:var(--panel);min-width:104px}
+  .cbox.idle{opacity:.5;border-style:dashed}
+  .cbox .ct{font-weight:700;font-size:12px;margin-bottom:5px;display:flex;align-items:center;gap:6px}
+  .cbox .cp{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--muted)}
+  .swatch{width:10px;height:10px;border-radius:3px;display:inline-block}
 </style>
 </head>
 <body>
@@ -27,8 +69,8 @@
   <div class="topbar">
     <div>
       <div class="back" data-nav></div>
-      <h1>🟧 Kafka — partitions, offsets &amp; consumer groups</h1>
-      <div class="sub">A topic is a partitioned, append-only log. Produce a record, watch it get <i>hashed</i> to a partition, then see two consumer groups read the same retained data <i>independently</i> — and replay it from the start. Records without a key are spread by the producer's default sticky partitioner (it fills a batch on one partition, then moves on) — even spread without the per-record cost of old round-robin.</div>
+      <h1>🟧 Kafka — partitions, replication, consumer groups &amp; offsets</h1>
+      <div class="sub">A topic is a partitioned, append-only log. Five drill-downs: produce &amp; replay across groups, how a partition <b>leader</b> is elected from the <b>ISR</b>, how a real cluster lays out <i>topics × partitions × replicas</i> across brokers, how a <b>consumer group</b> assigns partitions, and how an <b>offset</b> is committed and reused.</div>
     </div>
   </div>
 
@@ -37,14 +79,19 @@
       <span class="tag accent">append-only log</span>
       <span class="tag">partitioned</span>
       <span class="tag">ordered within a partition</span>
+      <span class="tag">replicated (leader + ISR)</span>
       <span class="tag">retained &amp; replayable</span>
       <span class="tag">offset per group</span>
     </div>
-    <p class="small" style="margin-bottom:6px">A topic is split into <b>partitions</b>; each is an ordered, immutable, append-only log. A record's <b>key</b> is hashed (<code>partition = murmur2(key) % numPartitions</code>) so the <b>same key always lands in the same partition</b> — that's how Kafka guarantees per-key ordering. Records are <b>retained</b> (not deleted on read), and each <b>consumer group</b> tracks its own committed offset per partition, so groups read the same data independently.</p>
-    <div class="note gotcha"><b>The gotcha:</b> a low-cardinality or single "hot" key sends most traffic to one partition → a <b>hot partition</b>. Since consumer parallelism within a group is capped at the partition count (<b>one consumer per partition per group</b>), one skewed key bottlenecks the whole group no matter how many consumers you add.</div>
+    <p class="small" style="margin-bottom:6px">A topic is split into <b>partitions</b>; each is an ordered, immutable, append-only log living on a <b>broker</b>. Each partition is <b>replicated</b> (one <b>leader</b> + follower replicas; only the in-sync ones — the <b>ISR</b> — can be promoted). A record's <b>key</b> is hashed (<code>partition = murmur2(key) % numPartitions</code>) so the <b>same key always lands in the same partition</b> — that's per-key ordering. Records are <b>retained</b> (not deleted on read), and each <b>consumer group</b> tracks its own committed <b>offset</b> per partition, so groups read the same data independently.</p>
+    <div class="note gotcha"><b>The gotcha:</b> a low-cardinality or single "hot" key sends most traffic to one partition → a <b>hot partition</b>. Since consumer parallelism within a group is capped at the partition count (<b>one partition is read by at most one consumer per group</b>), one skewed key bottlenecks the whole group no matter how many consumers you add.</div>
   </div>
 
-  <!-- controls -->
+  <!-- ===== FOLD A · produce / consume / replay (original sim) ===== -->
+  <details class="fold" open>
+    <summary>🟧 Interactive · produce → hash to a partition → two groups read &amp; replay <span class="fold-hint">click to collapse</span></summary>
+      <div class="fold-body">
+
   <div class="card">
     <h3>Run a command</h3>
     <div class="row">
@@ -63,7 +110,6 @@
     </div>
   </div>
 
-  <!-- stage -->
   <div class="card">
     <div class="stage" id="stage">
       <div class="nodes" id="nodes"></div>
@@ -84,6 +130,240 @@
       </ol>
     </div>
   </div>
+      </div>
+  </details>
+
+  <!-- ===== FOLD B · leader election + ISR ===== -->
+  <details class="fold" open>
+    <summary>👑 Interactive · partition leader election &amp; the ISR (in-sync replicas) <span class="fold-hint">click to collapse</span></summary>
+      <div class="fold-body">
+
+    <div class="card">
+      <div class="row" style="gap:8px">
+        <span class="tag accent">1 leader + N followers</span>
+        <span class="tag">followers FETCH from leader</span>
+        <span class="tag">ISR = caught-up replicas</span>
+        <span class="tag">High Watermark = committed</span>
+        <span class="tag">elect leader from ISR</span>
+      </div>
+      <p class="small" style="margin-bottom:6px">One partition, <b>RF=3</b>: replica on <b>3 brokers</b>, one is the <b>leader</b> (all reads/writes go through it), the others are <b>followers</b> that <b>pull</b> (fetch) from the leader to replicate. The <b>ISR</b> is the set of replicas fully caught up with the leader (within <code>replica.lag.time.max.ms</code>, default 30 s). A record is <b>committed</b> — visible to consumers — only once <b>every ISR member</b> has it; that boundary is the <b>High Watermark (HW)</b>. <code>acks=all</code> means the producer's ack waits for the full ISR.</p>
+      <div class="note gotcha"><b>The gotcha:</b> on leader failure the controller elects a <b>new leader from the ISR</b> — guaranteed to hold every committed record, so <b>no data loss</b>. If the ISR is empty (all followers lagging) you're stuck: either wait, or enable <b>unclean leader election</b> (promote an out-of-sync replica) which trades <b>durability for availability</b> — committed records past its log are <b>lost</b>. Default is <code>unclean.leader.election.enable=false</code>.</div>
+    </div>
+
+    <div class="card">
+      <h3>Replication controls</h3>
+      <div class="row">
+        <button class="btn" id="isrProdBtn">✍️ PRODUCE (acks=all)</button>
+        <button class="btn sec" id="isrFetchBtn">⬇️ Followers FETCH</button>
+        <button class="btn warn" id="isrLagBtn">🐢 Stall a follower</button>
+        <button class="btn bad" id="isrKillBtn">💥 Kill the leader</button>
+        <button class="btn ghost" id="isrRecBtn">♻️ Recover broker</button>
+        <button class="btn ghost" id="isrResetBtn">↺ Reset</button>
+      </div>
+      <label class="row small" style="margin-top:10px;gap:6px;align-items:center">
+        <input type="checkbox" id="isrUnclean"> <code>unclean.leader.election.enable=true</code> (allow promoting an out-of-sync replica → may lose data)
+      </label>
+    </div>
+
+    <div class="card">
+      <div class="stage" id="isrStage">
+        <div class="nodes" id="isrNodes" style="align-items:stretch"></div>
+        <div style="margin-top:14px">
+          <div class="small muted">partition <code>orders-0</code> · committed records are solid green, un-replicated tail is dashed amber (beyond HW)</div>
+          <div class="recrow" id="isrRecs"></div>
+          <div class="metrics" id="isrMetrics"></div>
+          <div class="small" id="isrSet" style="font-family:ui-monospace,Menlo,monospace;margin-top:10px"></div>
+        </div>
+      </div>
+      <div class="explain" id="isrExplain">Hit <b>PRODUCE</b> a few times (records land on the leader, beyond the HW), then <b>Followers FETCH</b> to replicate and advance the HW. <b>Stall a follower</b> to watch the ISR shrink, then <b>Kill the leader</b> to see a new one elected from the ISR.</div>
+    </div>
+
+    <div class="cols">
+      <div class="card"><h3>Command log</h3><div class="log" id="isrLog"></div></div>
+      <div class="card">
+        <h3>What you're seeing</h3>
+        <ol class="steps small" id="isrSteps">
+          <li data-step="1"><b>Produce</b> appends to the <b>leader's</b> log (LEO advances) — but it's <b>beyond the HW</b>, not yet committed/visible.</li>
+          <li data-step="2"><b>Followers fetch</b> from the leader and catch up; once all <b>ISR</b> members hold a record the <b>HW</b> advances → record is <b>committed</b>.</li>
+          <li data-step="3">A follower that stops fetching falls out of the <b>ISR</b> after the lag timeout — it can no longer be elected.</li>
+          <li data-step="4"><b>Kill the leader</b>: the controller elects a new leader <b>from the ISR</b> — it has every committed record, so no loss.</li>
+          <li data-step="5"><b>Unclean</b> election (ISR empty): an out-of-sync replica is promoted → <b>committed records past its log are lost</b>.</li>
+        </ol>
+      </div>
+    </div>
+      </div>
+  </details>
+
+  <!-- ===== FOLD C · cluster topology (car dealership) ===== -->
+  <details class="fold" open>
+    <summary>🏗️ Interactive · cluster layout — 3 topics × 6 partitions × RF 2 across brokers <span class="fold-hint">click to collapse</span></summary>
+      <div class="fold-body">
+
+    <div class="card">
+      <div class="row" style="gap:8px">
+        <span class="tag accent">AutoMart dealership</span>
+        <span class="tag">3 topics</span>
+        <span class="tag">6 partitions each</span>
+        <span class="tag">RF = 2</span>
+        <span class="tag">3 brokers</span>
+      </div>
+      <p class="small" style="margin-bottom:6px">A car dealer's event backbone — three topics, each <b>6 partitions</b>, <b>RF=2</b>:
+        <span class="ppill lead">inventory</span> (cars added / sold / re-priced, keyed by <code>VIN</code>),
+        <span class="ppill foll">test-drives</span> (bookings, keyed by <code>showroom</code>),
+        <span class="ppill lead">orders</span> (purchases, keyed by <code>order-id</code>).
+        That's <b>3 × 6 × 2 = 36 replicas</b>. <b>Why 3 brokers?</b> RF=2 needs ≥2 brokers; 3 lets the 36 replicas spread evenly (<b>12 per broker</b>, of which <b>6 are leaders</b>) and gives the KRaft controller a real quorum. Each partition's 2 replicas always sit on <b>different</b> brokers, so every broker holds a replica of exactly <b>12 of the 18</b> partitions and is absent from 6.</p>
+      <div class="note gotcha"><b>The RF=2 gotcha (why prod prefers RF=3):</b> with <code>min.insync.replicas=2</code> + <code>acks=all</code>, losing one broker drops the ISR to <b>1</b> on every partition that had a replica there → those writes are <b>rejected</b> (<code>NotEnoughReplicas</code>) until it returns. <b>RF=3</b> keeps 2 in-sync copies through a single broker loss, so writes continue. Kill a broker below to watch 12 partitions go under-replicated.</div>
+    </div>
+
+    <div class="card">
+      <h3>Cluster controls</h3>
+      <div class="row">
+        <label class="fld">broker
+          <select id="topKill"><option value="0">B1</option><option value="1">B2</option><option value="2">B3</option></select>
+        </label>
+        <button class="btn bad" id="topKillBtn">💥 Kill broker</button>
+        <button class="btn ghost" id="topRecBtn">♻️ Recover broker</button>
+        <button class="btn ghost" id="topResetBtn">↺ Reset</button>
+      </div>
+      <div class="small muted" style="margin-top:6px">Pills: <span class="ppill lead">L# leader</span> <span class="ppill foll">F# follower</span> <span class="ppill promoted">L# promoted</span> <span class="ppill lead under">L# under-replicated</span></div>
+    </div>
+
+    <div class="card">
+      <div class="stage" id="topStage">
+        <div class="nodes" id="topNodes" style="align-items:stretch"></div>
+        <div class="metrics" id="topMetrics"></div>
+      </div>
+      <div class="explain" id="topExplain">Each broker box lists the partitions it holds per topic — <b>L#</b> = it leads that partition, <b>F#</b> = it follows. Kill a broker to watch its 6 led partitions fail over to their followers (now promoted leaders) and all 12 of its partitions become under-replicated.</div>
+    </div>
+
+    <div class="cols">
+      <div class="card"><h3>Command log</h3><div class="log" id="topLog"></div></div>
+      <div class="card">
+        <h3>What you're seeing</h3>
+        <ol class="steps small">
+          <li>Each of the <b>18</b> partitions (3 topics × 6) has <b>2 replicas</b> on <b>distinct</b> brokers — leader + 1 follower.</li>
+          <li>Leadership is <b>balanced</b>: 18 leaders ÷ 3 brokers = <b>6 leaders per broker</b>, 12 replicas total each.</li>
+          <li><b>Kill a broker</b> → its 6 led partitions re-elect: the surviving follower becomes <b>leader (promoted)</b>.</li>
+          <li>All <b>12</b> partitions that had a replica there are now <b>under-replicated</b> (RF effectively 1).</li>
+          <li>With <code>min.insync.replicas=2</code> those 12 <b>reject acks=all writes</b> until the broker returns — the RF=2 trade-off.</li>
+        </ol>
+      </div>
+    </div>
+      </div>
+  </details>
+
+  <!-- ===== FOLD D · consumer-group assignment ===== -->
+  <details class="fold" open>
+    <summary>👥 Interactive · consumer-group assignment — one partition ↔ one consumer <span class="fold-hint">click to collapse</span></summary>
+      <div class="fold-body">
+
+    <div class="card">
+      <div class="row" style="gap:8px">
+        <span class="tag accent">1 group</span>
+        <span class="tag">6 partitions</span>
+        <span class="tag">partition → exactly one consumer</span>
+        <span class="tag">a consumer can hold many</span>
+        <span class="tag">extras sit idle</span>
+      </div>
+      <p class="small" style="margin-bottom:6px">Within a single <b>consumer group</b>, the group coordinator hands <b>each partition to exactly one consumer</b>. The reverse is <i>not</i> symmetric: a consumer can own <b>several</b> partitions. So the real rule is <b>"one partition is read by at most one consumer in the group"</b>, not "one consumer reads only one partition". Add/remove consumers and watch the assignor (round-robin here) redistribute on each <b>rebalance</b>.</p>
+      <div class="note gotcha"><b>The gotcha:</b> <b>max useful consumers = partition count</b>. With 6 partitions, a 7th or 8th consumer gets <b>nothing</b> — it sits idle. You can't out-scale the partition count; to add parallelism you must add partitions (and accept the key→partition remap). Different <i>groups</i> each get the full set of partitions independently — that's fan-out, not extra parallelism within one group.</div>
+    </div>
+
+    <div class="card">
+      <h3>Group controls</h3>
+      <div class="row">
+        <button class="btn" id="cgAddBtn">＋ Add consumer</button>
+        <button class="btn sec" id="cgDelBtn">－ Remove consumer</button>
+        <button class="btn ghost" id="cgResetBtn">↺ Reset</button>
+        <span class="pill" id="cgCount" style="align-self:center">group "fulfillment" · 1 consumer</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="stage" id="cgStage">
+        <div class="cgcol">
+          <div>
+            <div class="ptopic">topic <code>orders</code> · 6 partitions</div>
+            <div class="cgline" id="cgParts"></div>
+          </div>
+          <div>
+            <div class="ptopic">consumer group <code>fulfillment</code></div>
+            <div class="cgline" id="cgCons"></div>
+          </div>
+        </div>
+      </div>
+      <div class="explain" id="cgExplain">One consumer in the group owns <b>all 6</b> partitions. Add consumers to split the partitions among them — each partition stays owned by exactly one consumer.</div>
+    </div>
+
+    <div class="cols">
+      <div class="card"><h3>Command log</h3><div class="log" id="cgLog"></div></div>
+      <div class="card">
+        <h3>What you're seeing</h3>
+        <ol class="steps small">
+          <li>A partition is assigned to <b>exactly one</b> consumer in the group (its color = owning consumer).</li>
+          <li>A consumer may own <b>several</b> partitions (6 partitions, 2 consumers → 3 each).</li>
+          <li>Adding/removing a consumer triggers a <b>rebalance</b> — partitions are reassigned.</li>
+          <li>Once consumers ≥ partitions, each owns one and the rest are <b>idle</b>.</li>
+          <li>Parallelism within the group is <b>capped at the partition count</b>.</li>
+        </ol>
+      </div>
+    </div>
+      </div>
+  </details>
+
+  <!-- ===== FOLD E · offset commit + lag ===== -->
+  <details class="fold" open>
+    <summary>📌 Interactive · offsets — position vs committed, lag &amp; resume-after-crash <span class="fold-hint">click to collapse</span></summary>
+      <div class="fold-body">
+
+    <div class="card">
+      <div class="row" style="gap:8px">
+        <span class="tag accent">position ≠ committed</span>
+        <span class="tag">commit → __consumer_offsets</span>
+        <span class="tag">lag = LEO − committed</span>
+        <span class="tag">resume from committed</span>
+        <span class="tag">at-least-once</span>
+      </div>
+      <p class="small" style="margin-bottom:6px">A consumer tracks two cursors. <b>Position</b> is the next offset it will fetch — it moves as you <b>poll</b>. The <b>committed offset</b> is what's durably saved (to the internal <code>__consumer_offsets</code> topic) and only moves when you <b>commit</b>. The committed offset is the <b>resume point</b>: after a crash or rebalance, the consumer restarts from it — not from its in-memory position. <b>Consumer lag = log-end-offset (LEO) − committed</b>, the headline health metric.</p>
+      <div class="note gotcha"><b>The gotcha — delivery semantics live in the commit timing.</b> Commit <i>after</i> processing → a crash before the commit re-delivers those records → <b>at-least-once</b> (duplicates; make handlers idempotent). Commit <i>before</i> processing → a crash mid-process <b>loses</b> them → <b>at-most-once</b>. Auto-commit (<code>enable.auto.commit=true</code>, every <code>auto.commit.interval.ms</code>≈5 s) commits your position on a timer — convenient but it can do either, which is why critical pipelines commit manually (or use transactions for exactly-once).</div>
+    </div>
+
+    <div class="card">
+      <h3>Consumer controls</h3>
+      <div class="row">
+        <button class="btn sec" id="offProdBtn">✍️ PRODUCE record</button>
+        <button class="btn" id="offPollBtn">⬇️ POLL &amp; process</button>
+        <button class="btn ok" id="offCommitBtn" style="background:var(--ok);color:#06210f">✅ COMMIT offset</button>
+        <button class="btn bad" id="offCrashBtn">💥 Crash &amp; restart</button>
+        <button class="btn ghost" id="offResetBtn">↺ Reset</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="stage" id="offStage">
+        <div class="small muted">partition <code>orders-0</code> · <span style="color:var(--ok)">■ committed</span> · <span style="color:var(--accent)">■ polled, not yet committed</span> · <span style="opacity:.6">■ unread</span></div>
+        <div class="recrow" id="offRecs"></div>
+        <div class="metrics" id="offMetrics"></div>
+        <div class="small" id="offStore" style="font-family:ui-monospace,Menlo,monospace;margin-top:12px"></div>
+      </div>
+      <div class="explain" id="offExplain">Produce a few records, then <b>POLL</b> to read them (position advances). Notice <b>committed stays put</b> until you <b>COMMIT</b>. Then <b>Crash &amp; restart</b> to see the consumer resume from the <i>committed</i> offset — re-delivering anything you polled but didn't commit.</div>
+    </div>
+
+    <div class="cols">
+      <div class="card"><h3>Command log</h3><div class="log" id="offLog"></div></div>
+      <div class="card">
+        <h3>What you're seeing</h3>
+        <ol class="steps small">
+          <li><b>POLL</b> advances <b>position</b> (next offset to fetch) and processes the record — but doesn't save anything.</li>
+          <li><b>COMMIT</b> writes <code>position</code> to <code>__consumer_offsets</code>; <b>committed</b> catches up; <b>lag</b> shrinks.</li>
+          <li><b>Lag = LEO − committed</b> — how far behind the group is on this partition.</li>
+          <li><b>Crash</b> → position snaps back to <b>committed</b>; the polled-but-uncommitted range is <b>re-delivered</b>.</li>
+          <li>Re-processing those = <b>at-least-once</b> duplicates → idempotent handlers, or transactions for exactly-once.</li>
+        </ol>
+      </div>
+    </div>
+      </div>
+  </details>
 
   <!-- ===== AT SCALE ===== -->
   <div class="card scale">
@@ -206,7 +486,8 @@ producer.commitTransaction();   <span class="c"># output + consumed offset commi
 </div>
 
 <script>
-// ---------- model ----------
+/* ===== Fold A · produce / consume / replay — self-contained (IIFE) ===== */
+(function(){
 const NP = 3;                                  // number of partitions
 const GROUPS = {an:'analytics', bi:'billing'}; // consumer groups
 let partitions;   // [[{off,key,val,readBy:Set}], ...]
@@ -214,12 +495,7 @@ let offsets;      // {an:[o0,o1,o2], bi:[...]}  committed offset per partition p
 let rr = 0;       // round-robin counter for empty keys
 let busy = false;
 
-// deterministic string hash standing in for murmur2
-function hashKey(s){
-  let h = 0;
-  for(let i=0;i<s.length;i++){ h = (h*31 + s.charCodeAt(i)) | 0; }
-  return Math.abs(h);
-}
+function hashKey(s){ let h=0; for(let i=0;i<s.length;i++){ h=(h*31+s.charCodeAt(i))|0; } return Math.abs(h); }
 
 function reset(){
   busy = false; rr = 0;
@@ -231,7 +507,6 @@ function reset(){
   explain('Click <b>PRODUCE</b> to append a record. With a key it is hashed to one of 3 partitions; leave the key blank for the sticky partitioner (even spread, no per-key order).');
 }
 
-// ---------- rendering ----------
 function cellEl(rec){
   const an = rec.readBy.has('an'), bi = rec.readBy.has('bi');
   const cls = (an?' read-an':'') + (bi?' read-bi':'');
@@ -254,9 +529,7 @@ function partEl(p, i){
       </div>
     </div>`;
 }
-function render(){
-  document.getElementById('nodes').innerHTML = partitions.map(partEl).join('');
-}
+function render(){ document.getElementById('nodes').innerHTML = partitions.map(partEl).join(''); }
 
 function logLine(cls, msg){
   const t = new Date().toLocaleTimeString();
@@ -272,7 +545,6 @@ function flash(id, cls){
   if(e){ e.classList.add(cls); setTimeout(()=>e.classList.remove(cls), 600); }
 }
 
-// fly a packet from one element to another inside the stage
 function fly(fromEl, toEl, label, cls){
   return new Promise(res=>{
     const stage = document.getElementById('stage');
@@ -293,7 +565,6 @@ function fly(fromEl, toEl, label, cls){
   });
 }
 
-// ---------- operations ----------
 async function produce(){
   if(busy) return;
   const keyRaw = document.getElementById('k').value.trim();
@@ -366,13 +637,371 @@ async function replay(){
   busy = false;
 }
 
-// ---------- wire up ----------
 document.getElementById('prodBtn').onclick = produce;
 document.getElementById('consBtn').onclick = consume;
 document.getElementById('replayBtn').onclick = replay;
 document.getElementById('resetBtn').onclick = reset;
 reset();
+})();
 </script>
+
+<script>
+/* ===== Fold B · leader election + ISR — self-contained (IIFE) ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  const MIN_ISR=2;
+  let reps, leaderIdx, lost;
+
+  function ilog(cls,msg){ const e=$('isrLog'); e.innerHTML+=`<div class="l"><span class="t">${new Date().toLocaleTimeString()}</span> <span class="${cls}">${msg}</span></div>`; e.scrollTop=e.scrollHeight; }
+  function iex(html){ $('isrExplain').innerHTML=html; }
+
+  function isr(){ return reps.filter(r=>r.alive&&r.inISR); }
+  function leaderLeo(){ return leaderIdx>=0?reps[leaderIdx].leo:0; }
+  function hw(){ const m=isr(); return m.length?Math.min(...m.map(r=>r.leo)):0; }
+
+  function render(){
+    const H=hw(), L=leaderLeo();
+    $('isrNodes').innerHTML=reps.map((r,i)=>{
+      const isLeader=i===leaderIdx;
+      let cls='node'; if(!r.alive)cls+=' dead'; else if(isLeader)cls+=' primary'; else cls+=' replica';
+      const role=isLeader?'👑 leader':(r.alive?'follower':'✗ down');
+      const isrBadge=(r.alive&&r.inISR)
+        ?'<span class="badge" style="color:var(--ok);border-color:var(--ok)">in ISR</span>'
+        :'<span class="badge" style="color:var(--warn);border-color:var(--warn)">out of ISR</span>';
+      return `<div class="${cls}" id="isr-${i}" style="min-width:150px;flex:1">
+        <div class="title">🖥️ ${r.n} · ${role}</div>
+        <div class="row" style="gap:6px;margin-top:4px">${isrBadge}</div>
+        <div class="kv" style="margin-top:8px"><span class="k">LEO</span><span>${r.leo}</span></div>
+        ${isLeader?`<div class="kv"><span class="k">HW</span><span>${H}</span></div>`:''}
+      </div>`;
+    }).join('');
+    let cells='';
+    for(let o=0;o<L;o++){ const c=o<H?'committed':'uncommitted'; cells+=`<div class="orec ${c}"><span class="o">${o}</span>r${o}</div>`; }
+    lost.forEach(o=>{ cells+=`<div class="orec lost"><span class="o">${o}</span>r${o}</div>`; });
+    if(!L && !lost.length) cells='<span class="small muted">(empty log)</span>';
+    $('isrRecs').innerHTML=cells;
+    const up=reps.filter(r=>r.alive).length;
+    $('isrMetrics').innerHTML=
+      `<div class="metric hi"><span class="mv">${L}</span><span class="ml">leader LEO</span></div>`+
+      `<div class="metric ok"><span class="mv">${H}</span><span class="ml">High Watermark</span></div>`+
+      `<div class="metric ${isr().length<MIN_ISR?'warn':''}"><span class="mv">${isr().length}</span><span class="ml">ISR size</span></div>`+
+      `<div class="metric"><span class="mv">${up}</span><span class="ml">replicas up</span></div>`;
+    const names=isr().map(r=>r.n).join(', ');
+    $('isrSet').innerHTML=`ISR = {${names||'∅'}} &nbsp;·&nbsp; min.insync.replicas = ${MIN_ISR} `+
+      (isr().length<MIN_ISR?'<span style="color:var(--bad)">→ acks=all writes blocked</span>':'');
+  }
+
+  function produce(){
+    if(leaderIdx<0){ ilog('err','no leader — partition offline; recover a broker first'); return; }
+    if(isr().length<MIN_ISR){
+      ilog('err',`acks=all rejected: ISR=${isr().length} < min.insync.replicas=${MIN_ISR} (NotEnoughReplicas)`);
+      iex(`<b>Write rejected.</b> Only <b>${isr().length}</b> replica(s) are in-sync but <code>min.insync.replicas=${MIN_ISR}</code>. With <code>acks=all</code> the leader refuses the write rather than risk under-replicating it. Recover/re-fetch a follower to restore the ISR.`);
+      render(); return;
+    }
+    const o=reps[leaderIdx].leo; reps[leaderIdx].leo++;
+    ilog('cmd',`> PRODUCE → leader ${reps[leaderIdx].n} append offset ${o}`);
+    ilog('info',`appended at offset ${o} on leader (LEO=${reps[leaderIdx].leo}); beyond HW=${hw()} → not yet committed`);
+    render();
+    iex(`Record appended to the <b>leader ${reps[leaderIdx].n}</b> at offset <b>${o}</b> (its LEO is now ${reps[leaderIdx].leo}). It sits <b>beyond the High Watermark</b> (dashed amber) — durable on the leader but <b>not yet committed</b>, so consumers can't see it. Hit <b>Followers FETCH</b>.`);
+  }
+
+  function fetchFollowers(){
+    if(leaderIdx<0){ ilog('err','no leader — nothing to fetch'); return; }
+    const L=reps[leaderIdx].leo; let moved=0;
+    reps.forEach((r,i)=>{ if(i!==leaderIdx && r.alive && r.inISR && r.leo<L){ r.leo=L; moved++; } });
+    ilog('cmd','> followers FETCH from leader');
+    if(moved) ilog('ok',`${moved} follower(s) caught up to LEO=${L}; HW advanced to ${hw()}`);
+    else ilog('warn','followers already caught up (or stalled / out of ISR)');
+    render();
+    iex(`In-sync followers pulled records up to the leader's LEO. The <b>HW advanced to ${hw()}</b> — every ISR replica now holds offsets &lt; ${hw()}, so they're <b>committed</b> (solid green) and visible to consumers. A stalled follower (out of ISR) does <b>not</b> hold up the HW.`);
+  }
+
+  function stall(){
+    const f=reps.find((r,i)=>i!==leaderIdx && r.alive && r.inISR);
+    if(!f){ ilog('warn','no in-sync follower to stall'); return; }
+    f.inISR=false;
+    ilog('cmd',`> ${f.n} stops fetching`);
+    ilog('warn',`${f.n} fell behind > replica.lag.time.max.ms → removed from ISR`);
+    render();
+    const danger = isr().length<MIN_ISR
+      ? ` <b style="color:var(--bad)">ISR is now ${isr().length} &lt; min.insync.replicas=${MIN_ISR}:</b> <code>acks=all</code> writes are blocked, and the HW sits at the lone leader's LEO — any tail records are now "committed" on a <b>single copy</b>. If this leader dies, those records are lost (the danger min.insync=2 normally prevents). That's the setup for an <b>unclean election</b> below.`
+      : ` You're down to <b>${isr().length}</b> in-sync copies; drop below <code>min.insync.replicas=${MIN_ISR}</code> and <code>acks=all</code> writes stop.`;
+    iex(`<b>${f.n}</b> stopped fetching, so after <code>replica.lag.time.max.ms</code> (default 30 s) the leader <b>shrinks the ISR</b> to {${isr().map(r=>r.n).join(', ')}}. The HW is the min LEO over the <i>remaining</i> ISR.${danger}`);
+  }
+
+  function killLeader(){
+    if(leaderIdx<0){ ilog('err','already offline'); return; }
+    const old=reps[leaderIdx]; const Hbefore=hw();
+    old.alive=false; old.inISR=false;
+    ilog('cmd',`> kill leader ${old.n}`);
+    const cands=reps.filter(r=>r!==old && r.alive && r.inISR).sort((a,b)=>b.leo-a.leo);
+    if(cands.length){
+      const nl=cands[0]; leaderIdx=reps.indexOf(nl);
+      const dropped=old.leo-nl.leo;
+      ilog('ok',`controller elected ${nl.n} from ISR (LEO=${nl.leo} ≥ HW=${Hbefore}) — no committed data lost`);
+      if(dropped>0) ilog('info',`${dropped} uncommitted record(s) past the new leader's log are discarded (never acked under acks=all)`);
+      render();
+      iex(`💥 Leader <b>${old.n}</b> died. The controller elected <b>${nl.n}</b> — chosen <b>from the ISR</b>, so it holds every <b>committed</b> record (offset &lt; HW=${Hbefore}). <b>No data loss.</b> Any uncommitted tail the old leader hadn't replicated is discarded — but <code>acks=all</code> never acknowledged those to the producer, so nothing confirmed is lost.`);
+    } else {
+      const alive=reps.filter(r=>r.alive).sort((a,b)=>b.leo-a.leo);
+      if($('isrUnclean').checked && alive.length){
+        const nl=alive[0]; leaderIdx=reps.indexOf(nl);
+        const lossCount=Math.max(0,Hbefore-nl.leo);
+        for(let o=nl.leo;o<Hbefore;o++) lost.push(o);
+        nl.inISR=true;
+        ilog('err',`UNCLEAN election: promoted out-of-sync ${nl.n} (LEO=${nl.leo} < HW=${Hbefore}) — ${lossCount} committed record(s) LOST`);
+        render();
+        iex(`⚠️ The ISR was empty, so with <code>unclean.leader.election.enable=true</code> the controller promoted <b>${nl.n}</b>, which is <b>out of sync</b> (LEO=${nl.leo} &lt; HW=${Hbefore}). The cluster chose <b>availability over durability</b>: <b>${lossCount} committed record(s) are permanently lost</b> (red). This is exactly the trade-off the default <code>false</code> protects you from.`);
+      } else {
+        leaderIdx=-1;
+        ilog('err','no in-sync replica available → partition OFFLINE (unclean election disabled)');
+        render();
+        iex(`💥 The leader died and <b>no ISR replica is available</b>. With <code>unclean.leader.election.enable=false</code> (the safe default) the partition goes <b>OFFLINE</b> — producers and consumers block — rather than promote a stale replica and lose committed data. Tick the unclean checkbox and try again to see the other choice, or <b>recover</b> a broker.`);
+      }
+    }
+  }
+
+  function recover(){
+    const d=reps.find(r=>!r.alive);
+    if(!d){ ilog('warn','all brokers already up'); return; }
+    d.alive=true; d.inISR=true;
+    if(leaderIdx<0){ leaderIdx=reps.indexOf(d); d.leo=Math.max(...reps.map(r=>r.leo)); ilog('ok',`${d.n} recovered and elected leader (partition was offline)`); }
+    else { d.leo=reps[leaderIdx].leo; ilog('ok',`${d.n} recovered, caught up to leader, rejoined ISR`); }
+    render();
+    iex(`<b>${d.n}</b> is back. It re-fetched from the current leader, caught up, and <b>rejoined the ISR</b> → {${isr().map(r=>r.n).join(', ')}}. Durability is restored; <code>acks=all</code> writes flow again.`);
+  }
+
+  function reset(){
+    leaderIdx=0; lost=[];
+    reps=[{n:'B1',leo:0,inISR:true,alive:true},{n:'B2',leo:0,inISR:true,alive:true},{n:'B3',leo:0,inISR:true,alive:true}];
+    $('isrLog').innerHTML=''; $('isrUnclean').checked=false;
+    ilog('info','partition orders-0 created · RF=3 on B1,B2,B3 · leader=B1 · ISR={B1,B2,B3} · min.insync.replicas=2');
+    render();
+    iex('Hit <b>PRODUCE</b> a few times (records land on the leader, beyond the HW), then <b>Followers FETCH</b> to replicate and advance the HW. <b>Stall a follower</b> to shrink the ISR, then <b>Kill the leader</b> to watch a new one elected from the ISR.');
+  }
+
+  $('isrProdBtn').onclick=produce;
+  $('isrFetchBtn').onclick=fetchFollowers;
+  $('isrLagBtn').onclick=stall;
+  $('isrKillBtn').onclick=killLeader;
+  $('isrRecBtn').onclick=recover;
+  $('isrResetBtn').onclick=reset;
+  reset();
+})();
+</script>
+
+<script>
+/* ===== Fold C · cluster topology (car dealership) — self-contained (IIFE) ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  const NB=3, NP=6;
+  const BROKERS=['B1','B2','B3'];
+  const TOPICS=[
+    {name:'inventory',   icon:'🚗', off:0},
+    {name:'test-drives', icon:'🅿️', off:1},
+    {name:'orders',      icon:'🧾', off:2}
+  ];
+  let dead;
+
+  function clog(cls,msg){ const e=$('topLog'); e.innerHTML+=`<div class="l"><span class="t">${new Date().toLocaleTimeString()}</span> <span class="${cls}">${msg}</span></div>`; e.scrollTop=e.scrollHeight; }
+  function cex(html){ $('topExplain').innerHTML=html; }
+
+  function place(t,p){ const leader=(p+t.off)%NB; const follower=(leader+1)%NB; return {leader,follower}; }
+  function cur(t,p){
+    const {leader,follower}=place(t,p);
+    let curLeader=leader, curFollower=follower, under=false, promoted=false;
+    if(dead===leader){ curLeader=follower; curFollower=-1; under=true; promoted=true; }
+    else if(dead===follower){ curFollower=-1; under=true; }
+    return {curLeader,curFollower,under,promoted};
+  }
+
+  function render(){
+    $('topNodes').innerHTML=BROKERS.map((b,bi)=>{
+      const isDead=dead===bi;
+      let inner='';
+      TOPICS.forEach(t=>{
+        const pills=[];
+        for(let p=0;p<NP;p++){
+          if(isDead){
+            const {leader,follower}=place(t,p);
+            if(leader===bi) pills.push(`<span class="ppill lead" style="opacity:.45">L${p}</span>`);
+            if(follower===bi) pills.push(`<span class="ppill foll" style="opacity:.45">F${p}</span>`);
+          } else {
+            const c=cur(t,p);
+            if(c.curLeader===bi){ const pc=c.promoted?'ppill promoted':'ppill lead'; const u=c.under?' under':''; pills.push(`<span class="${pc}${u}">L${p}${c.promoted?'⤴':''}</span>`); }
+            else if(c.curFollower===bi){ const u=c.under?' under':''; pills.push(`<span class="ppill foll${u}">F${p}</span>`); }
+          }
+        }
+        inner+=`<div class="ptopic">${t.icon} ${t.name}</div><div>${pills.join('')||'<span class="small muted">—</span>'}</div>`;
+      });
+      const title=isDead
+        ?`🖥️ ${b} <span class="badge" style="color:var(--bad);border-color:var(--bad)">DOWN</span>`
+        :`🖥️ ${b} <span class="badge">broker</span>`;
+      return `<div class="node${isDead?' dead':''}" style="min-width:210px;flex:1"><div class="title">${title}</div>${inner}</div>`;
+    }).join('');
+    let underCount=0;
+    if(dead>=0) TOPICS.forEach(t=>{ for(let p=0;p<NP;p++){ if(cur(t,p).under) underCount++; } });
+    $('topMetrics').innerHTML=
+      `<div class="metric hi"><span class="mv">${NB}</span><span class="ml">brokers</span></div>`+
+      `<div class="metric"><span class="mv">18</span><span class="ml">partitions</span></div>`+
+      `<div class="metric"><span class="mv">36</span><span class="ml">replicas</span></div>`+
+      `<div class="metric ${underCount?'warn':''}"><span class="mv">${underCount}</span><span class="ml">under-replicated</span></div>`;
+  }
+
+  function kill(){
+    const b=+$('topKill').value;
+    if(dead===b){ clog('warn',`${BROKERS[b]} already down`); return; }
+    if(dead>=0){ clog('warn',`recover ${BROKERS[dead]} first (single-failure demo)`); return; }
+    dead=b;
+    let failover=0, under=0;
+    TOPICS.forEach(t=>{ for(let p=0;p<NP;p++){ const {leader,follower}=place(t,p); if(leader===b)failover++; if(leader===b||follower===b)under++; } });
+    clog('cmd',`> kill broker ${BROKERS[b]}`);
+    clog('err',`${BROKERS[b]} down · ${failover} led partitions re-electing · ${under} partitions now under-replicated`);
+    render();
+    cex(`💥 <b>${BROKERS[b]}</b> is down. Its <b>${failover}</b> leader partitions failed over — each one's follower on a surviving broker was <b>promoted</b> to leader (green ⤴). All <b>${under}</b> partitions that had a replica on ${BROKERS[b]} are now <b>under-replicated</b> (amber ring, RF effectively 1). With <code>min.insync.replicas=2</code> + <code>acks=all</code>, writes to those ${under} are rejected until ${BROKERS[b]} returns. The other ${18-under} partitions are untouched. <b>RF=3</b> would have kept 2 in-sync copies and avoided the write stoppage.`);
+  }
+
+  function recover(){
+    if(dead<0){ clog('warn','all brokers up'); return; }
+    const b=dead; dead=-1;
+    clog('cmd',`> recover broker ${BROKERS[b]}`);
+    clog('ok',`${BROKERS[b]} back · replicas re-sync · preferred leaders restored · all partitions RF=2 again`);
+    render();
+    cex(`<b>${BROKERS[b]}</b> rejoined. Its replicas caught up to the current leaders and rejoined each ISR, so every partition is back to <b>RF=2</b>. A preferred-leader election rebalances leadership to the original layout (6 leaders/broker).`);
+  }
+
+  function reset(){
+    dead=-1; $('topLog').innerHTML=''; $('topKill').value='1';
+    clog('info','AutoMart cluster · 3 brokers · 3 topics × 6 partitions × RF 2 = 36 replicas · 12/broker (6 leaders each)');
+    render();
+    cex('Each broker box lists the partitions it holds per topic — <b>L#</b> = it leads, <b>F#</b> = it follows. Kill a broker to watch failover + under-replication.');
+  }
+
+  $('topKillBtn').onclick=kill;
+  $('topRecBtn').onclick=recover;
+  $('topResetBtn').onclick=reset;
+  reset();
+})();
+</script>
+
+<script>
+/* ===== Fold D · consumer-group assignment — self-contained (IIFE) ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  const NP=6, MAXC=8;
+  const COLORS=['#4f9cf9','#7c5cff','#2ecc71','#ffb84d','#ff5c5c','#16c2c2','#e879f9','#a3e635'];
+  let n;
+
+  function dlog(cls,msg){ const e=$('cgLog'); e.innerHTML+=`<div class="l"><span class="t">${new Date().toLocaleTimeString()}</span> <span class="${cls}">${msg}</span></div>`; e.scrollTop=e.scrollHeight; }
+  function dex(html){ $('cgExplain').innerHTML=html; }
+
+  function assign(){ const owner=[]; for(let p=0;p<NP;p++) owner[p]= n>0 ? p%n : -1; return owner; }
+
+  function render(){
+    const owner=assign();
+    $('cgParts').innerHTML=Array.from({length:NP},(_,p)=>{
+      const o=owner[p]; const col=o>=0?COLORS[o%COLORS.length]:'var(--line)';
+      return `<div class="pbox" style="border-color:${col};color:${col}">P${p}</div>`;
+    }).join('');
+    let boxes='';
+    for(let c=0;c<n;c++){
+      const mine=[]; for(let p=0;p<NP;p++) if(owner[p]===c) mine.push('P'+p);
+      const idle=mine.length===0; const col=COLORS[c%COLORS.length];
+      boxes+=`<div class="cbox${idle?' idle':''}" style="border-color:${idle?'var(--line)':col}">
+        <div class="ct"><span class="swatch" style="background:${idle?'var(--muted)':col}"></span>consumer-${c+1}</div>
+        <div class="cp">${idle?'idle — no partition':mine.join('&nbsp;&nbsp;')}</div></div>`;
+    }
+    $('cgCons').innerHTML=boxes;
+    $('cgCount').textContent=`group "fulfillment" · ${n} consumer${n>1?'s':''}`;
+  }
+
+  function explainFor(){
+    if(n===1) dex('One consumer in the group owns <b>all 6</b> partitions — sequential, no parallelism. Add consumers to split the load.');
+    else if(n<NP){ const per=Math.floor(NP/n), extra=NP%n; dex(`<b>${n} consumers</b> share 6 partitions → ${extra?`${extra} own ${per+1} and ${n-extra} own ${per}`:`${per} each`}. Every partition has <b>exactly one</b> owner, but a consumer owns <b>several</b> — that's the real invariant, not "one consumer = one partition".`); }
+    else if(n===NP) dex('<b>6 consumers, 6 partitions</b> → one partition each. This is <b>maximum parallelism</b> for the group; you can\'t go faster without adding partitions.');
+    else { const idle=n-NP; dex(`<b>${n} consumers but only 6 partitions</b> → ${idle} consumer${idle>1?'s':''} sit <b>idle</b> with nothing assigned. Adding consumers past the partition count buys <b>zero</b> extra throughput.`); }
+  }
+
+  function add(){ if(n>=MAXC){ dlog('warn',`max ${MAXC} consumers in this demo`); return; } n++; dlog('cmd',`> consumer-${n} joins group`); dlog('info',`rebalance: ${n} consumers → partitions reassigned`); render(); explainFor(); }
+  function del(){ if(n<=1){ dlog('warn','need at least 1 consumer'); return; } dlog('cmd',`> consumer-${n} leaves group`); n--; dlog('info',`rebalance: ${n} consumer(s) → partitions reassigned`); render(); explainFor(); }
+  function reset(){ n=1; $('cgLog').innerHTML=''; dlog('info','topic orders · 6 partitions · group "fulfillment" · 1 consumer'); render(); dex('One consumer in the group owns <b>all 6</b> partitions. Add consumers to split them — each partition stays owned by exactly one consumer.'); }
+
+  $('cgAddBtn').onclick=add; $('cgDelBtn').onclick=del; $('cgResetBtn').onclick=reset;
+  reset();
+})();
+</script>
+
+<script>
+/* ===== Fold E · offset commit + lag — self-contained (IIFE) ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  let leo, pos, committed, recs;
+
+  function olog(cls,msg){ const e=$('offLog'); e.innerHTML+=`<div class="l"><span class="t">${new Date().toLocaleTimeString()}</span> <span class="${cls}">${msg}</span></div>`; e.scrollTop=e.scrollHeight; }
+  function oex(html){ $('offExplain').innerHTML=html; }
+
+  function render(){
+    let cells='';
+    for(let o=0;o<leo;o++){
+      let c='unread'; if(o<committed) c='committed'; else if(o<pos) c='read';
+      const rd=recs[o]&&recs[o].redeliver?' redeliver':'';
+      cells+=`<div class="orec ${c}${rd}"><span class="o">${o}</span>r${o}</div>`;
+    }
+    if(!leo) cells='<span class="small muted">(empty — produce a record)</span>';
+    $('offRecs').innerHTML=cells;
+    const lag=leo-committed;
+    $('offMetrics').innerHTML=
+      `<div class="metric"><span class="mv">${leo}</span><span class="ml">LEO (log end)</span></div>`+
+      `<div class="metric hi"><span class="mv">${pos}</span><span class="ml">position</span></div>`+
+      `<div class="metric ok"><span class="mv">${committed}</span><span class="ml">committed</span></div>`+
+      `<div class="metric ${lag?'warn':''}"><span class="mv">${lag}</span><span class="ml">consumer lag</span></div>`;
+    $('offStore').innerHTML=`__consumer_offsets · group=fulfillment · orders-0 → <b style="color:var(--ok)">committed offset = ${committed}</b>`;
+  }
+
+  function produce(){ leo++; recs.push({redeliver:false}); olog('cmd','> PRODUCE → orders-0'); olog('info',`appended at offset ${leo-1} (LEO=${leo})`); render(); oex(`Producer appended offset <b>${leo-1}</b>. The <b>log-end offset (LEO)</b> is now ${leo}; <b>lag = LEO − committed = ${leo-committed}</b>.`); }
+
+  function poll(){
+    if(pos>=leo){ olog('warn','no new records — consumer caught up'); oex('Nothing to poll — position equals the LEO. Produce more records first.'); return; }
+    const o=pos; if(recs[o]) recs[o].redeliver=false; pos++;
+    olog('cmd','> poll()'); olog('ok',`delivered offset ${o} → processed (position=${pos}, committed still ${committed})`);
+    render();
+    oex(`Polled &amp; processed offset <b>${o}</b>. <b>Position</b> advanced to ${pos} (next fetch), but <b>committed is still ${committed}</b> — nothing is saved yet. If the consumer crashed now, it would re-read from ${committed}.`);
+  }
+
+  function commit(){
+    if(committed===pos){ olog('warn',`nothing to commit (committed already ${committed})`); return; }
+    committed=pos; olog('cmd','> commitSync()'); olog('ok',`committed offset ${committed} → __consumer_offsets`);
+    render();
+    oex(`Committed offset <b>${committed}</b> to <code>__consumer_offsets</code> — that's now the <b>resume point</b>. Lag = ${leo-committed}. Committing <i>after</i> processing is the <b>at-least-once</b> pattern.`);
+  }
+
+  function crash(){
+    olog('cmd','> 💥 consumer crash + restart / rebalance');
+    if(pos>committed){
+      for(let o=committed;o<pos;o++) if(recs[o]) recs[o].redeliver=true;
+      const re=pos-committed; const from=committed; pos=committed;
+      olog('warn',`resumed from committed=${committed}; offsets ${from}..${from+re-1} re-delivered (duplicates)`);
+      render();
+      oex(`On restart the consumer reads its committed offset from <code>__consumer_offsets</code> = <b>${committed}</b> and resumes there. The <b>${re}</b> record(s) it had polled but not committed are <b>re-delivered</b> (red) → processed twice = <b>at-least-once</b>. Idempotent handlers (or transactions) prevent duplicate side-effects. Had you committed <i>before</i> processing, those would instead be <b>lost</b> — at-most-once.`);
+    } else {
+      pos=committed; render();
+      olog('info',`resumed from committed=${committed}; no uncommitted work, clean restart`);
+      oex(`Clean restart: position was already at the committed offset (${committed}), so nothing is re-delivered. Resuming exactly where it left off.`);
+    }
+  }
+
+  function reset(){
+    leo=0; pos=0; committed=0; recs=[]; $('offLog').innerHTML='';
+    olog('info','partition orders-0 empty · group fulfillment · position=0 committed=0');
+    render();
+    oex('Produce a few records, then POLL to read them (position advances). Committed stays put until you COMMIT. Then Crash & restart to see resume-from-committed.');
+  }
+
+  $('offProdBtn').onclick=produce; $('offPollBtn').onclick=poll; $('offCommitBtn').onclick=commit; $('offCrashBtn').onclick=crash; $('offResetBtn').onclick=reset;
+  reset();
+})();
+</script>
+
 <script src="site.js"></script>
 </body>
 </html>
