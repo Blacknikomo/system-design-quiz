@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Count-Min Sketch — Interactive</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  #stage{min-height:300px}
+  .grid{display:inline-grid;gap:6px;margin:0 auto}
+  .cellrow{display:contents}
+  .rowlbl{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--muted);
+    display:flex;align-items:center;justify-content:flex-end;padding-right:6px;white-space:nowrap}
+  .collbl{font-family:ui-monospace,Menlo,monospace;font-size:9px;color:var(--muted);
+    display:flex;align-items:center;justify-content:center}
+  .cell{width:42px;height:38px;border:1px solid var(--line);border-radius:6px;display:flex;
+    align-items:center;justify-content:center;font-family:ui-monospace,Menlo,monospace;font-size:15px;
+    background:var(--panel);color:var(--muted);transition:.2s;position:relative}
+  .cell.hot{color:var(--txt);font-weight:700}
+  .cell.touch{box-shadow:0 0 0 3px rgba(var(--warn-rgb),.6);border-color:var(--warn);color:var(--txt)}
+  .cell.read{box-shadow:0 0 0 3px rgba(var(--accent-rgb),.6);border-color:var(--accent);color:var(--txt)}
+  .cell.min{box-shadow:0 0 0 3px rgba(var(--ok-rgb),.7);border-color:var(--ok);color:var(--txt);font-weight:700}
+  .cell .delta{position:absolute;top:-9px;right:-6px;font-size:9px;color:var(--ok);font-weight:700}
+  .metrics{display:flex;gap:18px;flex-wrap:wrap;margin-top:16px;justify-content:center}
+  .metric{text-align:center}
+  .metric .mv{font-size:20px;font-weight:700;color:var(--accent)}
+  .metric .mv.bad{color:var(--bad)}
+  .metric .ml{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .rowvals{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted);margin:3px 0;text-align:center}
+  .rowvals b{color:var(--txt)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🔢 Count-Min Sketch</h1>
+      <div class="sub">A probabilistic <b>frequency table</b>: "how many times have I seen <i>x</i>?" in sublinear memory. It can <b>overestimate</b> a count, but <b>never undercounts</b> — the mirror image of a Bloom filter's "no false negatives".</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">probabilistic frequency</span>
+      <span class="tag">d rows × w counters</span>
+      <span class="tag">overestimate only</span>
+      <span class="tag">O(d) add / query</span>
+    </div>
+    <p class="small" style="margin-bottom:6px">A Count-Min Sketch is a 2-D array of counters with <b>d</b> rows and <b>w</b> columns (all 0), plus <b>d</b> independent hash functions — one per row, each mapping an item to a column in <code>[0, w)</code>. <b>Add(x, c)</b>: for every row <i>i</i>, increment <code>count[i][h<sub>i</sub>(x)] += c</code> — one counter per row. <b>Estimate(x)</b>: read those same d counters and return the <b>minimum</b>. Collisions can only <i>add</i> to a counter (other items hashing to the same cell), so every row is an over-count; the smallest of them is the tightest upper bound — hence "count-<b>min</b>".</p>
+    <div class="note gotcha"><b>The gotcha:</b> CMS <b>only over-counts, never under-counts</b> — flip that in an interview and it's an instant tell (it's the exact mirror of Bloom's "no false negatives"). Error is <b>absolute</b>: <code>est(x) ≤ true(x) + ε·N</code> with probability ≥ <code>1−δ</code>, where N is the total of all counts. So <b>heavy hitters stay accurate but rare items can be swamped</b> by collisions from frequent ones. Pick <b>w = ⌈e/ε⌉</b> (wider ⇒ less error per estimate) and <b>d = ⌈ln(1/δ)⌉</b> (deeper ⇒ lower chance of a bad estimate). You <b>can't enumerate keys</b> (like Bloom) — pair it with a <b>min-heap</b> to track top-K / heavy hitters. <b>Deletes</b> are only safe on a strictly non-negative stream (decrements can violate the never-undercount guarantee → use Count-Mean-Min or a signed variant). Cousins: <b>Bloom filter</b> (membership), <b>HyperLogLog</b> (distinct cardinality).</div>
+    <table class="small" style="border-collapse:collapse;margin-top:10px">
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Add(x, c)</td><td style="padding:2px 0"><code>O(d)</code> — increment one counter per row</td></tr>
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Estimate(x)</td><td style="padding:2px 0"><code>O(d)</code> — read d counters, return the min</td></tr>
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Space</td><td style="padding:2px 0"><code>O(d·w)</code> counters — independent of stream length &amp; distinct-key count</td></tr>
+      <tr><td style="padding:2px 14px 2px 0;color:var(--muted)">Error</td><td style="padding:2px 0"><code>est ≤ true + ε·N</code> w.p. ≥ <code>1−δ</code>, with <code>w=⌈e/ε⌉</code>, <code>d=⌈ln 1/δ⌉</code></td></tr>
+    </table>
+  </div>
+
+  <!-- controls -->
+  <div class="card">
+    <h3>Tune &amp; operate</h3>
+    <div class="row" style="margin-bottom:12px">
+      <label class="fld">d (rows / hashes)
+        <input type="number" id="dIn" value="4" min="1" max="6" style="width:70px">
+      </label>
+      <label class="fld">w (columns)
+        <input type="number" id="wIn" value="8" min="3" max="16" style="width:70px">
+      </label>
+      <button class="btn ghost" id="applyBtn">apply d / w</button>
+    </div>
+    <div class="row">
+      <label class="fld">item<input type="text" id="x" value="apple" size="10"></label>
+      <label class="fld">by<input type="number" id="c" value="1" min="1" max="50" style="width:60px"></label>
+      <button class="btn" id="addBtn">Add(x)</button>
+      <button class="btn sec" id="estBtn">Estimate(x)</button>
+      <span style="width:14px"></span>
+      <button class="btn ghost" id="ocBtn">Demo: force an over-count</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <span class="pill">N (total counts): <b id="nP">0</b></span>
+      <span class="pill">distinct: <b id="distP">0</b></span>
+      <span class="pill">d: <b id="dP">4</b></span>
+      <span class="pill">w: <b id="wP">8</b></span>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="card">
+    <div class="stage" id="stage">
+      <div style="display:flex;justify-content:center"><div class="grid" id="grid"></div></div>
+      <div class="rowvals" id="rowvals"></div>
+      <div class="metrics" id="metrics"></div>
+    </div>
+    <div class="explain" id="explain">Type an item, set a count, and <b>Add</b> it — one counter lights up per row. Then <b>Estimate</b> it: the sketch reads all d counters and returns the <b>min</b>. Add a few more items, then estimate one that was never added to watch a pure <b>over-count</b> appear from hash collisions.</div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Log</h3><div class="log" id="log"></div></div>
+    <div class="card">
+      <h3>What you're seeing</h3>
+      <ol class="steps small">
+        <li><b>Add(x, c)</b>: each row's hash picks one column; that single counter is bumped by c. d rows → d counters touched.</li>
+        <li><b>Estimate(x)</b>: read the same d counters. The <span style="color:var(--ok)">minimum</span> (green) is the answer — the least-inflated row.</li>
+        <li>Every counter is ≥ the true count, because other items may have hashed into the same cell. So the estimate is <b>never too low</b>.</li>
+        <li>The <span style="color:var(--bad)">error</span> = estimate − true count. It comes entirely from collisions; the min picks whichever row got the fewest.</li>
+        <li>Shrink <b>w</b> (more crowding) to see error grow; add rows (<b>d</b>) to lower the odds that <i>every</i> row collided.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---------- model ----------
+let d=4, w=8;
+let M;                 // d x w counters
+let truth;            // Map item -> true count (honesty only, NOT used by estimate)
+let N=0;             // total of all increments (L1 norm)
+let busy=false;
+
+function reset(){
+  d = clamp(parseInt(document.getElementById('dIn').value,10), 1, 6, 4);
+  w = clamp(parseInt(document.getElementById('wIn').value,10), 3, 16, 8);
+  M = Array.from({length:d}, ()=>new Array(w).fill(0));
+  truth = new Map();
+  N = 0;
+  busy=false;
+  document.getElementById('log').innerHTML='';
+  logLine('info', `Sketch ready: d=${d} rows × w=${w} cols (all 0), ${d} independent hashes.`);
+  render();
+  explain('Type an item, set a count, and <b>Add</b> it — one counter lights up per row. Then <b>Estimate</b> it: the sketch reads all d counters and returns the <b>min</b>.');
+}
+function clamp(v,lo,hi,def){ if(isNaN(v)) return def; return Math.max(lo,Math.min(hi,v)); }
+
+// ---------- hashing ----------
+// d independent hashes via two base hashes (Kirsch–Mitzenmacher double hashing), each mod w
+function h1(s){ let h=2166136261; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return (h>>>0); }
+function h2(s){ let h=5381; for(let i=0;i<s.length;i++){ h=((h<<5)+h)+s.charCodeAt(i); } return (h>>>0); }
+function cols(s){
+  const a=h1(s), b=h2(s)|1, out=[];
+  for(let i=0;i<d;i++){ out.push(((a + i*b) >>> 0) % w); }
+  return out;  // out[i] = column hit in row i
+}
+
+// ---------- helpers (contract) ----------
+function logLine(cls, msg){
+  const t = new Date().toLocaleTimeString();
+  const el = document.getElementById('log');
+  el.innerHTML += `<div class="l"><span class="t">${t}</span> <span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function explain(html){ document.getElementById('explain').innerHTML = html; }
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+// ---------- rendering ----------
+// touches: {r,c,cls,delta?}  — cells to highlight this frame
+function render(touches){
+  touches = touches || [];
+  const tmap = {};
+  touches.forEach(t=>{ tmap[t.r+','+t.c] = t; });
+  const g=document.getElementById('grid');
+  g.style.gridTemplateColumns = `auto repeat(${w}, 42px)`;
+  let html = '';
+  // header row of column indices
+  html += `<div class="rowlbl"></div>`;
+  for(let c=0;c<w;c++) html += `<div class="collbl">${c}</div>`;
+  // counter rows
+  for(let r=0;r<d;r++){
+    html += `<div class="rowlbl">h<sub>${r}</sub> →</div>`;
+    for(let c=0;c<w;c++){
+      const v=M[r][c];
+      const t=tmap[r+','+c];
+      const cls = 'cell' + (v>0?' hot':'') + (t?(' '+t.cls):'');
+      const delta = (t&&t.delta)?`<span class="delta">+${t.delta}</span>`:'';
+      html += `<div class="${cls}">${v}${delta}</div>`;
+    }
+  }
+  g.innerHTML = html;
+  document.getElementById('nP').textContent=N;
+  document.getElementById('distP').textContent=truth.size;
+  document.getElementById('dP').textContent=d;
+  document.getElementById('wP').textContent=w;
+}
+
+// ---------- operations ----------
+async function doAdd(){
+  if(busy) return; busy=true;
+  const x=document.getElementById('x').value.trim();
+  const c=clamp(parseInt(document.getElementById('c').value,10),1,50,1);
+  if(!x){ busy=false; return; }
+  const cs=cols(x);
+  logLine('cmd', `> Add("${x}", ${c})`);
+  logLine('info', `hashes → columns [${cs.map((c0,r)=>`h${r}:${c0}`).join(', ')}]`);
+  document.getElementById('rowvals').innerHTML='';
+  for(let r=0;r<d;r++){
+    M[r][cs[r]] += c;
+    render(cs.map((c0,rr)=>({r:rr,c:c0,cls: rr<=r?'touch':''})).filter(t=>t.cls));
+    // show the +c delta on the just-updated cell
+    render([{r, c:cs[r], cls:'touch', delta:c}]
+      .concat(cs.slice(0,r).map((c0,rr)=>({r:rr,c:c0,cls:'touch'}))));
+    await sleep(260);
+  }
+  truth.set(x, (truth.get(x)||0)+c);
+  N += c;
+  render(cs.map((c0,r)=>({r,c:c0,cls:'touch'})));
+  await sleep(450);
+  render();
+  logLine('ok', `Bumped one counter per row by ${c}. N=${N}, true("${x}")=${truth.get(x)}.`);
+  explain(`<b>Add("${x}", ${c})</b>: each of the d=${d} rows hashed "${x}" to one column <b>[${cs.join(', ')}]</b> and added ${c} there. Other items sharing any of those cells will inflate future estimates — but only upward.`);
+  busy=false;
+}
+
+async function doEstimate(){
+  if(busy) return; busy=true;
+  const x=document.getElementById('x').value.trim();
+  if(!x){ busy=false; return; }
+  const cs=cols(x);
+  logLine('cmd', `> Estimate("${x}")`);
+  // read each row's counter
+  const vals=[];
+  for(let r=0;r<d;r++){
+    vals.push(M[r][cs[r]]);
+    render(cs.map((c0,rr)=>({r:rr,c:c0,cls: rr<=r?'read':''})).filter(t=>t.cls));
+    await sleep(260);
+  }
+  const est=Math.min(...vals);
+  const minRow=vals.indexOf(est);
+  const tru=truth.get(x)||0;
+  const err=est-tru;
+  document.getElementById('rowvals').innerHTML =
+    `read: ${vals.map((v,r)=>`row ${r}=<b>${v}</b>`).join('  ·  ')} → min = <b>${est}</b>`;
+  // highlight all read cells, mark the min cell green
+  render(cs.map((c0,r)=>({r,c:c0,cls: r===minRow?'min':'read'})));
+  document.getElementById('metrics').innerHTML=`
+    <div class="metric"><div class="mv">${est}</div><div class="ml">estimate (min)</div></div>
+    <div class="metric"><div class="mv">${tru}</div><div class="ml">true count</div></div>
+    <div class="metric"><div class="mv ${err>0?'bad':''}">${err>0?'+':''}${err}</div><div class="ml">over-count (error)</div></div>`;
+  if(err===0){
+    logLine('ok', `Estimate("${x}") = ${est} — exact (no collision inflated any of its d cells).`);
+    explain(`The min across rows is <b>${est}</b>, and the true count is also <b>${tru}</b>: <b>no error</b> here. At least one of x's d counters was hit only by x, and the min picked it.`);
+  } else {
+    logLine('warn', `Estimate("${x}") = ${est}, but true = ${tru} → OVER-COUNT by ${err}. (Never under-counts.)`);
+    explain(`The min is <b>${est}</b> but the truth is <b>${tru}</b> → an <span style="color:var(--bad)">over-count of ${err}</span>. Every one of x's d counters was also bumped by <i>other</i> items, so even the smallest row is inflated. Widen <b>w</b> or add rows to shrink this — but it will never read <i>below</i> ${tru}.`);
+  }
+  busy=false;
+}
+
+// demo: add several heavy items so cells fill, then estimate an UNADDED probe whose min>0 (pure over-count)
+async function demoOC(){
+  if(busy) return;
+  reset(); await sleep(150); busy=true;
+  logLine('info', `DEMO: add items until an UNADDED probe's min counter is > 0 (a pure over-count).`);
+  const corpus=['apple','banana','cherry','grape','melon','peach','plum','mango','lemon','kiwi','berry','fig'];
+  const probes=['dragonfruit','papaya','apricot','coconut','nectarine','quince','lychee','pomelo','tangerine','currant','guava','olive'];
+  for(const word of corpus){
+    document.getElementById('x').value=word;
+    document.getElementById('c').value=String(2+Math.floor(Math.random()*5));
+    busy=false; await doAdd(); busy=true; await sleep(80);
+    const hit=probes.find(p=>!truth.has(p) && Math.min(...cols(p).map((c0,r)=>M[r][c0]))>0);
+    if(hit){
+      await sleep(300);
+      logLine('warn', `Found it: "${hit}" was never added, yet every one of its d counters is > 0.`);
+      document.getElementById('x').value=hit;
+      document.getElementById('c').value='1';
+      busy=false; await doEstimate();
+      return;
+    }
+    if(N>60) break;
+  }
+  busy=false;
+  logLine('info', `No pure over-count surfaced at d=${d}, w=${w}. Shrink w (more crowding) and retry.`);
+  explain(`At d=${d}, w=${w} the sketch stayed sparse enough that no unadded probe collided on <i>all</i> rows. Shrink <b>w</b> to crowd the counters, then run the demo again to force an over-count.`);
+}
+
+// ---------- wire up ----------
+document.getElementById('applyBtn').onclick=reset;
+document.getElementById('addBtn').onclick=doAdd;
+document.getElementById('estBtn').onclick=doEstimate;
+document.getElementById('ocBtn').onclick=demoOC;
+document.getElementById('resetBtn').onclick=reset;
+reset();
+</script>
+<script src="site.js"></script>
+</body>
+</html>
