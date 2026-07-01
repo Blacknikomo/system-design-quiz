@@ -18,7 +18,7 @@ interactive/
 ├── style.css            # SHARED theme + visual primitives (EVERY page links it, incl. both quizzes)
 ├── site.js              # SHARED chrome: fills each sub-page's <div class="back" data-nav> with the back-nav
 ├── system-design-quiz.html   # the quiz ENGINE (UI + logic); question bank lives in questions.js
-├── questions.js         # window.QUESTIONS = [...] — the 341-question bank (loaded before the quiz engine)
+├── questions.js         # window.QUESTIONS = [...] — the 591-question bank (loaded before the quiz engine)
 ├── walkthroughs.html    # 42 decision-chain ENGINE (Reveal + Quiz-me modes); data lives in walkthroughs-data.js
 ├── walkthroughs-data.js # window.APPS = [...] — the decision-chain data (loaded before the walkthroughs engine)
 ├── cheatsheets.html     # terse FR/NFR/tech-why recall cards per HI design problem
@@ -35,10 +35,10 @@ interactive/
 ├── flink.html
 ├── zookeeper.html
 ├── api-gateway.html
-└── ds-*.html            # 14 data-structure visualizers (arrays, linked-lists,
+└── ds-*.html            # 15 data-structure visualizers (arrays, linked-lists,
                          # stacks, queues, hash-tables, heaps, sorted-sets,
                          # skip-lists, tries, btrees, graphs, union-find,
-                         # lru-lfu, bloom-filters) — same simulator contract (§5)
+                         # lru-lfu, bloom-filters, count-min-sketch) — same simulator contract (§5)
 ```
 
 Related, **outside this repo** (in the parent `FAANG Interviews/` folder):
@@ -299,7 +299,7 @@ Temp files for this go in `_patches/` (git-ignored).
 ## 10. How this service was built (process history)
 
 1. **Research first.** Read HelloInterview *System Design in a Hurry* (Core Concepts, Key Technologies, Patterns) and 12 Question Breakdowns via a logged-in browser; distilled them into `hi-knowledge/` notes — facts before format.
-2. **Quiz** built from the notes: started ~60 Qs, grew to 262, then **341 across ~70 topics** (core concepts, key-tech deep dives, patterns, breakdowns, architecture/decomposition, plus modern-infra topics: gRPC/Protobuf, Vector DBs, LLM Serving, Cell-based Arch, CDC/Outbox, Geospatial). Added seniority levels, stable IDs, per-answer source links, and the "which subsystems are required" decomposition style.
+2. **Quiz** built from the notes: started ~60 Qs, grew to 262, then 341 → 546, now **591 across ~70 topics** (core concepts, key-tech deep dives, patterns, breakdowns, architecture/decomposition, plus modern-infra topics: gRPC/Protobuf, Vector DBs, LLM Serving, Cell-based Arch, CDC/Outbox, Geospatial). Added seniority levels, stable IDs, per-answer source links, and the "which subsystems are required" decomposition style.
 3. **Simulators**: defined a shared `style.css` design system + page contract, built `redis.html` as the reference, then the other 8 via parallel subagents following the contract.
 4. **Quality passes**: rebalanced answer options bank-wide (§4) using the bulk-edit pattern (§8); added the weak-topics export (§3.5) to drive future targeted question generation.
 5. **Validation** at every step (§7); **git** with scoped, detailed commits (§9).
