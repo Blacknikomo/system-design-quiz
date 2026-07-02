@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Underperformer Turnaround — STAR story</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .glance{border-color:var(--accent2);background:linear-gradient(180deg,rgba(var(--accent2-rgb),.08),transparent 80px)}
+  .glance .g-k{color:var(--accent2);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:2px}
+  .glance .g-row{margin:10px 0;font-size:13.5px}
+  .star-sec h4{margin:16px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .star-sec .tb{color:var(--muted);font-weight:400;font-size:11px;margin-left:8px;text-transform:none;letter-spacing:0}
+  .star-text{font-size:14px;margin:6px 0}
+  .hook{border-left:3px solid var(--accent2);padding:8px 14px;background:var(--panel2);border-radius:0 8px 8px 0;font-style:italic;font-size:14px}
+  body.recall .star-text{filter:blur(5px);cursor:pointer;transition:filter .2s}
+  body.recall .star-text.show{filter:none}
+  .qa summary b{font-weight:600;font-size:14px}
+  .qa .fold-body p{font-size:13.5px;color:var(--txt)}
+  .pn{display:flex;justify-content:space-between;gap:10px;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>📈 01 — Underperformer Turnaround</h1>
+      <div class="sub">Turned around an underperformer (senior) · <a href="stories.html">story bank</a></div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-bottom:14px"><span class="tag accent">Underperformance</span><span class="tag accent">People growth</span><span class="tag accent">People-Mgmt round</span><span class="tag">score 31/35</span>
+    <button class="btn sec" id="recallBtn" style="margin-left:auto">🙈 Recall mode</button>
+  </div>
+
+  <div class="card glance">
+    <b style="font-size:15px">⚡ Glance card</b>
+    <div class="g-row"><span class="g-k">Plot</span>Reorg handed me a cratering senior (S) on build-tools caching. Diagnosed context-not-skill, gave structure, killed his feature on data — he rebounded to a promotion.</div><div class="g-row"><span class="g-k">Beats</span>skill/will/context check → named it without blame + 4-wk bar + weeklies → filled the PM gap (DoR/DoD, QA+Product) → data: ±5% → killed despite sunk cost</div><div class="g-row"><span class="g-k">Numbers</span>meets → meets+ in ~2 mo · promoted by year-end · dept-wide PM initiative</div><div class="g-row"><span class="g-k">Lesson</span>Is the person failing, or is the work set up to fail? Fix the second first.</div><div class="g-row"><span class="g-k">Watch out</span>Pre-load the “wasn't he just right about the feature?” probe.</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">🎤 Spoken version <span class="tb" style="font-size:12px;color:var(--muted)">S/T ~25s · Action ~60s · Result ~30s · Reflection ~10s</span></h2>
+    <div class="hook star-text">“I inherited a senior engineer whose performance had cratered — and it ended with me killing the very feature he owned, and him getting promoted within the year.”</div>
+    <div class="star-sec"><h4>Situation / Task</h4><p class="star-text">After a reorg I inherited a senior engineer — I'll call him S — who'd been a top performer in our build-tools area. Within a couple of weeks it was clear his performance had dropped: missed commitments, stalled PRs, gone quiet in planning. He owned our build-tools caching feature, which we'd already put several quarters into. So I had two things at stake: a roadmap item with real sunk effort, and a strong senior engineer I was at risk of losing — a demotivated senior either underperforms long-term or leaves.</p><h4>Action</h4><p class="star-text">I didn't assume he'd checked out. I ran a deliberate skill / will / context check. Skill wasn't the issue — his past work and reviews were strong, and I'd worked with him before. In our 1:1s the real picture came out: the work had been handed to him by his previous lead over his own objections, the goals were ambiguous, and nobody had defined what “done” or “good” looked like. So it was a will problem driven by context — plus a genuine skill gap in operating under ambiguity.</p><p class="star-text">I did three things. First, I named it directly but without blame: “your delivery has dropped below what I know you're capable of — I want to understand why and fix it together.” Second, I set an explicit bar and timeline — two concrete deliverables over four weeks, with weekly check-ins. Third, I filled the gap myself: restructured the work, established a definition of ready and done, and pulled in the right stakeholders — QA and Product — so he had a clear frame to operate in.</p><p class="star-text">The hard part came at the end. Once he had structure, the data was clear: the caching feature added complexity and maintenance for a performance gain within ±5%, sometimes negative. So I made the call to discontinue it, despite the sunk cost.</p><h4>Result</h4><p class="star-text">Two outcomes. The person: he re-engaged fast — within a month he'd gone from reactive to proactive, told me the work finally felt predictable and meaningful, moved from “meets” to “meets-plus” in about two months, and by year-end was rated above expectations and promoted. The business: killing the feature freed a strong senior for work that actually moved the needle, and I rolled the lesson out as a department-wide project-management initiative so we'd catch this pattern earlier.</p><h4>Reflection</h4><p class="star-text">He'd actually flagged that the feature wasn't worth it earlier, and the system overrode him. So now, before any performance conversation, I separate two questions — is the person failing, or is the work set up to fail? More often than not, fixing the second fixes the first.</p></div>
+  </div>
+
+  <h2>Likely follow-ups <span class="small muted">(recall first, then open)</span></h2>
+  <details class="fold qa"><summary><b>How did you know it was will/context, not just a weak engineer?</b></summary><div class="fold-body"><p>His track record. Prior reviews, code and review history, past delivery — all strong. A weak engineer doesn't have that history; a stuck one does. The tell: in 1:1s he could still reason about implementation at a high level — the output had dropped, not the capability.</p></div></details><details class="fold qa"><summary><b>Wasn't he right that the feature was worthless? Why call it underperformance?</b></summary><div class="fold-body"><p>His judgment may well have been right — and I rewarded it. The underperformance was the behavior: going silent, missing commitments, not escalating the concern constructively. A senior who thinks the work is wrong should make that case with data and drive to a decision — not disengage. I rewarded the judgment and addressed the behavior.</p></div></details><details class="fold qa"><summary><b>What was your bar, and what if he'd missed it?</b></summary><div class="fold-body"><p>Two bars. Project: reach a clear go/kill decision backed by data — if he couldn't get there even with structure, I'd have brought in a more senior engineer to co-investigate. Person: re-engagement, measured by proactivity and commitments — if he'd stayed demotivated, I'd have moved him to a team with stronger product/project management and been honest that it was the better fit.</p></div></details><details class="fold qa"><summary><b>What would you do differently?</b></summary><div class="fold-body"><p>Catch his earlier signals sooner — he flagged the feature's weak value before it reached me, and it got lost across reporting layers. That's part of why I set up the department-wide PM initiative: to surface those signals earlier.</p></div></details>
+
+  <div class="note info"><b>Delivery notes:</b><ul style="margin:6px 0 0;padding-left:18px"><li>Land the beats: diagnosis (skill/will/context) → explicit bar + support → the decisive kill → person turned around and promoted → systemic fix.</li><li>Say “I”, not “we”, on the decisions: the kill call, the restructure, the department initiative.</li><li>Numbers to have ready: ±5%, meets → meets-plus in ~2 months, promoted by year-end.</li></ul></div>
+
+  <div class="pn"><span></span><a class="btn ghost" href="story-02.html">🚪 Managed Someone Out →</a></div>
+</div>
+<script src="site.js"></script>
+<script>
+(function(){
+  var btn=document.getElementById('recallBtn');
+  btn.addEventListener('click',function(){
+    document.body.classList.toggle('recall');
+    btn.textContent=document.body.classList.contains('recall')?'👀 Show text':'🙈 Recall mode';
+    document.querySelectorAll('.star-text.show').forEach(function(el){el.classList.remove('show')});
+  });
+  document.addEventListener('click',function(e){
+    if(document.body.classList.contains('recall')&&e.target.classList.contains('star-text'))
+      e.target.classList.toggle('show');
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Delivered Under Ambiguity — STAR story</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .glance{border-color:var(--accent2);background:linear-gradient(180deg,rgba(var(--accent2-rgb),.08),transparent 80px)}
+  .glance .g-k{color:var(--accent2);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:2px}
+  .glance .g-row{margin:10px 0;font-size:13.5px}
+  .star-sec h4{margin:16px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .star-sec .tb{color:var(--muted);font-weight:400;font-size:11px;margin-left:8px;text-transform:none;letter-spacing:0}
+  .star-text{font-size:14px;margin:6px 0}
+  .hook{border-left:3px solid var(--accent2);padding:8px 14px;background:var(--panel2);border-radius:0 8px 8px 0;font-style:italic;font-size:14px}
+  body.recall .star-text{filter:blur(5px);cursor:pointer;transition:filter .2s}
+  body.recall .star-text.show{filter:none}
+  .qa summary b{font-weight:600;font-size:14px}
+  .qa .fold-body p{font-size:13.5px;color:var(--txt)}
+  .pn{display:flex;justify-content:space-between;gap:10px;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🌫️ 08 — Delivered Under Ambiguity</h1>
+      <div class="sub">Delivered under ambiguity / a hard deadline · <a href="stories.html">story bank</a></div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-bottom:14px"><span class="tag accent">Ambiguity flagship</span><span class="tag accent">Ownership</span><span class="tag accent">GTL round</span><span class="tag">score 28/35</span>
+    <button class="btn sec" id="recallBtn" style="margin-left:auto">🙈 Recall mode</button>
+  </div>
+
+  <div class="card glance">
+    <b style="font-size:15px">⚡ Glance card</b>
+    <div class="g-row"><span class="g-k">Plot</span>Stuck PoC — PdM + SWE a month deep in research, zero output, GitHub window closing. Diagnosed coordination-not-people (Hanlon's razor), ultra-short planning instead of a perfect design; frontend gap → JetBrains' first-ever outsourcing + I taught frontend myself. Demo in 2 weeks.</div><div class="g-row"><span class="g-k">Beats</span>interviewed the manager (what does “not working” mean?) → interviewed both people → root: no syncs, no roadmap, diverged visions → got mediator authority → stakeholders → components → min-effort/max-impact roadmap + groomings → frontend gap surfaced → outsourcing (legal week) + my frontend intro so nothing blocked</div><div class="g-row"><span class="g-k">Numbers</span>demo in 2 wks, cadence held · grew into a standalone team · blaming → collaboration, underperforming → meet+</div><div class="g-row"><span class="g-k">Lesson</span>Friction between people is usually a coordination symptom, not incompatibility (Hanlon's razor).</div><div class="g-row"><span class="g-k">Watch out</span>Name the scale in numbers; don't drift into the 09 backstory.</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">🎤 Spoken version <span class="tb" style="font-size:12px;color:var(--muted)">S/T ~25s · Action ~75s · Result ~25s · Reflection ~10s</span></h2>
+    <div class="hook star-text">“I was asked to rescue a PoC on a market completely new to us — a month in, all research, zero output, and a competitor had just announced a similar product. Two weeks after I stepped in, the team shipped its first demo.”</div>
+    <div class="star-sec"><h4>Situation / Task</h4><p class="star-text">In summer 2025 JetBrains was under market pressure and looking to diversify; agent orchestration looked promising, and entering it meant shipping a few PoCs. My manager staffed a two-pizza team — one senior product manager, one senior engineer, both experienced at launching products — with an extremely vague scope: “build a PoC in this new market.” A month later there was no progress: the team had gone deep into research instead of building. And the window was closing — GitHub had announced a similar product weeks earlier. My manager asked me to get the work organized and take the PoC to release.</p><h4>Action</h4><p class="star-text">First I removed the ambiguity in the assignment itself: I interviewed my manager — what does “the team isn't working” actually mean, what was the original intent? Then I talked to the two people. They were demotivated, and the friction had reached the point where each saw the problem in the other. Experience — and Hanlon's razor — told me the root is usually coordination, not personality. So I reconstructed how they'd worked for the month: no regular syncs from day one, product and engineering visions quietly diverging, no roadmap, no milestones. Root cause: misalignment, not people.</p><p class="star-text">I chose the cheapest way to cut the fog — ultra-short planning instead of hunting a perfect universal design. I explained that aiming straight at an ideal product would be slow and fragile; instead we'd design the system quickly and set a roadmap. I got their buy-in — and, importantly, their authority to act as mediator for a while. Then basic project management, done fast: stakeholder list → agreed global goal for the PoC → broke it into small components → combined them so minimal effort gave maximal user impact → risks → roadmap and release milestones → groomings per component.</p><p class="star-text">Mid-course a real constraint surfaced: a serious frontend gap. I didn't stop the work to wait for hiring — I lined up an outsourcing contract (nontrivial: JetBrains had never worked with outsourcing before), and since legal would take a week, I taught the engineers a frontend intro myself — I'd been a UI engineer — so nothing blocked.</p><h4>Result</h4><p class="star-text">We got a tangible roadmap — an anchor for us and for external stakeholders. The first PoC demo shipped two weeks after I stepped in, and we held that cadence. The company invested: that pair grew into a full standalone team, at which point I stepped away. And the human turn: from blaming each other to collaborating, from underperforming to meets-plus.</p><h4>Reflection</h4><p class="star-text">Hanlon's razor in practice: friction between people is usually a symptom of poor coordination, not incompatibility. Nontrivial resourcing is sometimes the unblock — first outsourcing at JetBrains. And project-management basics matter even for a two-person team. What I'd change: build the channel with my manager earlier — if the team had been set up with a conversation with me and the stakeholders, we wouldn't have lost the month. That link is bidirectional; part of it was mine to build.</p></div>
+  </div>
+
+  <h2>Likely follow-ups <span class="small muted">(recall first, then open)</span></h2>
+  <details class="fold qa"><summary><b>How did you decide where to start with so little clarity?</b></summary><div class="fold-body"><p>I didn't try to answer “what to build” first. I removed the uncertainty in the assignment itself — interviewed my manager and both engineers to find the real blocker. Once it was clearly misalignment, the cheapest first step was ultra-short planning: break the goal into components and let fast feedback replace guessing the perfect design.</p></div></details><details class="fold qa"><summary><b>What did you do when things changed mid-project?</b></summary><div class="fold-body"><p>The big change wasn't requirements — it was a surfaced constraint: the frontend gap. I didn't pause for hiring; I ran the outsourcing contract in parallel (a week of legal) and taught the team a frontend intro myself, so we adapted without losing pace.</p></div></details><details class="fold qa"><summary><b>What if your assumption was wrong?</b></summary><div class="fold-body"><p>My key assumption was coordination-not-people. If it had actually been an interpersonal conflict, ultra-planning wouldn't have helped — the plan B was changing the composition, likely one of the two, and restarting with rules agreed up front. But the signals — both could reasonably discuss implementation details — said process.</p></div></details><details class="fold qa"><summary><b>What would you do differently?</b></summary><div class="fold-body"><p>Build the channel with my manager before the team was formed and make the value of transparent planning explicit — that would have saved the lost month. The responsibility for that channel wasn't only his.</p></div></details><details class="fold qa"><summary><b>How did you reduce ambiguity for the team specifically?</b></summary><div class="fold-body"><p>Gave them a concrete “where we're going”: an agreed global goal, broken into components with owners, milestones and a roadmap, prioritized by minimum effort → maximum impact. Out of the fog of “make a PoC” came a list of concrete next steps.</p></div></details>
+
+  <div class="note info"><b>Delivery notes:</b><ul style="margin:6px 0 0;padding-left:18px"><li>Flexes to influence-without-authority: no formal power over either person — authority was granted, then earned.</li><li>Numbers: 1 month lost before me · demo 2 weeks after · cadence held · grew into a standalone team.</li></ul></div>
+
+  <div class="pn"><a class="btn ghost" href="story-07.html">← ✂️ Tough Prioritization Call</a><a class="btn ghost" href="story-09.html">💥 The Project That Failed →</a></div>
+</div>
+<script src="site.js"></script>
+<script>
+(function(){
+  var btn=document.getElementById('recallBtn');
+  btn.addEventListener('click',function(){
+    document.body.classList.toggle('recall');
+    btn.textContent=document.body.classList.contains('recall')?'👀 Show text':'🙈 Recall mode';
+    document.querySelectorAll('.star-text.show').forEach(function(el){el.classList.remove('show')});
+  });
+  document.addEventListener('click',function(e){
+    if(document.body.classList.contains('recall')&&e.target.classList.contains('star-text'))
+      e.target.classList.toggle('show');
+  });
+})();
+</script>
+</body>
+</html>

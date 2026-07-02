@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hiring Win &amp; Miss — STAR story</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .glance{border-color:var(--accent2);background:linear-gradient(180deg,rgba(var(--accent2-rgb),.08),transparent 80px)}
+  .glance .g-k{color:var(--accent2);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:2px}
+  .glance .g-row{margin:10px 0;font-size:13.5px}
+  .star-sec h4{margin:16px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .star-sec .tb{color:var(--muted);font-weight:400;font-size:11px;margin-left:8px;text-transform:none;letter-spacing:0}
+  .star-text{font-size:14px;margin:6px 0}
+  .hook{border-left:3px solid var(--accent2);padding:8px 14px;background:var(--panel2);border-radius:0 8px 8px 0;font-style:italic;font-size:14px}
+  body.recall .star-text{filter:blur(5px);cursor:pointer;transition:filter .2s}
+  body.recall .star-text.show{filter:none}
+  .qa summary b{font-weight:600;font-size:14px}
+  .qa .fold-body p{font-size:13.5px;color:var(--txt)}
+  .pn{display:flex;justify-content:space-between;gap:10px;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🎯 10 — Hiring Win &amp; Miss</h1>
+      <div class="sub">Hiring win + hiring miss · <a href="stories.html">story bank</a></div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-bottom:14px"><span class="tag accent">Hiring</span><span class="tag accent">Growth</span><span class="tag accent">PM / GTL round</span><span class="tag">score 29/35</span>
+    <button class="btn sec" id="recallBtn" style="margin-left:auto">🙈 Recall mode</button>
+  </div>
+
+  <div class="card glance">
+    <b style="font-size:15px">⚡ Glance card</b>
+    <div class="g-row"><span class="g-k">Plot</span>Two technically strong hires, same risk class — non-technical fit — different rigor. Win: named the Staff candidate's soft-skills risk, extra round, explicit feedback contract → one of my best hires. Miss: accepted a verbal “it'll be fine” on the ambiguity risk → cost the team → honest exit with a soft landing.</div><div class="g-row"><span class="g-k">Beats</span>bar: fresh outside-highload view + polite-but-persistent change-driving; no-hire = non-growing mindset → win: extra round, showed him his own interview moments, tested coachability, contract → miss: promise instead of evidence → feedback → improvement not durable as the reorg raised the bar → decision + reference + internal landing</div><div class="g-row"><span class="g-k">Numbers</span>win: found TLS eating ~80% of REST time, fixed → spawned the Performance direction · miss: up to 1 FTE of senior time on onboarding drag</div><div class="g-row"><span class="g-k">Lesson</span>De-risk non-technical risk in a strong candidate with evidence or an explicit plan — never with promises.</div><div class="g-row"><span class="g-k">Watch out</span>Lead the half that was asked; the other is follow-up material.</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">🎤 Spoken version <span class="tb" style="font-size:12px;color:var(--muted)">S/T ~25s · Action ~80s · Result ~30s · Reflection ~10s</span></h2>
+    <div class="hook star-text">“Two hires, both technically excellent — one became one of my best hires ever, the other cost my team the equivalent of a senior engineer. The difference wasn't the technical signal; it was how rigorously I de-risked the non-technical one.”</div>
+    <div class="star-sec"><h4>Situation / Task</h4><p class="star-text">Two roles where I was the hiring manager. First: TeamCity had systemic performance problems — every engineer was strong individually, but almost nobody looked at performance systemically, with fresh eyes. I made the case to my manager to hire a high-level engineer who would eventually lead that direction. Second, in parallel: a mid-level IC for the Build Tools Integrations team. My bar for both: high-load experience outside TeamCity — a fresh view — and the ability to drive change politely but persistently, because we'd be changing the architecture of a 20-year-old product. My hard no-hire: a non-growing mindset — someone who doesn't try to understand another point of view and declares there's only one right way.</p><h4>Action</h4><p class="star-text">The win — D, a Staff-level candidate. Technically he answered better than anyone before him: deep system design, strong coding, fluent across domains — frankly better at engineering than me, which I took as a good sign. But we'd deliberately built some questions around suboptimal “colleague” decisions and system constraints — and there D lit up with engineering excitement and forgot facilitation: interrupting, not hearing people out. A direct risk against my bar. I neither rejected him nor looked away. I requested an extra round where I named the risk explicitly: you'll work with a team that's been building this product for 20 years, many decisions will look suboptimal, and you'll need to challenge them respectfully. I showed him the specific moments from the interview that could read badly — and listened. He acknowledged the tendency and explained he'd switched into “partners, not interviewers” mode. Then I proposed an explicit contract: he accepts ongoing feedback from me on soft skills, and I carefully navigate him through the relationship landscape. Risk named → coachability tested → risk managed.</p><p class="star-text">The miss — M, a mid-level IC. The interview went well; technically strong. Along the way I learned something important: he'd never worked in high-ambiguity teams. We talked about it, discussed how my team works, and “agreed it would be fine.” That was my mistake: the exact same class of risk — non-technical fit — but I accepted a verbal agreement as mitigation instead of testing evidence or building a plan. The strong technical signal made me underweight it.</p><p class="star-text">On the job it showed: M needed heavy management — at times two of my engineers spent up to half their time on his onboarding. I gave feedback; it improved. Then the department transformation raised the seniority bar. I waited to see whether the improvement was durable — it wasn't. So I made the call and had an honest conversation: in the new structure his skills didn't meet expectations. Because the bar had moved unexpectedly for both sides, I didn't just manage him out — I prepared a supporting reference and helped him land in another JetBrains team with less ambiguity.</p><h4>Result</h4><p class="star-text">D delivered from day one on data: met every stakeholder, collected their problems, built a roadmap. Within months he'd instrumented performance metrics — REST, DB queries, agent load — profiled the product and found critical issues: for example, TLS handshakes on DB connections eating up to 80% of REST request time, which he fixed. Together we created the new Performance direction that led to a serious architecture rethink — DB sharding, multi-node, log processing. One of my most productive hires. M: we parted correctly and he landed well; the cost — up to one senior FTE in aggregate on prolonged onboarding and management attention.</p><h4>Reflection</h4><p class="star-text">In both cases the deciding variable wasn't the technical signal — it was non-technical fit in a technically strong candidate. The difference was the rigor of de-risking: with D I named the risk, tested coachability, and managed it with a contract; with M I accepted a verbal “we agreed” as mitigation. Now I test non-technical risk on evidence, not promises — past behavior, scenarios — and if risk remains, an explicit de-risking plan or early onboarding checkpoints with a short feedback loop.</p></div>
+  </div>
+
+  <h2>Likely follow-ups <span class="small muted">(recall first, then open)</span></h2>
+  <details class="fold qa"><summary><b>What's your bar — what's a no-hire for you?</b></summary><div class="fold-body"><p>The hard no-hire is a non-growing mindset: someone who doesn't try to understand another point of view and declares there's only one right solution. For these roles it's critical — you can't change a 20-year-old architecture without hearing the team. Role-specific: high-load experience outside our product, and driving change politely but persistently.</p></div></details><details class="fold qa"><summary><b>What signal did you misread on the miss?</b></summary><div class="fold-body"><p>Not technical — he was fine there. He told me directly he'd never worked in high ambiguity. I didn't miss the signal — I devalued it, accepting a verbal “it'll be fine” as mitigation against a strong technical signal. I weighed it wrong.</p></div></details><details class="fold qa"><summary><b>Why hire the Staff candidate with an explicit red flag?</b></summary><div class="fold-body"><p>Because it was a calculated, de-risked bet, not a hope. Three things: an exceptional technical ceiling; the flag proved coachable — he acknowledged it rather than denying it, the opposite of a non-growing mindset; and I had a concrete management plan — the extra round plus the feedback contract. With the miss, none of that plan existed — only a promise.</p></div></details><details class="fold qa"><summary><b>How do you handle a borderline candidate?</b></summary><div class="fold-body"><p>The Staff hire was borderline — on soft skills. I didn't guess or reflex-reject: I converted the uncertainty into a test (an extra round surfacing the exact moments) and into managed risk (the contract). Borderline means: probe it with a targeted round, or hire with an explicit mitigation plan — never on vibes.</p></div></details><details class="fold qa"><summary><b>Did you act fast enough on the miss?</b></summary><div class="fold-body"><p>Partially no, and that's an honest zone. Feedback came on time and improvement started, but I judged its durability against a bar that the transformation had just raised, and I waited longer than needed. Today I'd set early onboarding milestones with a shorter feedback cycle — the signal would have surfaced sooner.</p></div></details><details class="fold qa"><summary><b>What did you change in your hiring process?</b></summary><div class="fold-body"><p>Three things: non-technical risk — especially ambiguity-handling — is tested as past behavior and scenarios, not “will you cope?”; if risk remains in a strong candidate, an explicit de-risking plan like the contract; and early onboarding milestones with a short feedback loop to catch mismatch in the first months.</p></div></details>
+
+  <div class="note info"><b>Delivery notes:</b><ul style="margin:6px 0 0;padding-left:18px"><li>Lead the half that was asked — win → bar, judgment, de-risking; miss → owning it, process change. The other half is follow-up material.</li><li>Numbers: TLS ~80% of REST time (win's first impact) · up to 1 FTE aggregate cost (miss).</li><li>The letter D here is the same Staff engineer as in story 04 — consistent. Never reuse D for your manager (story 05).</li></ul></div>
+
+  <div class="pn"><a class="btn ghost" href="story-09.html">← 💥 The Project That Failed</a><a class="btn ghost" href="story-11.html">🧭 Set Technical Direction →</a></div>
+</div>
+<script src="site.js"></script>
+<script>
+(function(){
+  var btn=document.getElementById('recallBtn');
+  btn.addEventListener('click',function(){
+    document.body.classList.toggle('recall');
+    btn.textContent=document.body.classList.contains('recall')?'👀 Show text':'🙈 Recall mode';
+    document.querySelectorAll('.star-text.show').forEach(function(el){el.classList.remove('show')});
+  });
+  document.addEventListener('click',function(e){
+    if(document.body.classList.contains('recall')&&e.target.classList.contains('star-text'))
+      e.target.classList.toggle('show');
+  });
+})();
+</script>
+</body>
+</html>

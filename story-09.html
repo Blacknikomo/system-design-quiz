@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Project That Failed — STAR story</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .glance{border-color:var(--accent2);background:linear-gradient(180deg,rgba(var(--accent2-rgb),.08),transparent 80px)}
+  .glance .g-k{color:var(--accent2);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:2px}
+  .glance .g-row{margin:10px 0;font-size:13.5px}
+  .star-sec h4{margin:16px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .star-sec .tb{color:var(--muted);font-weight:400;font-size:11px;margin-left:8px;text-transform:none;letter-spacing:0}
+  .star-text{font-size:14px;margin:6px 0}
+  .hook{border-left:3px solid var(--accent2);padding:8px 14px;background:var(--panel2);border-radius:0 8px 8px 0;font-style:italic;font-size:14px}
+  body.recall .star-text{filter:blur(5px);cursor:pointer;transition:filter .2s}
+  body.recall .star-text.show{filter:none}
+  .qa summary b{font-weight:600;font-size:14px}
+  .qa .fold-body p{font-size:13.5px;color:var(--txt)}
+  .pn{display:flex;justify-content:space-between;gap:10px;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>💥 09 — The Project That Failed</h1>
+      <div class="sub">A project that failed — and what I learned · <a href="stories.html">story bank</a></div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-bottom:14px"><span class="tag accent">Failure</span><span class="tag accent">Growth flagship</span><span class="tag accent">GTL round</span><span class="tag">score 29/35</span>
+    <button class="btn sec" id="recallBtn" style="margin-left:auto">🙈 Recall mode</button>
+  </div>
+
+  <div class="card glance">
+    <b style="font-size:15px">⚡ Glance card</b>
+    <div class="g-row"><span class="g-k">Plot</span>GHA/Jenkins → Kotlin DSL converter died at PoC. Two calls I own: expertise-over-mindset hire against explicit warnings, and a skipped initial phase → team interlock; fed the nonlinear AI bet too long.</div><div class="g-row"><span class="g-k">Beats</span>picked the senior despite my manager's warning + my own read → no facilitation: no vision, no backlog, no milestones → 2 weeklies of blocker ping-pong = pattern, stepped in late → determinism/guardrails insight → effort grew nonlinearly → stopped at PoC</div><div class="g-row"><span class="g-k">Numbers</span>team of 6 · ~8 person-weeks of opaque burn · never reached MVP · next PoC (→08): demo in 2 wks — lesson proven</div><div class="g-row"><span class="g-k">Lesson</span>I read the signals late. Initial phase now non-skippable; nonlinear effort growth = kill-or-pivot trigger.</div><div class="g-row"><span class="g-k">Watch out</span>ONE spine per probe (people → hire+facilitation; results → the bet + late kill). Never a Perseverance answer — its moral is stop faster.</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">🎤 Spoken version <span class="tb" style="font-size:12px;color:var(--muted)">S/T ~25s · Action ~80s · Result ~25s · Reflection ~15s</span></h2>
+    <div class="hook star-text">“I led a project to build a converter migrating existing GitHub Actions and Jenkins pipelines into TeamCity — it stalled at PoC and got shut down. Two of my own calls drove that, and they shared one root: I read the warning signals too late.”</div>
+    <div class="star-sec"><h4>Situation / Task</h4><p class="star-text">We were making a bet on adoption: a converter that turns existing GitHub Actions YAML and Jenkins Groovy pipelines into TeamCity's Kotlin DSL — so the pitch becomes “even with complex CI/CD, you can migrate easily.” The core product hypothesis: only AI could do that conversion. I led a cross-functional team of six — two backend, frontend, QA, a PM — accountable for the full cycle: PoC, MVP, EAP, release.</p><h4>Action</h4><p class="star-text">My first call was team composition, and it cost me. For the key engineering seat I picked a senior with deep system knowledge — even though my manager warned me, and my own instinct agreed, that his mindset was more corporate than startup. This was a team that needed to build fast and kill hypotheses, sometimes throwing work away. I overweighted expertise and underweighted mindset — and brought him in anyway.</p><p class="star-text">The second was an omission. I didn't set up facilitation at the start — honestly, I lacked both the skill and the willingness to get my hands into it. I left the team to agree on milestones themselves, and they didn't: no product vision, no formalized backlog, no user stories. The signal showed up two weekly syncs in a row — blockers from engineering one week, product the next. They weren't resolving dependencies; they were passing the ball at a one-week interval. I stepped in to facilitate — but by then trust had already eroded into a standoff.</p><p class="star-text">There was a technical layer too, with an honest nuance. The AI bet itself was deliberate — testing and killing hypotheses is the job, not a failure. The failure was that code is a deterministic domain and AI hallucinates, so it needed guardrails guaranteeing the output compiles — and every iteration revealed the next step needed nonlinearly more effort. That was an early “stop and rethink” signal. Instead I kept feeding it.</p><h4>Result</h4><p class="star-text">We did deliver a PoC, but the results were judged not good enough, and we stopped there — it never reached MVP. The cost was concrete: about two full-time people over roughly four weeks — call it eight person-weeks — went into opaque activity instead of delivery, and the team had reached a full interlock. Stronger bets emerged in the department around then, and we refocused onto those.</p><h4>Reflection</h4><p class="star-text">Both failures had the same root — I saw the signals, the weekly ping-pong and the nonlinear effort curve, and acted late. So I changed two things. On every new team since, the initial phase is non-skippable: agreed ownership, end state, risks and stakeholders before any code. And on a bet, nonlinear effort growth is now a kill-or-pivot trigger, not a reason for one more iteration. The very next stalled PoC I took over, I opened with exactly that foundation — and the team shipped a demo in two weeks.</p></div>
+  </div>
+
+  <h2>Likely follow-ups <span class="small muted">(recall first, then open)</span></h2>
+  <details class="fold qa"><summary><b>What specifically was your fault?</b></summary><div class="fold-body"><p>Two of my decisions. First, I picked the engineer against my manager's warning and my own read — overweighted expertise, underweighted the mindset mismatch. Second, and more important, I never built the initial phase: no vision, no backlog, no agreed milestones. I handed that to the team instead of facilitating it. The idea and the market aren't the story — I didn't lay the foundation.</p></div></details><details class="fold qa"><summary><b>What did you do the moment you realized it was failing?</b></summary><div class="fold-body"><p>The trigger was two weekly syncs in a row with blockers on both sides — a pattern, not a one-off. I stepped in to facilitate and started with the most basic check: does a product vision and backlog even exist? They didn't. The real problem: I did this too late — the sides were already in interlock.</p></div></details><details class="fold qa"><summary><b>If the technical bet was deliberate, where's the failure?</b></summary><div class="fold-body"><p>Testing the hypothesis wasn't the failure. The failure was reading the signal late: code is deterministic, AI without guardrails can't guarantee compilation, and each next step cost nonlinearly more. That was an indicator to stop and rethink — I added resources instead.</p></div></details><details class="fold qa"><summary><b>What did you change, and did it work next time?</b></summary><div class="fold-body"><p>The initial phase became mandatory: ownership, end state, risks, stakeholders agreed before development. On the next stalled PoC I opened with exactly that — cleared the fog, pulled stakeholders together, broke the goal into components with milestones — and the team shipped a demo in two weeks.</p></div></details><details class="fold qa"><summary><b>Why did you pick that engineer against the warning?</b></summary><div class="fold-body"><p>The product was technically hard — parsing others' DSLs, generating Kotlin DSL — so deep system knowledge lowered technical risk. Real value, weighed wrong: for a team that must kill hypotheses fast, speed and willingness to throw work away matter more than depth of legacy knowledge.</p></div></details>
+
+  <div class="note info"><b>Delivery notes:</b><ul style="margin:6px 0 0;padding-left:18px"><li>Pick the spine to the probe: people/self-awareness → composition + facilitation; delivery/results → the AI bet, nonlinear curve, late kill. Don't tell both at full depth.</li><li>Say “I” on the failures: I picked him, I didn't facilitate, I read the signal late.</li><li>Never drift into “the market wasn't ready” — every cause points back to one of my decisions.</li></ul></div>
+
+  <div class="pn"><a class="btn ghost" href="story-08.html">← 🌫️ Delivered Under Ambiguity</a><a class="btn ghost" href="story-10.html">🎯 Hiring Win &amp; Miss →</a></div>
+</div>
+<script src="site.js"></script>
+<script>
+(function(){
+  var btn=document.getElementById('recallBtn');
+  btn.addEventListener('click',function(){
+    document.body.classList.toggle('recall');
+    btn.textContent=document.body.classList.contains('recall')?'👀 Show text':'🙈 Recall mode';
+    document.querySelectorAll('.star-text.show').forEach(function(el){el.classList.remove('show')});
+  });
+  document.addEventListener('click',function(e){
+    if(document.body.classList.contains('recall')&&e.target.classList.contains('star-text'))
+      e.target.classList.toggle('show');
+  });
+})();
+</script>
+</body>
+</html>

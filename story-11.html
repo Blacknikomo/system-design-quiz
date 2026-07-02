@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Set Technical Direction — STAR story</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .glance{border-color:var(--accent2);background:linear-gradient(180deg,rgba(var(--accent2-rgb),.08),transparent 80px)}
+  .glance .g-k{color:var(--accent2);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:2px}
+  .glance .g-row{margin:10px 0;font-size:13.5px}
+  .star-sec h4{margin:16px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .star-sec .tb{color:var(--muted);font-weight:400;font-size:11px;margin-left:8px;text-transform:none;letter-spacing:0}
+  .star-text{font-size:14px;margin:6px 0}
+  .hook{border-left:3px solid var(--accent2);padding:8px 14px;background:var(--panel2);border-radius:0 8px 8px 0;font-style:italic;font-size:14px}
+  body.recall .star-text{filter:blur(5px);cursor:pointer;transition:filter .2s}
+  body.recall .star-text.show{filter:none}
+  .qa summary b{font-weight:600;font-size:14px}
+  .qa .fold-body p{font-size:13.5px;color:var(--txt)}
+  .pn{display:flex;justify-content:space-between;gap:10px;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🧭 11 — Set Technical Direction</h1>
+      <div class="sub">Set a technical / strategic direction for the team · <a href="stories.html">story bank</a></div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-bottom:14px"><span class="tag accent">Scope champion</span><span class="tag accent">Tech direction</span><span class="tag accent">GTL round</span><span class="tag">score 29/35</span>
+    <button class="btn sec" id="recallBtn" style="margin-left:auto">🙈 Recall mode</button>
+  </div>
+
+  <div class="card glance">
+    <b style="font-size:15px">⚡ Glance card</b>
+    <div class="g-row"><span class="g-k">Plot</span>Perf ceiling (10k jobs) on a 20-yr architecture, “swamp” reputation, no agreed direction. My thesis: horizontal redesign is the only way past the ceiling — earned through incremental rollback-safe wins. Funded via business-risk framing; the team authored the Epics themselves.</div><div class="g-row"><span class="g-k">Beats</span>refused the optimize-vs-redesign binary → 2-day personal deep dive → thesis: redesign = ceiling, earn it incrementally → framed as competitive/revenue risk → unlocked multi-quarter investment → criteria framework made it decidable → swamp → high-risk/high-reward reframe → Oct-2025 gathering: team converts direction into scored Epics</div><div class="g-row"><span class="g-k">Numbers</span>10k-job ceiling · P99 6.5s → 1s (TLS fix) · multi-quarter roadmap still running</div><div class="g-row"><span class="g-k">Lesson</span>Translate the bet into the funder's language before walking in — architecture doesn't fund itself.</div><div class="g-row"><span class="g-k">Watch out</span>Never with 04 in one loop — the two-engineer conflict is one background sentence here.</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">🎤 Spoken version <span class="tb" style="font-size:12px;color:var(--muted)">S/T ~30s · Action ~75s · Result ~25s · Reflection ~10s</span></h2>
+    <div class="hook star-text">“TeamCity was hitting a hard performance ceiling on a 20-year-old architecture, and “performance” was an internal swamp nobody wanted to own. I set the direction — a horizontal-scale redesign earned through safe incremental wins — tied it to a real business risk, and turned a track people avoided into the roadmap we still run today.”</div>
+    <div class="star-sec"><h4>Situation / Task</h4><p class="star-text">TeamCity is a 20-year-old CI product, built to scale vertically — one instance handled around 10,000 simultaneous jobs. Customers wanted well beyond that, and AI-generated code was driving load up fast — a ceiling on a core product promise. Two problems made it hard. First, no agreed direction: incremental optimization and a full horizontal redesign were both on the table and nobody would commit. Second, performance had a terrible internal reputation — a bottomless swamp of micro-work nobody got credit for, with a default belief that the existing architecture was “good enough.” My job: set a credible technical direction and get both the team and leadership to invest — without gambling the stability thousands of customers rely on.</p><h4>Action</h4><p class="star-text">I refused to let it stay a binary. I spent two days going deep into both architectural proposals myself, because I wanted to set direction on the technical merits, not from the org chart. The thesis I landed on: the only way to truly clear the ceiling is a horizontal-scale redesign — multinode, DB sharding, caching — but on a product this many customers depend on, we earn the right to that redesign through incremental, rollback-safe wins first. Long-term bet, de-risked path.</p><p class="star-text">Then three things to make it real. I tied it to business impact, not engineering taste — the job ceiling plus AI-driven load growth was a competitive and revenue risk, and that framing is what unlocked multi-quarter investment with PMs and leadership. I made the direction decidable instead of opinion-driven, with a shared scoring framework — impact/effort, time, rollback safety, complexity — so every bet was judged the same way. And to win the skeptics, I reframed the track from “swamp” to high-risk, high-reward modern systems work, gave it real ownership, and ran a week-long offline gathering where the team itself turned the direction into scored Epics — so they owned the roadmap, not me.</p><h4>Result</h4><p class="star-text">That framework and those Epics became the performance roadmap we still run today — a multi-quarter direction, not a one-off. The track flipped reputation: from something people avoided to a high-reward area that attracts strong engineers. And it's already paying off concretely — early work caught a TLS issue on the server-to-database layer and cut P99 latency from 6.5 seconds to 1 second.</p><h4>Reflection</h4><p class="star-text">I almost lost the room by leading with the engineering case. A multi-quarter architectural bet gets funded on a business frame — the ceiling as competitive and revenue risk — not on architectural elegance. Translate the bet into the language of whoever controls the investment before you walk in, not halfway through the meeting.</p></div>
+  </div>
+
+  <h2>Likely follow-ups <span class="small muted">(recall first, then open)</span></h2>
+  <details class="fold qa"><summary><b>How did you know it was the right direction?</b></summary><div class="fold-body"><p>I didn't trust my gut — I made it decidable. Deep dive into both proposals, then every option through the same weighted criteria: impact/effort, time, rollback safety, complexity. The direction fell out of the criteria, not from whoever argued hardest. And I validated the business premise with PMs and customers — the demand past the ceiling was real.</p></div></details><details class="fold qa"><summary><b>Why a hybrid and not just commit to the redesign?</b></summary><div class="fold-body"><p>A pure redesign on a 20-year product with thousands of customers is how you ship an outage and lose trust. A pure optimization track can't clear the ceiling — diminishing returns. The hybrid banks safe wins now — which also fund credibility for the bet — while building the architecture that removes the ceiling.</p></div></details><details class="fold qa"><summary><b>How did you bring along the skeptics?</b></summary><div class="fold-body"><p>Two moves. I reframed the work's status — from thankless swamp to the most technically interesting, high-leverage area we had — backed with real ownership and a roadmap. Then I let the team author the Epics at the gathering instead of handing down a plan. The reputation flip was the proof: people started wanting onto the track.</p></div></details><details class="fold qa"><summary><b>How did you balance it against short-term delivery?</b></summary><div class="fold-body"><p>That tension was the design. The rollback-safety and impact/effort criteria deliberately front-loaded fast, low-risk wins — like the P99 6.5s→1s fix — so we shipped visible value every quarter while the bigger pieces matured. Short-term delivery funded the long-term bet's credibility instead of competing with it.</p></div></details><details class="fold qa"><summary><b>What would you do differently?</b></summary><div class="fold-body"><p>Lead with the business case from the first sentence. I opened on architecture and nearly lost the PMs and leadership; investment unlocked only once I reframed the ceiling as competitive and revenue risk. Now the money-and-market framing comes first, the technical plan follows.</p></div></details>
+
+  <div class="note info"><b>Delivery notes:</b><ul style="margin:6px 0 0;padding-left:18px"><li>This is the strategy/vision lens — keep the two-engineer conflict to one background sentence (that's story 04).</li><li>Numbers: 10k-job ceiling, P99 6.5s→1s, roadmap still alive. Add scale/Epic counts if asked for more.</li><li>Watch the Result drifting to “we” — keep ownership of the direction explicit.</li></ul></div>
+
+  <div class="pn"><a class="btn ghost" href="story-10.html">← 🎯 Hiring Win &amp; Miss</a><a class="btn ghost" href="story-12.html">🪞 Hard Feedback, Changed →</a></div>
+</div>
+<script src="site.js"></script>
+<script>
+(function(){
+  var btn=document.getElementById('recallBtn');
+  btn.addEventListener('click',function(){
+    document.body.classList.toggle('recall');
+    btn.textContent=document.body.classList.contains('recall')?'👀 Show text':'🙈 Recall mode';
+    document.querySelectorAll('.star-text.show').forEach(function(el){el.classList.remove('show')});
+  });
+  document.addEventListener('click',function(e){
+    if(document.body.classList.contains('recall')&&e.target.classList.contains('star-text'))
+      e.target.classList.toggle('show');
+  });
+})();
+</script>
+</body>
+</html>

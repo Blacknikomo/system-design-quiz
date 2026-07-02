@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disagreed with Leadership — STAR story</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .glance{border-color:var(--accent2);background:linear-gradient(180deg,rgba(var(--accent2-rgb),.08),transparent 80px)}
+  .glance .g-k{color:var(--accent2);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:2px}
+  .glance .g-row{margin:10px 0;font-size:13.5px}
+  .star-sec h4{margin:16px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .star-sec .tb{color:var(--muted);font-weight:400;font-size:11px;margin-left:8px;text-transform:none;letter-spacing:0}
+  .star-text{font-size:14px;margin:6px 0}
+  .hook{border-left:3px solid var(--accent2);padding:8px 14px;background:var(--panel2);border-radius:0 8px 8px 0;font-style:italic;font-size:14px}
+  body.recall .star-text{filter:blur(5px);cursor:pointer;transition:filter .2s}
+  body.recall .star-text.show{filter:none}
+  .qa summary b{font-weight:600;font-size:14px}
+  .qa .fold-body p{font-size:13.5px;color:var(--txt)}
+  .pn{display:flex;justify-content:space-between;gap:10px;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>⬆️ 05 — Disagreed with Leadership</h1>
+      <div class="sub">Disagreed with leadership / pushed back up · <a href="stories.html">story bank</a></div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-bottom:14px"><span class="tag accent">Conflict upward</span><span class="tag accent">Disagree &amp; commit</span><span class="tag accent">GTL round</span><span class="tag">score 30/35</span>
+    <button class="btn sec" id="recallBtn" style="margin-left:auto">🙈 Recall mode</button>
+  </div>
+
+  <div class="card glance">
+    <b style="font-size:15px">⚡ Glance card</b>
+    <div class="g-row"><span class="g-k">Plot</span>My manager kept spinning up PoC teams with no governance while roadmap work slipped. Lost the verbal round; let the evidence accumulate (2 failed + 2 stalled); co-designed the operating model with him. Plus one clean disagree-and-commit where I lost.</div><div class="g-row"><span class="g-k">Beats</span>lost verbally (underperformer case) → committed → insight: a hands-on executor needs evidence, not opinion → pattern: 2 failed + 2 stalled in 2 mo → “ideas are strong — the launch model is failing us” → Feature Owner + capacity check 2–4 wks ahead + PM course → D&amp;C: reallocated the PoC I wanted to keep</div><div class="g-row"><span class="g-k">Numbers</span>70 ppl, −30% new customers (setup only) · 1-of-5 clean stops → zero stalled PoCs · 6 vertical → 4 stream + 2 platform teams · ~6-mo arc</div><div class="g-row"><span class="g-k">Lesson</span>Influencing up = bring the pattern, not the opinion.</div><div class="g-row"><span class="g-k">Watch out</span>Say “my manager” — no letter (D collides with 04/10). Drop the “find another job” line.</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">🎤 Spoken version <span class="tb" style="font-size:12px;color:var(--muted)">S/T ~30s · Action ~75s · Result ~30s · Reflection ~10s</span></h2>
+    <div class="hook star-text">“My own manager kept spinning up experimental teams by pulling engineers off roadmap work — no owner, no plan — and it was quietly killing our delivery. I disagreed, but it took a few rounds and hard evidence to change how he ran experiments. The operating model we built became the basis for our team restructure.”</div>
+    <div class="star-sec"><h4>Situation / Task</h4><p class="star-text">TeamCity is a 20-year-old product, around 70 people. The market had shifted hard — AI, new competitors — new-customer growth was down about 30% and we'd started missing deadlines we could no longer afford. My manager — a strong ex-engineer running the department — wanted to run as many experiments as possible to find traction. I agreed with the goal; I disagreed with the method. He'd take three-to-five engineers who'd never worked together, hand them an abstract problem, and step away — no owner, no plan, no definition of done — while roadmap features got silently postponed. My job, with my peers in Product, Marketing and QA, was to land a shared operating model so experiments didn't burn our delivery.</p><h4>Action</h4><p class="star-text">At first I pushed back purely verbally, and I lost. Early on my manager kept an underperformer I wanted to part ways with; I made the case with documented PIP misses, but he said it was too late and told me to manage the fallout — so I committed and did. That taught me something about him: with a hands-on executor, a verbal argument doesn't move the needle — I needed evidence.</p><p class="star-text">So when he launched three PoC teams — an AI Agents Hub, a new auth subsystem, an IDE integration — I didn't argue in the abstract. I let the pattern surface: within two months two of those teams failed outright and two more stalled, because no one was there to close a discussion and make a call. Then I went to him with exactly that, framed carefully: “The ideas are strong — it's the launch model that's failing us.” He agreed there had to be a better way. Instead of handing him a complaint, I offered to design the fix with him, then widened it into a working group. We landed three things: a Feature Owner role on every PoC team — one person accountable for grooming, planning, the SDLC; a rule that we staff a PoC only after assessing team capacity two-to-four weeks ahead; and a project-management course I organized for the PMs and team leads so we'd all run projects the same way.</p><p class="star-text">And there was a case where the disagreement went the other way. I was convinced we should keep investing in one PoC. My manager pushed back — the opportunity cost was other, more promising bets. He was right. I disagreed in the room, said so, then committed: reallocated the team and backed the call publicly — no second-guessing.</p><h4>Result</h4><p class="star-text">On decision quality: before the change, only one of five experiments ever reached a clean stop — the rest just stalled and quietly drained engineers. After it, we stopped having stalled projects at all: every PoC starts with a definition of ready and done and runs to a clear go/no-go — some became standalone products, some we deliberately shut down instead of letting them rot. The lasting outcome: once cross-team flow was visible, we restructured around it — six vertical functional teams became four stream teams plus two platform teams, the model we still run. The whole arc took about six months. My manager still overrode calls sometimes — but now consciously, weighing the cost.</p><h4>Reflection</h4><p class="star-text">Influencing up isn't always head-on. For a leader who lives in execution, one conversation won't move them — you let the evidence accumulate and bring the pattern, not the opinion. And I should have built the operating model proactively, before the first teams failed.</p></div>
+  </div>
+
+  <h2>Likely follow-ups <span class="small muted">(recall first, then open)</span></h2>
+  <details class="fold qa"><summary><b>How did you make the case — what evidence?</b></summary><div class="fold-body"><p>Not opinion. I let the launch model fail on its own terms — two PoC teams collapsed and two stalled within two months — and brought that pattern plus the root cause: no owner to close discussions and decide. With a hands-on executor, the evidence is what moves them.</p></div></details><details class="fold qa"><summary><b>What if he still disagreed?</b></summary><div class="fold-body"><p>I have a ladder before it becomes a standoff. Make the disagreement cheap to test — one experiment with the new governance, one without, let the data decide. If bigger, bring a neutral read — a peer review or a light audit. And once a call is final, I disagree-and-commit — which I actually did on the PoC I wanted to continue.</p></div></details><details class="fold qa"><summary><b>How did you behave once a decision was final?</b></summary><div class="fold-body"><p>On the PoC I lost: said my piece once, then reallocated the team and backed the call publicly so the team didn't feel the wobble. Later I thanked my manager — we'd built something real together: happier team, finished experiments, a repeatable framework.</p></div></details><details class="fold qa"><summary><b>Have you ever been wrong in one of these?</b></summary><div class="fold-body"><p>Yes — that same PoC. I was sure it deserved more runway; he made the opportunity-cost case. He was right, and I'd have over-invested. That's exactly why disagree-and-commit is a real principle for me, not a slogan.</p></div></details><details class="fold qa"><summary><b>Wasn't this just going around your manager?</b></summary><div class="fold-body"><p>The opposite. Every move was with him — 1:1 first, then co-designing the fix, then widening to the group. I never escalated over him or built a coalition behind his back. The goal was a shared operating model, not winning a point.</p></div></details>
+
+  <div class="note info"><b>Delivery notes:</b><ul style="margin:6px 0 0;padding-left:18px"><li>Three beats make this a leadership story: challenged up · won with evidence, not opinion · one clean disagree-and-commit where I lost.</li><li>Anonymization: say “my manager” — the letter D belongs to a Staff engineer in stories 04/10.</li><li>Numbers: 1-of-5 clean stops → zero stalled; 6 vertical → 4 stream + 2 platform; ~6 months.</li></ul></div>
+
+  <div class="pn"><a class="btn ghost" href="story-04.html">← ⚔️ Two Staff Engineers in Conflict</a><a class="btn ghost" href="story-06.html">🤝 Cross-Team Influence →</a></div>
+</div>
+<script src="site.js"></script>
+<script>
+(function(){
+  var btn=document.getElementById('recallBtn');
+  btn.addEventListener('click',function(){
+    document.body.classList.toggle('recall');
+    btn.textContent=document.body.classList.contains('recall')?'👀 Show text':'🙈 Recall mode';
+    document.querySelectorAll('.star-text.show').forEach(function(el){el.classList.remove('show')});
+  });
+  document.addEventListener('click',function(e){
+    if(document.body.classList.contains('recall')&&e.target.classList.contains('star-text'))
+      e.target.classList.toggle('show');
+  });
+})();
+</script>
+</body>
+</html>

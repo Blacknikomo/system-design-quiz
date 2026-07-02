@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tough Prioritization Call — STAR story</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .glance{border-color:var(--accent2);background:linear-gradient(180deg,rgba(var(--accent2-rgb),.08),transparent 80px)}
+  .glance .g-k{color:var(--accent2);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:2px}
+  .glance .g-row{margin:10px 0;font-size:13.5px}
+  .star-sec h4{margin:16px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .star-sec .tb{color:var(--muted);font-weight:400;font-size:11px;margin-left:8px;text-transform:none;letter-spacing:0}
+  .star-text{font-size:14px;margin:6px 0}
+  .hook{border-left:3px solid var(--accent2);padding:8px 14px;background:var(--panel2);border-radius:0 8px 8px 0;font-style:italic;font-size:14px}
+  body.recall .star-text{filter:blur(5px);cursor:pointer;transition:filter .2s}
+  body.recall .star-text.show{filter:none}
+  .qa summary b{font-weight:600;font-size:14px}
+  .qa .fold-body p{font-size:13.5px;color:var(--txt)}
+  .pn{display:flex;justify-content:space-between;gap:10px;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>✂️ 07 — Tough Prioritization Call</h1>
+      <div class="sub">Made a tough prioritization / trade-off call · <a href="stories.html">story bank</a></div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-bottom:14px"><span class="tag accent">Prioritization</span><span class="tag accent">Tech debt</span><span class="tag accent">Perseverance</span><span class="tag accent">GTL round</span><span class="tag">score 28/35</span>
+    <button class="btn sec" id="recallBtn" style="margin-left:auto">🙈 Recall mode</button>
+  </div>
+
+  <div class="card glance">
+    <b style="font-size:15px">⚡ Glance card</b>
+    <div class="g-row"><span class="g-k">Plot</span>Inherited a crisis team — 30 integrations, 6→4 engineers, hard Gradle API deadline. Built the priority map myself when PMs couldn't, cut to 4 tools with a formal deprecation policy, negotiated a 1-yr deferral with Gradle Inc., shielded the team upward.</div><div class="g-row"><span class="g-k">Beats</span>1:1s ×6 → PMs couldn't rank → triangulated usage stats / open issues / cross-dept interviews → Maven, Gradle, .NET, Bazel → knowledge rescue before the exits → Munich offsite: explicit cut line (Xcode 4 → sunset; partner/community delegation; rest → maintenance mode) → Gradle deferral → “no extra load + dedicated PdM”</div><div class="g-row"><span class="g-k">Numbers</span>30 → 4 active · 2-release deprecation cycle · done by end-2025 · “monkey job” → meaningful</div><div class="g-row"><span class="g-k">Lesson</span>An ownership vacuum is itself the problem — escalate it day one, don't absorb it.</div><div class="g-row"><span class="g-k">Watch out</span>Cut the CI/CD explainer from the Situation. Also your Perseverance answer: open with the grind, close with the morale flip.</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">🎤 Spoken version <span class="tb" style="font-size:12px;color:var(--muted)">S/T ~30s · Action ~80s · Result ~30s · Reflection ~10s</span></h2>
+    <div class="hook star-text">“I took over a team drowning in 30 integrations with 4 engineers and a hard external deadline — and dug it out by deciding, explicitly, what we would stop supporting.”</div>
+    <div class="star-sec"><h4>Situation / Task</h4><p class="star-text">Early 2025 I took over a Build Tools Integration team in crisis. Around 30 CI/CD integrations supported by 6 engineers — two already on their way out, dropping us to 4. On top of that, Gradle was deprecating an API we depended on: without action, the newest Gradle would simply stop working with TeamCity. Too much surface, too few people, a hard external deadline. My job was to decide what we'd keep alive — and what we'd consciously let go.</p><h4>Action</h4><p class="star-text">First, I built the priority map myself. The PMs couldn't rank the tools for me, so instead of waiting I triangulated three signals — usage statistics, open-issue volume, and interviews across other departments — and landed on the four integrations that actually carried the business: Maven, Gradle, .NET, and Bazel. I brought the list back to the team to pressure-test; they validated it and added technical nuance, like Gradle's legacy API vs the new Tooling API.</p><p class="star-text">Second, I protected knowledge before it walked out the door — targeted knowledge-sharing from the two leavers into the team, specifically on the critical tools, to break the bus factor.</p><p class="star-text">Third, I made the cut explicit. At a two-day offsite we drew a hard line, and I owned it: the four tools get active development; everything else moves to maintenance mode — critical bugfixes only; genuinely dead integrations (we were still supporting Xcode 4, from 2011) get a formal two-release deprecation; and some I delegated out entirely — to external partners and the community.</p><p class="star-text">Fourth, I attacked the hard constraint directly: I went to Gradle and negotiated a one-year postponement of the API deprecation — so the deadline stopped driving the bus. And I owned it upward: packaged the plan as a “Housekeeping” initiative, presented it to my manager, and held one line — no extra workload on the team, and a dedicated product manager for us. I got both.</p><h4>Result</h4><p class="star-text">By the end of 2025 the housekeeping was done: deprecations executed, non-vital integrations sunset or handed to partners, the Gradle deadline neutralized, dedicated PM coverage secured, and the four critical tools back in active development. It outgrew the team — the maintenance-vs-feature model became how the wider department approaches maintenance. And the human result: a team that had literally called their work a “monkey job” told me in 1:1s it finally felt meaningful.</p><h4>Reflection</h4><p class="star-text">I stand by the calls — the prioritization held up at department scale. My real miss was treating a product-ownership vacuum as something to work around instead of escalating it. I rebuilt priorities from usage data for weeks because no PM owned the question. The lesson isn't “move faster” — it's that an ownership gap is itself the problem to push up on day one, not absorb quietly.</p></div>
+  </div>
+
+  <h2>Likely follow-ups <span class="small muted">(recall first, then open)</span></h2>
+  <details class="fold qa"><summary><b>What exactly did you cut, and how did you decide?</b></summary><div class="fold-body"><p>Everything outside Maven, Gradle, .NET and Bazel left active development: maintenance mode for most, formal two-release deprecation for the dead ones, delegation to partners/community where there was a taker. The line came from data — usage, open issues, cross-department interviews — validated by the team, not from taste.</p></div></details><details class="fold qa"><summary><b>How did the people whose work got cut react?</b></summary><div class="fold-body"><p>There were doubts, but the plan was explicit that this was a temporary, reversible focus: maintenance mode isn't deletion, and topics could return after the housekeeping. What sold it was fairness — the same criteria applied to everything — and the visible drop in workload.</p></div></details><details class="fold qa"><summary><b>Was it the right call in hindsight?</b></summary><div class="fold-body"><p>The prioritization — yes, it held and scaled to the department. What I'd change is how long I tolerated the product-ownership vacuum: I should have escalated the missing PM ownership immediately instead of quietly compensating for weeks.</p></div></details><details class="fold qa"><summary><b>How did you communicate the no?</b></summary><div class="fold-body"><p>With the numbers and the plan, not opinion. And where people raised concerns, I listened and folded fixes into the plan — the deprecation timelines, for instance, came out of exactly those conversations.</p></div></details>
+
+  <div class="note info"><b>Delivery notes:</b><ul style="margin:6px 0 0;padding-left:18px"><li>Perseverance re-badge: open with the grind (crisis team, churn, hard deadline, six months of digging), close with “monkey job” → meaningful.</li><li>The Gradle negotiation doubles as “got something from someone who didn't want to give it.”</li><li>Numbers: 30 → 4, 2-release deprecation cycle, done by end-2025.</li></ul></div>
+
+  <div class="pn"><a class="btn ghost" href="story-06.html">← 🤝 Cross-Team Influence</a><a class="btn ghost" href="story-08.html">🌫️ Delivered Under Ambiguity →</a></div>
+</div>
+<script src="site.js"></script>
+<script>
+(function(){
+  var btn=document.getElementById('recallBtn');
+  btn.addEventListener('click',function(){
+    document.body.classList.toggle('recall');
+    btn.textContent=document.body.classList.contains('recall')?'👀 Show text':'🙈 Recall mode';
+    document.querySelectorAll('.star-text.show').forEach(function(el){el.classList.remove('show')});
+  });
+  document.addEventListener('click',function(e){
+    if(document.body.classList.contains('recall')&&e.target.classList.contains('star-text'))
+      e.target.classList.toggle('show');
+  });
+})();
+</script>
+</body>
+</html>

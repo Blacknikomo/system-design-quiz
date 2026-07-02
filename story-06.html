@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cross-Team Influence — STAR story</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .glance{border-color:var(--accent2);background:linear-gradient(180deg,rgba(var(--accent2-rgb),.08),transparent 80px)}
+  .glance .g-k{color:var(--accent2);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:2px}
+  .glance .g-row{margin:10px 0;font-size:13.5px}
+  .star-sec h4{margin:16px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .star-sec .tb{color:var(--muted);font-weight:400;font-size:11px;margin-left:8px;text-transform:none;letter-spacing:0}
+  .star-text{font-size:14px;margin:6px 0}
+  .hook{border-left:3px solid var(--accent2);padding:8px 14px;background:var(--panel2);border-radius:0 8px 8px 0;font-style:italic;font-size:14px}
+  body.recall .star-text{filter:blur(5px);cursor:pointer;transition:filter .2s}
+  body.recall .star-text.show{filter:none}
+  .qa summary b{font-weight:600;font-size:14px}
+  .qa .fold-body p{font-size:13.5px;color:var(--txt)}
+  .pn{display:flex;justify-content:space-between;gap:10px;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🤝 06 — Cross-Team Influence</h1>
+      <div class="sub">Influenced a cross-team decision without authority · <a href="stories.html">story bank</a></div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-bottom:14px"><span class="tag accent">Influence w/o authority</span><span class="tag accent">Alignment</span><span class="tag accent">GTL round</span><span class="tag">score 30/35</span>
+    <button class="btn sec" id="recallBtn" style="margin-left:auto">🙈 Recall mode</button>
+  </div>
+
+  <div class="card glance">
+    <b style="font-size:15px">⚡ Glance card</b>
+    <div class="g-row"><span class="g-k">Plot</span>3-division agentic workflow (tracker → CI → AI agent) with authority over one. Ahead-of-eng rhythm plus the staging-server trade during our release freeze converted the skeptics; channeled the idea-spraying agent-team lead through grooming.</div><div class="g-row"><span class="g-k">Beats</span>kickoff: shared “done” → business/product track 2–4 wks ahead of eng (first read as bureaucracy) → our freeze hit → staging-server unblock, no freeze broken → skeptics start bringing their own blockers → grooming = pressure-test filter for the lead's ideas</div><div class="g-row"><span class="g-k">Numbers</span>3 divisions, ~12 ppl · ~2 days total blocked time · internal PoC in 2 mo · seeded Agents Hub, 5 → ~8 ppl</div><div class="g-row"><span class="g-k">Lesson</span>Stay ahead of the work so blockers surface while there's still room to trade.</div><div class="g-row"><span class="g-k">Watch out</span>“I couldn't mandate, so I…” — never “I organized syncs.”</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">🎤 Spoken version <span class="tb" style="font-size:12px;color:var(--muted)">S/T ~25s · Action ~70s · Result ~25s · Reflection ~10s</span></h2>
+    <div class="hook star-text">“I drove a build across three separate JetBrains divisions where I only managed one of them — so I couldn't mandate anything; I had to make two other divisions want to stay aligned with the plan.”</div>
+    <div class="star-sec"><h4>Situation / Task</h4><p class="star-text">We set out to build an end-to-end agentic workflow spanning three divisions: our issue tracker, our CI/CD platform — my area — and our AI-agent team. The flow: a user opens a ticket, hits “solve” right in the tracker UI, that fires a job on CI, which launches the AI agent against the repo to attempt the fix. The hard part was organizational: three divisions, three roadmaps, three sets of priorities — and I had authority over exactly one. My job was to deliver my department's piece and keep the whole thing aligned, without being anyone's boss.</p><h4>Action</h4><p class="star-text">I treated it as an influence problem, not a coordination problem. First I made the shared goal concrete and visible — a kickoff where all three sides agreed what “done” looked like and who owned what — because alignment is cheap when everyone sees the same target.</p><p class="star-text">Then the real lever: I ran the business and product track two-to-four weeks ahead of engineering, so by the time engineers hit a milestone we'd already de-risked the direction and rough design. Early on some people read that as bureaucracy — my overhead. I didn't argue; I let it prove itself. Within two weeks it caught a blocker that would've stalled everyone: my team hit a release freeze from a security audit and literally couldn't ship the API the other teams needed. Instead of letting them stall or forcing my team to break freeze, I proposed putting the unstable API on a dedicated staging server — unblocking the other divisions without violating our freeze. After that, the “bureaucracy” framing died; the skeptics started bringing their own blockers to the same forum.</p><p class="star-text">The hardest person to align was the lead on the AI-agent side — a brilliant engineer, full of ideas, who kept wanting to spin off quick experiments mid-build. I didn't shut him down — that kills both the relationship and the ideas. I channeled it: grooming became the place ideas got pressure-tested before any code. We killed a few expensive detours early, and a couple of his hypotheses turned into real features.</p><h4>Result</h4><p class="star-text">The clearest proof the alignment worked: across the whole two-month build — three divisions, about twelve people — total blocked time was roughly two days. We shipped a working internal PoC and demoed it to select customers. We later shelved the PoC itself — agentic systems weren't good enough yet — but it directly seeded our next initiative: an Agents Hub that five of us carried forward, since grown into a real product of around eight people. The thing I was really building — alignment across orgs that don't report to me — outlived the project.</p><h4>Reflection</h4><p class="star-text">When you're influencing across orgs, the cheapest way to keep three teams aligned isn't more process — it's getting ahead of the work, so the inevitable blockers surface while there's still room to trade around them.</p></div>
+  </div>
+
+  <h2>Likely follow-ups <span class="small muted">(recall first, then open)</span></h2>
+  <details class="fold qa"><summary><b>You didn't own two of the three teams — why did they follow your process at all?</b></summary><div class="fold-body"><p>I never asked them to follow my process — I asked them to hit a shared goal and made my process the cheapest way to get there. The proof point was the staging-server save: once the two-weeks-ahead rhythm prevented a real blocker, staying aligned became self-interested, not a favor to me.</p></div></details><details class="fold qa"><summary><b>What did you give up to get alignment?</b></summary><div class="fold-body"><p>Two things. I ran the lightest-possible project management — only the minimum that earned its keep — because anything heavier would've confirmed the “bureaucracy” read. And I gave up some of my own team's capacity: a couple of my engineers were effectively full-time on this — a real cost to our own roadmap that I owned.</p></div></details><details class="fold qa"><summary><b>Who pushed back hardest, and how did you win them?</b></summary><div class="fold-body"><p>The AI-agent lead. He wasn't resisting the goal — he was over-generating ideas that risked derailing the build. Winning him wasn't overruling him; it was giving his ideas a real home. Grooming became the filter: he got heard, we avoided expensive detours, and some of his hypotheses became features.</p></div></details><details class="fold qa"><summary><b>What would you do differently?</b></summary><div class="fold-body"><p>Protect my own team's identity and capacity harder up front — at one point they started identifying as a new unit rather than TeamCity. And staff the system-design-critical seats more carefully: a brilliant mid-level coder without deep design experience cost us a few redone decisions — caught early only thanks to the ahead-of-engineering rhythm.</p></div></details>
+
+  <div class="note info"><b>Delivery notes:</b><ul style="margin:6px 0 0;padding-left:18px"><li>Keep foregrounding “I couldn't mandate, so I…” — the moment you say “I organized syncs,” you sound like a coordinator.</li><li>Numbers: 3 divisions ~12 people, ~2 months to PoC, ~2 days total blocked, Agents Hub 5 → ~8.</li><li>Say “I” on: the staging-server idea, running business ahead of eng, making grooming the filter. Say “we” on the build itself.</li></ul></div>
+
+  <div class="pn"><a class="btn ghost" href="story-05.html">← ⬆️ Disagreed with Leadership</a><a class="btn ghost" href="story-07.html">✂️ Tough Prioritization Call →</a></div>
+</div>
+<script src="site.js"></script>
+<script>
+(function(){
+  var btn=document.getElementById('recallBtn');
+  btn.addEventListener('click',function(){
+    document.body.classList.toggle('recall');
+    btn.textContent=document.body.classList.contains('recall')?'👀 Show text':'🙈 Recall mode';
+    document.querySelectorAll('.star-text.show').forEach(function(el){el.classList.remove('show')});
+  });
+  document.addEventListener('click',function(e){
+    if(document.body.classList.contains('recall')&&e.target.classList.contains('star-text'))
+      e.target.classList.toggle('show');
+  });
+})();
+</script>
+</body>
+</html>
