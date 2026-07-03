@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Frameworks for Hypothetical Questions</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .cs{border:1px solid var(--line);border-radius:12px;margin-bottom:12px;overflow:hidden;background:var(--panel)}
+  .cs-head{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;user-select:none}
+  .cs-head:hover{background:var(--panel2)}
+  .cs-head .ic{font-size:20px;flex:0 0 auto}
+  .cs-head .nm{font-weight:700;font-size:16px}
+  .cs-head .scope{color:var(--muted);font-size:13px}
+  .cs-head .chev{margin-left:auto;color:var(--muted);transition:transform .2s;flex:0 0 auto}
+  .cs.open .cs-head .chev{transform:rotate(90deg)}
+  .cs-body{display:none;padding:0 16px 16px;border-top:1px solid var(--line)}
+  .cs.open .cs-body{display:block}
+  .cs-tags{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+  .blk h4{margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent)}
+  .blk.nfr h4{color:var(--warn)}
+  .blk.tech h4{color:var(--ok)}
+  .blk.got h4{color:var(--bad)}
+  .blk ul{margin:0;padding-left:18px}
+  .blk li{margin:4px 0;font-size:13.5px}
+  .blk .why{color:var(--muted)}
+  .recall-hint{display:none;color:var(--muted);font-size:12.5px;font-style:italic;padding:0 16px 14px}
+  body.recall .cs:not(.open) .recall-hint{display:block}
+  .toolbar{position:sticky;top:0;z-index:10;background:var(--bg);padding:10px 0;margin-bottom:6px;border-bottom:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🔀 Frameworks for Hypothetical Questions</h1>
+      <div class="sub">“How would you handle… / What would you do…” A building-block library of reusable frameworks — <b>select and combine</b> based on the question. Diagnostic (what’s wrong?), Decision (what to choose?), Communication (how to handle?). Built for active recall — read the category, recall the frameworks, then reveal.</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="row">
+      <input type="text" id="search" placeholder="filter by category / framework / keyword…" style="flex:1;min-width:180px">
+      <button class="btn sec" id="expandAll">Expand all</button>
+      <button class="btn sec" id="collapseAll">Collapse all</button>
+      <label class="chip"><input type="checkbox" id="recallChk" style="accent-color:var(--accent)"> Recall mode</label>
+    </div>
+    <div class="small muted" id="count" style="margin-top:6px"></div>
+  </div>
+
+  <div id="list"></div>
+
+  <p class="small muted" style="margin-top:16px">Adapted from <i>“Mastering Behavioral Interviews: The Guide to Storytelling in Tech.”</i> Pairs with the <a href="behavioral-story-map.html">Story Map</a>, <a href="behavioral-story-craft.html">Story Craft</a>, <a href="behavioral-best-practices.html">Best Practices</a>, and the <a href="behavioral-quiz.html">quiz</a>.</p>
+</div>
+
+<script>
+const CARDS = [
+  {icon:"🩺", name:"Diagnostic Frameworks", scope:'for "something is wrong" scenarios', tags:["Diagnostic"],
+   blocks:[
+    {cls:"nfr", h:"When to use", items:["Use to identify the disease / root cause — before you jump to a fix. Good for “the team is slipping”, “quality dropped”, “an initiative is failing”."]},
+    {cls:"tech", h:"Frameworks", items:[
+      "<b>People vs. Process vs. Technology</b> — which layer is actually failing?",
+      "<b>Internal root cause vs. External factors</b> — is it us, or the environment around us?",
+      "<b>Acute crisis vs. Chronic issue</b> — a sudden fire, or something that’s been wrong for a long time?"]}
+   ]},
+  {icon:"⚖️", name:"Decision Frameworks", scope:'for "what would you choose" scenarios', tags:["Decision"],
+   blocks:[
+    {cls:"nfr", h:"When to use", items:["Use to structure a choice between options — “which would you prioritize”, “how would you decide”, “what would you cut”."]},
+    {cls:"tech", h:"Frameworks", items:[
+      "<b>Impact vs. Effort</b> — the classic prioritization 2×2.",
+      "<b>Reversible vs. Irreversible</b> — one-way vs. two-way door: not possible to change back vs. able to change back (bias to action on reversible calls).",
+      "<b>Build vs. Buy vs. Partner</b> — make it, purchase it, or team up?"]}
+   ]},
+  {icon:"💬", name:"Communication Frameworks", scope:'for "how would you handle" scenarios', tags:["Communication"],
+   blocks:[
+    {cls:"nfr", h:"When to use", items:["Use to structure how you’d navigate people and messaging — a difficult stakeholder, bad news, cross-team alignment."]},
+    {cls:"tech", h:"Frameworks", items:[
+      "<b>Audience × Message × Medium</b> — to identify a communication strategy (who, what, and through which channel).",
+      "<b>Diagnose → Align → Execute → Follow-up</b> — a full change-management arc.",
+      "<b>Listen → Empathize → Reframe → Solve</b> — for defusing tension and turning it toward a solution."]}
+   ]},
+  {icon:"🧩", name:"How to use — select, combine, then ground it", scope:"the meta-move", tags:["How to use"],
+   blocks:[
+    {cls:"", h:"Select & combine", items:["Treat these as building blocks — pick the ones the question calls for and combine them."]},
+    {cls:"tech", h:"Worked example", items:["<b>“How would you turn around a failing project?”</b> combines: <b>Diagnostic</b> (what’s wrong?) + <b>Decision</b> (what to change?) + <b>Communication</b> (how to align stakeholders?)."]},
+    {cls:"nfr", h:"Then ground it with a real story", items:["Even for a hypothetical, share a relevant career story — use the same story-selection criteria as “Tell me about a time…” questions. The framework shows structure; the story provides the evidence."]}
+   ]},
+];
+
+const listEl = document.getElementById("list");
+function blockHtml(b){ return `<div class="blk ${b.cls||''}"><h4>${b.h}</h4><ul>${b.items.map(x=>`<li>${x}</li>`).join("")}</ul></div>`; }
+function render(filter=""){
+  const f = filter.trim().toLowerCase();
+  let shown=0;
+  listEl.innerHTML = CARDS.map((d,idx)=>{
+    const hay = (d.name+" "+d.scope+" "+d.tags.join(" ")+" "+d.blocks.map(b=>b.h+" "+b.items.join(" ")).join(" ")).toLowerCase();
+    if(f && !hay.includes(f)) return "";
+    shown++;
+    return `<div class="cs" data-i="${idx}">
+      <div class="cs-head">
+        <span class="ic">${d.icon}</span>
+        <div><div class="nm">${d.name}</div><div class="scope">${d.scope}</div></div>
+        <span class="chev">▶</span>
+      </div>
+      <div class="recall-hint">Recall: which frameworks live in this category, and when would you reach for them? Then reveal.</div>
+      <div class="cs-body">
+        <div class="cs-tags">${d.tags.map(t=>`<span class="tag accent">${t}</span>`).join("")}</div>
+        ${d.blocks.map(blockHtml).join("")}
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("count").textContent = `${shown} of ${CARDS.length} groups`;
+  wire();
+}
+function wire(){ document.querySelectorAll(".cs-head").forEach(h=>{ h.onclick=()=>h.parentElement.classList.toggle("open"); }); }
+document.getElementById("search").oninput = e => render(e.target.value);
+document.getElementById("expandAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.add("open"));
+document.getElementById("collapseAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.remove("open"));
+document.getElementById("recallChk").onchange = e=>{
+  document.body.classList.toggle("recall", e.target.checked);
+  if(e.target.checked) document.querySelectorAll(".cs").forEach(c=>c.classList.remove("open"));
+};
+render();
+</script>
+<script src="site.js"></script>
+</body>
+</html>
