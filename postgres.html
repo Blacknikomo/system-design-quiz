@@ -12,7 +12,7 @@
     <div>
       <div class="back" data-nav></div>
       <h1>🐘 PostgreSQL — indexes, transactions &amp; MVCC</h1>
-      <div class="sub">Relational system of record. Watch an <i>Index Scan</i> jump straight to a row vs a <i>Seq Scan</i> reading every row, see a transaction stay invisible until <b>COMMIT</b>, and watch an UPDATE write a <b>new row version</b> instead of overwriting in place.</div>
+      <div class="sub">Relational system of record. Watch an <i>Index Scan</i> jump straight to a row vs a <i>Seq Scan</i> reading every row, see a transaction stay invisible until <b>COMMIT</b>, and watch every tuple's <b><code>xmin</code>/<code>xmax</code></b> drive MVCC: UPDATE writes a <b>new version</b>, DELETE just stamps <code>xmax</code>, the observer session flips between <b>Read Committed</b> and <b>Repeatable Read</b>, and <b>VACUUM</b> reclaims dead tuples — unless a frozen snapshot pins them.</div>
     </div>
   </div>
 
@@ -21,7 +21,8 @@
       <span class="tag accent">ACID</span>
       <span class="tag">B-tree index (default)</span>
       <span class="tag">MVCC</span>
-      <span class="tag">Read Committed</span>
+      <span class="tag">xmin / xmax</span>
+      <span class="tag">RC vs RR isolation</span>
     </div>
     <p class="small" style="margin-bottom:6px">Postgres is a <b>system of record</b>: writes are <b>Atomic, Consistent, Isolated, Durable</b>. Reads can use a <b>B-tree index</b> to seek a row in <code>O(log n)</code> instead of scanning the whole table in <code>O(n)</code>. Concurrency is handled by <b>MVCC</b> — each row update creates a new version, so readers never block writers.</p>
     <div class="note info"><b>Index types:</b> <b>B-tree</b> is the default (equality &amp; range). Also <b>GIN</b> for full-text search &amp; <b>JSONB</b> containment, <b>GiST</b>/<b>PostGIS</b> for geo/spatial, and <b>BRIN</b> for huge naturally-ordered tables. An index trades write cost &amp; disk for fast reads.</div>
@@ -41,6 +42,7 @@
       <span style="width:14px"></span>
       <label class="fld">new name<input type="text" id="updName" value="Carolyn" size="10"></label>
       <button class="btn sec" id="updBtn">UPDATE (set name WHERE email)</button>
+      <button class="btn bad" id="delBtn">DELETE (WHERE email)</button>
     </div>
     <div class="row" style="margin-top:12px">
       <button class="btn ghost" id="idxBtn">🔑 B-tree index on email: ON</button>
@@ -48,6 +50,9 @@
       <button class="btn sec" id="beginBtn">BEGIN</button>
       <button class="btn warn" id="commitBtn">COMMIT</button>
       <button class="btn bad" id="rollbackBtn">ROLLBACK</button>
+      <span style="width:14px"></span>
+      <button class="btn ghost" id="isoBtn">👥 other session: READ COMMITTED</button>
+      <button class="btn ghost" id="vacBtn">🧹 VACUUM</button>
       <span style="width:14px"></span>
       <button class="btn ghost" id="resetBtn">↺ Reset</button>
     </div>
@@ -58,7 +63,7 @@
     <div class="stage" id="stage">
       <div class="nodes" id="nodes"></div>
     </div>
-    <div class="explain" id="explain">Try a <b>SELECT</b> with the index ON (jumps straight to the row), then toggle the index OFF and SELECT again (scans every row). Then <b>BEGIN</b> a transaction and INSERT/UPDATE — changes stay invisible to other sessions until <b>COMMIT</b>.</div>
+    <div class="explain" id="explain">Try a <b>SELECT</b> with the index ON (jumps straight to the row), then toggle the index OFF and SELECT again (scans every row). Then <b>BEGIN</b> and INSERT/UPDATE/DELETE — watch each tuple's <code>xmin</code>/<code>xmax</code> change. Flip the other session to <b>REPEATABLE READ</b>, COMMIT a change, and see its frozen snapshot ignore it. Finish with <b>VACUUM</b> — and see the RR snapshot pin dead tuples (the xmin-horizon gotcha).</div>
   </div>
 
   <div class="cols">
@@ -66,11 +71,11 @@
     <div class="card">
       <h3>What you're seeing</h3>
       <ol class="steps small">
-        <li><b>Index Scan:</b> the B-tree (sorted emails → row pointers) is binary-searched, jumping straight to the row.</li>
-        <li><b>Seq Scan:</b> with no index, Postgres reads <span style="color:var(--warn)">every row</span> top-to-bottom until it matches.</li>
-        <li><b>BEGIN:</b> INSERT/UPDATE become <span style="color:var(--warn)">pending</span> (dashed) — durable only after COMMIT, discarded by ROLLBACK.</li>
-        <li>Another session uses <b>Read Committed</b>: it does <span style="color:var(--warn)">not</span> see your uncommitted changes.</li>
-        <li><b>MVCC:</b> an UPDATE writes a <b>new tuple</b> and marks the old one superseded (<code>xmax</code>) — readers can still read the old version.</li>
+        <li><b>Index Scan:</b> the B-tree (sorted emails → row pointers) is binary-searched, jumping straight to the row. <b>Seq Scan</b> (index OFF) reads <span style="color:var(--warn)">every tuple</span> — including dead ones it must visibility-check and discard (why bloat hurts).</li>
+        <li><b>xmin/xmax stamps:</b> INSERT writes a tuple with <code>xmin = my xid</code>. UPDATE stamps the old version's <code>xmax</code> <i>and</i> writes a new tuple. DELETE <b>only</b> stamps <code>xmax</code> — no new tuple, nothing moves.</li>
+        <li><b>COMMIT vs ROLLBACK:</b> COMMIT marks the xid committed — all its stamps become real at once. ROLLBACK just marks the xid <b>aborted</b> in <code>pg_xact</code>: nothing is physically undone; aborted tuples (☠) wait for VACUUM.</li>
+        <li><b>Isolation = snapshot timing:</b> the other session at <b>Read Committed</b> re-snapshots per statement (sees each commit immediately); at <b>Repeatable Read</b> it keeps one frozen snapshot — later commits stay <span style="color:var(--warn)">invisible</span> to it, though the tuples' xmin/xmax are identical.</li>
+        <li><b>VACUUM:</b> reclaims dead tuples (heap + index entries) — but only those <b>no live snapshot can still see</b>. A held RR snapshot pins them: the xmin-horizon problem behind "idle in transaction" outages.</li>
       </ol>
     </div>
   </div>
@@ -232,8 +237,10 @@ SELECT payload-&gt;&gt;'userId' FROM events;</pre>
 
 <script>
 // ---------- model ----------
-// Each row (tuple) in the heap: {id,email,name, xmin (txn that created it), xmax (txn that superseded it, or 0),
-//   committed (visible to everyone), pending (created/changed inside the open txn)}
+// Each heap tuple: {id, email, name, xmin (xid that created this version), xmax (0 = live;
+//   else the xid that deleted/superseded it)}. NOTHING else — visibility is fully derived
+//   from xmin/xmax + the commit status of xids (pg_xact) + the reader's snapshot,
+//   exactly like real Postgres.
 let rows = [];
 let nextId = 1;
 let nextXid = 100;        // transaction id counter
@@ -241,9 +248,43 @@ let indexOn = true;
 let inTxn = false;
 let curXid = 0;           // xid of the open transaction
 let busy = false;
+let committedXids = new Set([1]);  // pg_xact: which xids committed
+let abortedXids   = new Set();     // pg_xact: which xids aborted (ROLLBACK)
+let obsIso = 'RC';        // observer session isolation: 'RC' | 'RR'
+let rrSnap = null;        // frozen snapshot {committed:Set, atXid} while observer is in RR
+
+const isCommitted = x => committedXids.has(x);
+
+// A snapshot = "which xids were committed when I looked". RC takes a fresh one per
+// statement; RR freezes one for the whole transaction.
+function snapNow(){ return {committed:new Set(committedXids), atXid: nextXid-1}; }
+
+// THE visibility rule: born by a committed xid, and not deleted by one (this snapshot knows of)
+function visibleToSnap(s, r){
+  return s.committed.has(r.xmin) && (r.xmax===0 || !s.committed.has(r.xmax));
+}
+function observerSnap(){ return (obsIso==='RR' && rrSnap) ? rrSnap : snapNow(); }
+
+// what THIS session sees: same rule, plus its own in-progress xid counts as committed
+// (you see your own uncommitted writes; cmin/cmax subtleties omitted)
+function ownVisible(r){
+  const bornOk    = isCommitted(r.xmin) || (inTxn && r.xmin===curXid);
+  const deleted   = r.xmax!==0 && (isCommitted(r.xmax) || (inTxn && r.xmax===curXid));
+  return bornOk && !deleted;
+}
+
+// display state of a tuple (for pills/styling only — visibility uses the functions above)
+function tState(r){
+  if(abortedXids.has(r.xmin))            return 'aborted';     // never born
+  if(r.xmax!==0 && isCommitted(r.xmax))  return 'dead';        // awaiting VACUUM
+  if(inTxn && r.xmin===curXid)           return 'pending';     // my uncommitted insert/new version
+  if(inTxn && r.xmax===curXid)           return 'delpending';  // my uncommitted delete/supersede
+  return 'live';
+}
 
 function seed(){
   rows = []; nextId = 1; nextXid = 100;
+  committedXids = new Set([1]); abortedXids = new Set();
   const data = [
     ['alice@x.io','Alice'],
     ['bob@x.io','Bob'],
@@ -253,18 +294,19 @@ function seed(){
     ['grace@x.io','Grace'],
   ];
   data.forEach(([email,name])=>{
-    rows.push({id:nextId++, email, name, xmin:1, xmax:0, committed:true, pending:false});
+    rows.push({id:nextId++, email, name, xmin:1, xmax:0});
   });
 }
 
 function reset(){
-  busy=false; indexOn=true; inTxn=false; curXid=0;
+  busy=false; indexOn=true; inTxn=false; curXid=0; obsIso='RC'; rrSnap=null;
   seed();
   document.getElementById('idxBtn').textContent = '🔑 B-tree index on email: ON';
+  document.getElementById('isoBtn').textContent = '👥 other session: READ COMMITTED';
   document.getElementById('log').innerHTML='';
-  logLine('info','Database ready: table "users" with 6 committed rows. B-tree index on email: ON.');
+  logLine('info','Database ready: table "users" with 6 committed rows (all xmin 1). B-tree index on email: ON. Observer session: Read Committed.');
   render();
-  explain('Try a <b>SELECT</b> with the index ON, then toggle it OFF and SELECT again to compare <b>Index Scan</b> vs <b>Seq Scan</b>.');
+  explain('Try a <b>SELECT</b> with the index ON, then toggle it OFF to compare <b>Index Scan</b> vs <b>Seq Scan</b>. Then UPDATE/DELETE and watch <code>xmin</code>/<code>xmax</code> on every tuple.');
   syncButtons();
 }
 
@@ -274,35 +316,33 @@ function syncButtons(){
   document.getElementById('beginBtn').disabled = inTxn;
 }
 
-// rows that are visible to a normal "other" reader = committed & not superseded by a committed delete
-function liveRows(){
-  return rows.filter(r=>r.xmax===0 || !committedDelete(r));
-}
-function committedDelete(){ return false; } // (no standalone DELETE in this sim)
-
-// what another concurrent session (Read Committed) sees: only committed rows, latest committed version
-function otherSessionRows(){
-  return rows.filter(r=>r.committed && r.xmax===0);
-}
-
 // ---------- rendering ----------
+function xidLabel(x){
+  if(x===0) return '∅';
+  return x + (abortedXids.has(x) ? '✗' : (isCommitted(x) ? '' : '…'));
+}
 function rowKv(r){
+  const st = tState(r);
   let cls='kv', tag='';
-  if(r.pending){ cls+=' pending'; tag='<span class="pill" style="color:var(--warn);border-color:var(--warn)">pending</span>'; }
-  if(r.xmax!==0){ cls+=' stale'; tag='<span class="pill" style="color:var(--warn);border-color:var(--warn)">xmax '+r.xmax+'</span>'; }
+  if(st==='pending'){     cls+=' pending';    tag='<span class="pill" style="color:var(--warn);border-color:var(--warn)">pending</span>'; }
+  if(st==='delpending'){  cls+=' delpending'; tag='<span class="pill" style="color:var(--bad);border-color:var(--bad)">delete pending</span>'; }
+  if(st==='dead'){        cls+=' deadrow';    tag='<span class="pill" style="color:var(--bad);border-color:var(--bad)">💀 dead</span>'; }
+  if(st==='aborted'){     cls+=' deadrow';    tag='<span class="pill" style="color:var(--bad);border-color:var(--bad)">☠ aborted</span>'; }
   return `<div class="${cls}" id="row${r.id}" data-email="${r.email}">
       <span class="k">#${r.id}</span>
       <span style="flex:1;text-align:left;padding:0 6px">${r.email}</span>
       <span>${r.name}</span>
+      <span class="syscol">xmin ${xidLabel(r.xmin)} · xmax ${xidLabel(r.xmax)}</span>
       ${tag}
     </div>`;
 }
 
 function heapNode(){
+  const dead = rows.filter(r=>tState(r)==='dead'||tState(r)==='aborted').length;
   const body = rows.map(rowKv).join('') || '<div class="small muted">(empty)</div>';
-  return `<div class="node primary" id="heap" style="min-width:280px">
+  return `<div class="node primary" id="heap" style="min-width:300px">
       <div class="title">🗄️ users (heap)
-        <span class="badge">${rows.length} tuples</span></div>
+        <span class="badge">${rows.length} tuples${dead?` · ${dead} dead`:''}</span></div>
       ${body}
     </div>`;
 }
@@ -314,24 +354,39 @@ function indexNode(){
         <div class="small muted" style="padding:4px 0">No index — queries must Seq Scan the heap.</div>
       </div>`;
   }
-  // B-tree: sorted by email, each entry points to a live committed tuple
-  const live = rows.filter(r=>r.xmax===0).slice().sort((a,b)=>a.email<b.email?-1:1);
-  const entries = live.map(r=>
-    `<div class="kv" id="idxe-${r.id}"><span class="k">${r.email}</span><span class="muted">→ #${r.id}</span></div>`
-  ).join('') || '<div class="small muted">(empty)</div>';
+  // B-tree: sorted by email. An index entry is written when the tuple is written and
+  // stays until VACUUM — the index knows nothing about visibility (that's the heap's job).
+  const all = rows.slice().sort((a,b)=>a.email<b.email?-1:(a.email>b.email?1:a.id-b.id));
+  const entries = all.map(r=>{
+    const gone = tState(r)==='dead'||tState(r)==='aborted';
+    return `<div class="kv${gone?' deadrow':''}" id="idxe-${r.id}"><span class="k">${r.email}</span><span class="muted">→ #${r.id}${gone?' 💀':''}</span></div>`;
+  }).join('') || '<div class="small muted">(empty)</div>';
   return `<div class="node replica" id="idx" style="min-width:210px">
       <div class="title">🔑 idx_users_email <span class="badge">B-tree</span></div>
-      <div class="small muted" style="margin:-2px 0 4px">sorted email → row ptr</div>
+      <div class="small muted" style="margin:-2px 0 4px">sorted email → row ptr · entries live until VACUUM</div>
       ${entries}
     </div>`;
 }
 
 function sessionNode(){
-  const seen = otherSessionRows();
-  return `<div class="node" id="other" style="min-width:200px">
-      <div class="title">👥 another session <span class="badge">${inTxn?'Read Committed':'idle'}</span></div>
-      <div class="small muted" style="margin:-2px 0 4px">sees only COMMITTED rows (${seen.length})</div>
-      ${seen.map(r=>`<div class="kv"><span class="k">${r.email}</span><span>${r.name}</span></div>`).join('')}
+  const s = observerSnap();
+  const seen = rows.filter(r=>visibleToSnap(s,r));
+  const now = snapNow();
+  // rows whose CURRENT committed reality differs from the frozen snapshot's view
+  const hiddenNew = (obsIso==='RR') ? rows.filter(r=>visibleToSnap(now,r) && !visibleToSnap(s,r)).length : 0;
+  const badge = obsIso==='RR' ? 'Repeatable Read' : 'Read Committed';
+  const sub = obsIso==='RR'
+    ? `snapshot FROZEN @ xid ≤ ${rrSnap.atXid} — later commits invisible`
+    : `fresh snapshot per statement — sees latest committed (${seen.length})`;
+  const body = seen.map(r=>{
+    const stale = (obsIso==='RR') && !visibleToSnap(now,r);  // deleted/superseded since the snapshot
+    return `<div class="kv${stale?' stale':''}"><span class="k">${r.email}</span><span>${r.name}</span>${stale?'<span class="pill" style="color:var(--warn);border-color:var(--warn)">snapshot-only</span>':''}</div>`;
+  }).join('');
+  return `<div class="node" id="other" style="min-width:210px">
+      <div class="title">👥 other session <span class="badge">${badge}</span></div>
+      <div class="small muted" style="margin:-2px 0 4px">${sub}</div>
+      ${body}
+      ${hiddenNew?`<div class="small" style="color:var(--warn);margin-top:4px">🙈 ${hiddenNew} newer committed change(s) hidden by the frozen snapshot</div>`:''}
     </div>`;
 }
 
@@ -384,7 +439,7 @@ function fly(fromSel, toSel, label, cls){
 
 // ---------- operations ----------
 
-// (A) SELECT — Index Scan vs Seq Scan
+// (A) SELECT — Index Scan vs Seq Scan; visibility via xmin/xmax in both cases
 async function doSelect(){
   if(busy) return;
   const email = document.getElementById('selEmail').value.trim();
@@ -392,52 +447,73 @@ async function doSelect(){
   busy=true;
   logLine('cmd', `> SELECT * FROM users WHERE email = '${email}';`);
 
-  // candidate live tuples (latest version of each row)
-  const candidates = rows.filter(r=>r.xmax===0);
-  const match = candidates.find(r=>r.email===email && (r.committed || r.pending));
+  const match = rows.find(r=>r.email===email && ownVisible(r));
 
   if(indexOn){
     logLine('info', 'planner chose → Index Scan using idx_users_email');
-    // probe the B-tree, then jump straight to the heap tuple
     if(match){
       await fly('#idx', '#idxe-'+match.id, '🔍 '+email, 'read');
       await sleep(120);
       await fly('#idxe-'+match.id, '#row'+match.id, '→ #'+match.id, 'read');
       flashRow(match.id, 'flash-ok');
-      logLine('ok', `Index Scan: 1 index lookup (O(log n)) → row #${match.id} found. 1 row.`);
-      explain(`<b>Index Scan.</b> The B-tree on <code>email</code> is binary-searched (≈ log₂ of ${candidates.length} rows), jumping <b>straight</b> to row #${match.id} — no heap rows wasted. This is the <code>O(log n)</code> win indexes buy you.`);
+      logLine('ok', `Index Scan: B-tree lookup (O(log n)) → heap tuple #${match.id}, visibility check on xmin ${match.xmin}/xmax ${match.xmax||'∅'} passed. 1 row.`);
+      explain(`<b>Index Scan.</b> The B-tree found the key and pointed at tuple #${match.id}; the heap tuple's <code>xmin</code>/<code>xmax</code> passed the visibility check for your snapshot. Note the two steps: the <b>index finds</b>, the <b>heap decides visibility</b>.`);
     } else {
-      await fly('#idx', '#idx', '🔍 '+email, 'bad');
-      logLine('warn', `Index Scan: key '${email}' not in B-tree → 0 rows.`);
-      explain(`<b>Index Scan</b> found no matching key in the B-tree, so it returned <b>0 rows</b> without touching the heap at all.`);
+      // the index may still hold entries for versions that are dead/invisible to us
+      const ghost = rows.filter(r=>r.email===email).pop();
+      if(ghost){
+        await fly('#idx', '#idxe-'+ghost.id, '🔍 '+email, 'read');
+        await sleep(120);
+        await fly('#idxe-'+ghost.id, '#row'+ghost.id, '→ #'+ghost.id, 'bad');
+        flashRow(ghost.id, 'flash-bad');
+        logLine('warn', `Index Scan: entry found → heap tuple #${ghost.id}, but visibility check FAILED (xmin ${xidLabel(ghost.xmin)}, xmax ${xidLabel(ghost.xmax)}) → 0 rows.`);
+        explain(`<b>The index lied — the heap corrected it.</b> B-tree entries aren't removed on DELETE/ROLLBACK; the scan followed the pointer, evaluated <code>xmin</code>/<code>xmax</code> against your snapshot, and rejected the tuple. This heap visibility re-check is exactly why Postgres needs the heap (or a visibility map) even on index scans.`);
+      } else {
+        await fly('#idx', '#idx', '🔍 '+email, 'bad');
+        logLine('warn', `Index Scan: key '${email}' not in B-tree → 0 rows.`);
+        explain(`<b>Index Scan</b> found no matching key in the B-tree, so it returned <b>0 rows</b> without touching the heap at all.`);
+      }
     }
   } else {
     logLine('warn', 'planner chose → Seq Scan (no usable index)');
-    explain(`<b>Seq Scan.</b> With no index, Postgres must read <b>every</b> heap tuple top-to-bottom until it finds a match — <code>O(n)</code>.`);
-    let examined=0, found=false;
-    for(const r of candidates){
+    explain(`<b>Seq Scan.</b> With no index, Postgres reads <b>every</b> heap tuple top-to-bottom — including dead ones — and visibility-checks each against your snapshot. <code>O(n)</code>, and bloat makes n bigger.`);
+    let examined=0, skipped=0, found=false;
+    for(const r of rows){
       examined++;
       highlightRow(r.id, true);
       await fly('#heap', '#row'+r.id, examined, 'bad');
       await sleep(90);
       highlightRow(r.id, false);
-      if(r.email===email && (r.committed || r.pending)){
+      if(!ownVisible(r)){
+        skipped++;
+        if(r.email===email) logLine('info', `tuple #${r.id} matches the WHERE but fails visibility (xmin ${xidLabel(r.xmin)}, xmax ${xidLabel(r.xmax)}) — skipped.`);
+        continue;
+      }
+      if(r.email===email){
         flashRow(r.id, 'flash-ok');
-        logLine('ok', `Seq Scan: matched at row #${r.id} after examining ${examined} of ${candidates.length} rows.`);
-        explain(`<b>Seq Scan.</b> Postgres examined <b>${examined}</b> row(s) one-by-one to find the match. On a million-row table this is the difference between a few page reads and reading the whole table.`);
+        logLine('ok', `Seq Scan: matched tuple #${r.id} after examining ${examined} of ${rows.length} tuples${skipped?` (${skipped} dead/invisible discarded)`:''}.`);
+        explain(`<b>Seq Scan.</b> Postgres examined <b>${examined}</b> tuple(s) one-by-one${skipped?`, discarding <b>${skipped}</b> that failed the xmin/xmax visibility check`:''}. On a million-row table this is the difference between a few page reads and reading the whole table.`);
         found=true;
         break;
       }
     }
     if(!found){
-      logLine('warn', `Seq Scan: examined all ${examined} rows → 0 rows. Worst case of O(n).`);
-      explain(`<b>Seq Scan</b> read all <b>${examined}</b> rows and found nothing — the worst case. An index would have answered this in one lookup.`);
+      logLine('warn', `Seq Scan: examined all ${examined} tuples${skipped?` (${skipped} failed visibility)`:''} → 0 rows. Worst case of O(n).`);
+      explain(`<b>Seq Scan</b> read all <b>${examined}</b> tuples and returned nothing${skipped?` — including <b>${skipped}</b> dead tuple(s) it still had to read and discard. That's bloat: dead tuples cost real I/O`:''}. An index would have answered faster.`);
     }
   }
   busy=false;
 }
 
-// (B)+(C) INSERT — pending if in a txn
+// helper: the xid a write runs under (auto-commit = new xid committed instantly)
+function writeXid(){
+  if(inTxn) return curXid;
+  const x = nextXid++;
+  committedXids.add(x);
+  return x;
+}
+
+// (B) INSERT — new tuple with xmin = my xid, xmax = 0
 async function doInsert(){
   if(busy) return;
   const email = document.getElementById('insEmail').value.trim();
@@ -445,24 +521,24 @@ async function doInsert(){
   if(!email||!name) return;
   busy=true;
   logLine('cmd', `> INSERT INTO users (email, name) VALUES ('${email}', '${name}');`);
-  const r = {id:nextId++, email, name, xmin:(inTxn?curXid:nextXid++), xmax:0,
-             committed:!inTxn, pending:inTxn};
+  const xid = writeXid();
+  const r = {id:nextId++, email, name, xmin:xid, xmax:0};
   rows.push(r);
   render();
   flashRow(r.id, inTxn?'flash-bad':'flash-ok');
   await fly('#heap', '#row'+r.id, 'new tuple', inTxn?'bad':'read');
   if(inTxn){
-    logLine('warn', `row #${r.id} inserted as PENDING (xmin ${curXid}) — visible only inside txn ${curXid}.`);
-    explain(`Inside transaction <b>${curXid}</b>, the new tuple is written but marked <b>pending</b> (dashed). Look right: <b>another session does not see it</b>. It becomes durable &amp; visible only on <b>COMMIT</b>; <b>ROLLBACK</b> throws it away.`);
+    logLine('warn', `tuple #${r.id} written: xmin ${xid} (in progress), xmax ∅ — visible only inside txn ${xid} until COMMIT.`);
+    explain(`Inside transaction <b>${xid}</b>: the tuple is physically in the heap ${indexOn?'(and already in the index!) ':''}with <code>xmin = ${xid}</code>, but ${xid} isn't committed, so the visibility rule hides it from everyone else — check the other session.`);
   } else {
-    logLine('ok', `row #${r.id} inserted &amp; auto-committed (xmin ${r.xmin}).`);
-    explain(`No open transaction, so the INSERT auto-commits: the row is immediately durable and visible to everyone. ${indexOn?'The B-tree index was also updated (a write cost).':''}`);
+    logLine('ok', `tuple #${r.id} written: xmin ${xid} (auto-committed), xmax ∅ — visible to all new snapshots.`);
+    explain(`Auto-commit: xid <b>${xid}</b> committed instantly, so the tuple (<code>xmin ${xid}, xmax ∅</code>) passes everyone's visibility check.${indexOn?' The B-tree was also updated (the write cost of an index).':''}${obsIso==='RR'?' <b>Except</b> the RR observer — its frozen snapshot predates this commit.':''}`);
   }
   render();
   busy=false;
 }
 
-// (C) UPDATE — MVCC: new tuple version, old marked with xmax
+// (C) UPDATE — MVCC: stamp old version's xmax + INSERT a new version (never in place)
 async function doUpdate(){
   if(busy) return;
   const email = document.getElementById('selEmail').value.trim();
@@ -470,41 +546,69 @@ async function doUpdate(){
   if(!email||!newName) return;
   busy=true;
   logLine('cmd', `> UPDATE users SET name = '${newName}' WHERE email = '${email}';`);
-  const old = rows.find(r=>r.email===email && r.xmax===0 && (r.committed||r.pending));
+  const old = rows.find(r=>r.email===email && ownVisible(r));
   if(!old){
-    logLine('warn', `UPDATE matched 0 rows (no live tuple with email '${email}').`);
-    explain(`No live row matched <code>email = '${email}'</code>, so nothing was updated.`);
+    logLine('warn', `UPDATE matched 0 rows (no tuple with email '${email}' visible to this session).`);
+    explain(`No visible row matched <code>email = '${email}'</code>, so nothing was updated.`);
     busy=false; return;
   }
-  const xid = inTxn ? curXid : nextXid++;
-  // MVCC: do NOT overwrite. Mark old superseded, write a NEW tuple version.
+  const xid = writeXid();
+  // MVCC: do NOT overwrite. Stamp the old version dead, write a NEW version.
   old.xmax = xid;
-  const nv = {id:nextId++, email, name:newName, xmin:xid, xmax:0,
-              committed:!inTxn, pending:inTxn};
+  const nv = {id:nextId++, email, name:newName, xmin:xid, xmax:0};
   rows.push(nv);
   render();
-  await fly('#row'+old.id, '#row'+nv.id, 'v2', inTxn?'bad':'read');
+  await fly('#row'+old.id, '#row'+nv.id, 'ctid →', inTxn?'bad':'read');
   flashRow(old.id, 'flash-bad');
   flashRow(nv.id, inTxn?'flash-bad':'flash-ok');
-  logLine('info', `MVCC: old tuple #${old.id} marked superseded (xmax ${xid}); new version #${nv.id} written.`);
+  logLine('info', `MVCC: old tuple #${old.id} stamped xmax ${xid}; new version #${nv.id} written with xmin ${xid}, xmax ∅ (update chain #${old.id}→#${nv.id}).`);
   if(inTxn){
-    logLine('warn', `new version #${nv.id} is PENDING — other sessions still read old #${old.id}.`);
-    explain(`<b>MVCC in action.</b> Postgres did <b>not</b> overwrite row #${old.id} in place — it set its <code>xmax = ${xid}</code> and wrote a brand-new tuple #${nv.id} ('${newName}'). Because the new version is uncommitted, <b>concurrent readers still see the old #${old.id}</b> — readers don't block writers and vice-versa.`);
+    logLine('warn', `xid ${xid} not committed yet — other sessions still see old #${old.id}.`);
+    explain(`<b>MVCC in action.</b> No in-place overwrite: old #${old.id} got <code>xmax = ${xid}</code>, new #${nv.id} got <code>xmin = ${xid}</code>. Until ${xid} commits, the visibility rule keeps showing <b>old #${old.id}</b> to everyone else — readers never blocked, writers never waited.`);
   } else {
-    logLine('ok', `committed: new version #${nv.id} is now visible; old #${old.id} is dead (awaits VACUUM).`);
-    explain(`<b>MVCC.</b> Even with auto-commit, the UPDATE created a <b>new tuple</b> #${nv.id} and left the old #${old.id} as a dead version (later reclaimed by <b>VACUUM</b>). Snapshots taken before this commit could still have read the old row.`);
+    logLine('ok', `xid ${xid} committed: new snapshots see #${nv.id}; old #${old.id} is dead (awaits VACUUM).`);
+    explain(`<b>MVCC.</b> The UPDATE = <code>xmax</code> stamp on #${old.id} + new tuple #${nv.id}. Old #${old.id} is now a <b>dead version</b> costing heap space until <b>VACUUM</b>.${obsIso==='RR'?` And look: the <b>RR observer still reads old '${old.name}'</b> — its snapshot predates xid ${xid}. Same tuples, different snapshot, different answer.`:''}`);
   }
   render();
   busy=false;
 }
 
-// transactions
+// (D) DELETE — ONLY stamps xmax on the current version. No new tuple, nothing moves.
+async function doDelete(){
+  if(busy) return;
+  const email = document.getElementById('selEmail').value.trim();
+  if(!email) return;
+  busy=true;
+  logLine('cmd', `> DELETE FROM users WHERE email = '${email}';`);
+  const tgt = rows.find(r=>r.email===email && ownVisible(r));
+  if(!tgt){
+    logLine('warn', `DELETE matched 0 rows (no tuple with email '${email}' visible to this session).`);
+    explain(`No visible row matched <code>email = '${email}'</code>, so nothing was deleted.`);
+    busy=false; return;
+  }
+  const xid = writeXid();
+  tgt.xmax = xid;   // that's ALL a delete does
+  render();
+  flashRow(tgt.id, 'flash-bad');
+  await fly('#heap', '#row'+tgt.id, 'xmax='+xid, 'bad');
+  if(inTxn){
+    logLine('warn', `tuple #${tgt.id} stamped xmax ${xid} (in progress) — still visible to other sessions until COMMIT.`);
+    explain(`<b>DELETE = one stamp.</b> Tuple #${tgt.id} got <code>xmax = ${xid}</code> and <b>nothing else happened</b> — no new tuple, no data moved. Until ${xid} commits, other sessions' visibility checks still pass (deleter not committed), so they keep seeing the row. ROLLBACK would just mark ${xid} aborted and the stamp becomes meaningless.`);
+  } else {
+    logLine('ok', `tuple #${tgt.id} stamped xmax ${xid} (auto-committed) — dead to new snapshots; space reclaimed later by VACUUM.`);
+    explain(`<b>DELETE = one stamp.</b> Tuple #${tgt.id} is still physically in the heap${indexOn?' and in the index':''} — only its <code>xmax = ${xid}</code> (committed) makes new snapshots skip it. ${obsIso==='RR'?`The <b>RR observer still sees it</b> (snapshot predates ${xid}) — and that snapshot will also block VACUUM from reclaiming it. `:''}Try <b>VACUUM</b> to reclaim it.`);
+  }
+  render();
+  busy=false;
+}
+
+// transactions — COMMIT/ROLLBACK are pg_xact status flips, not physical operations
 function doBegin(){
   if(busy||inTxn) return;
   inTxn=true; curXid=nextXid++;
   logLine('cmd', '> BEGIN;');
-  logLine('info', `transaction ${curXid} started. Subsequent writes stay private until COMMIT.`);
-  explain(`Transaction <b>${curXid}</b> is open. Now INSERT or UPDATE — changes will be <b>pending</b> (dashed) and invisible to the other session until you <b>COMMIT</b>.`);
+  logLine('info', `transaction ${curXid} started. Its xmin/xmax stamps stay "in progress" (…) until COMMIT.`);
+  explain(`Transaction <b>${curXid}</b> is open. INSERT/UPDATE/DELETE will stamp tuples with xid ${curXid} — physically written immediately, but the visibility rule hides them from other sessions until <b>${curXid} commits</b>.`);
   syncButtons();
 }
 
@@ -512,13 +616,13 @@ async function doCommit(){
   if(busy||!inTxn) return;
   busy=true;
   logLine('cmd', '> COMMIT;');
-  const pend = rows.filter(r=>r.pending);
-  rows.forEach(r=>{ if(r.pending){ r.pending=false; r.committed=true; } });
+  const mine = rows.filter(r=>r.xmin===curXid || r.xmax===curXid);
+  committedXids.add(curXid);          // the ONLY thing commit does to visibility
   render();
-  pend.forEach(r=>flashRow(r.id,'flash-ok'));
+  mine.forEach(r=>flashRow(r.id, r.xmax===curXid?'flash-bad':'flash-ok'));
   await sleep(200);
-  logLine('ok', `transaction ${curXid} committed: ${pend.length} change(s) durable (fsync to WAL) &amp; visible to all sessions.`);
-  explain(`<b>COMMIT.</b> Transaction ${curXid}'s ${pend.length} change(s) are flushed to the <b>WAL</b> (durable) and become visible to everyone — see the other session now reflects them. ${indexOn?'The index now includes the new committed rows.':''}`);
+  logLine('ok', `xid ${curXid} marked COMMITTED in pg_xact (after WAL fsync) — all its stamps became real atomically: ${mine.length} tuple(s) affected.`);
+  explain(`<b>COMMIT = one atomic flip.</b> The WAL record is fsynced (durability), then xid ${curXid} is marked committed in <b>pg_xact</b>. Every tuple stamped with ${curXid} — inserts <i>and</i> deletes — changes visibility <b>at the same instant</b>: that's atomicity without touching the tuples again.${obsIso==='RR'?` <b>But the RR observer still sees nothing new</b> — its snapshot was frozen before ${curXid} committed. Flip it back to Read Committed to "see the present".`:''}`);
   inTxn=false; curXid=0;
   syncButtons();
   busy=false;
@@ -528,16 +632,70 @@ async function doRollback(){
   if(busy||!inTxn) return;
   busy=true;
   logLine('cmd', '> ROLLBACK;');
-  // discard pending inserts; revert pending updates (restore old version's xmax)
-  const discarded = rows.filter(r=>r.pending).length;
-  rows.forEach(r=>{ if(r.xmax===curXid) r.xmax=0; }); // un-supersede old versions
-  rows = rows.filter(r=>!r.pending);                   // drop pending tuples
+  const mine = rows.filter(r=>r.xmin===curXid || r.xmax===curXid);
+  abortedXids.add(curXid);            // nothing is physically undone
   render();
+  mine.forEach(r=>flashRow(r.id,'flash-bad'));
   await sleep(200);
-  logLine('warn', `transaction ${curXid} rolled back: ${discarded} pending change(s) discarded. Atomicity preserved.`);
-  explain(`<b>ROLLBACK.</b> All ${discarded} pending tuple(s) were discarded and any superseded rows restored — the database is exactly as it was before BEGIN. This is the <b>A</b> (atomicity) in ACID: all-or-nothing.`);
+  logLine('warn', `xid ${curXid} marked ABORTED in pg_xact. Nothing physically undone: ${mine.length} stamped tuple(s) stay in the heap; the visibility rule now ignores them.`);
+  explain(`<b>ROLLBACK = another flip, not an undo.</b> Postgres has no undo log: xid ${curXid} is simply marked aborted. Tuples it inserted (☠ <code>xmin ${curXid}✗</code>) are treated as <i>never born</i>; its <code>xmax</code> stamps are ignored, so "deleted" rows are simply alive. The garbage stays until <b>VACUUM</b> — a million-row aborted load still leaves a million dead tuples.`);
   inTxn=false; curXid=0;
   syncButtons();
+  busy=false;
+}
+
+// observer session isolation toggle: Read Committed <-> Repeatable Read
+function toggleIso(){
+  if(busy) return;
+  if(obsIso==='RC'){
+    obsIso='RR'; rrSnap=snapNow();
+    document.getElementById('isoBtn').textContent = '👥 other session: REPEATABLE READ';
+    logLine('cmd', "> (other session) BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ; SELECT 1;");
+    logLine('info', `observer snapshot FROZEN: it sees exactly the xids committed as of now (≤ ${rrSnap.atXid}) — for its whole transaction.`);
+    explain(`The other session froze its snapshot (<b>Repeatable Read</b>). Now COMMIT any change here — the RR panel won't move, while Read Committed would have shown it. <b>Same xmin/xmax on disk; the only difference is which snapshot the visibility rule runs against.</b> Bonus: its snapshot now pins the xmin horizon — try DELETE + VACUUM.`);
+  } else {
+    obsIso='RC'; rrSnap=null;
+    document.getElementById('isoBtn').textContent = '👥 other session: READ COMMITTED';
+    logLine('cmd', '> (other session) COMMIT;  -- back to READ COMMITTED');
+    logLine('info', 'observer transaction ended: fresh snapshot per statement again — it jumps to the latest committed state, and no longer pins VACUUM.');
+    explain(`Back to <b>Read Committed</b>: a fresh snapshot per statement, so the observer instantly "caught up" with everything committed while it was frozen. This is also why ending long transactions un-blocks VACUUM.`);
+  }
+  render();
+}
+
+// VACUUM — reclaim dead tuples, but only those no live snapshot can still see
+async function doVacuum(){
+  if(busy) return;
+  busy=true;
+  logLine('cmd', '> VACUUM users;');
+  const obsS = (obsIso==='RR' && rrSnap) ? rrSnap : null;
+  const removable=[], pinned=[];
+  rows.forEach(r=>{
+    const abortedBirth = abortedXids.has(r.xmin);                 // never born
+    const deadByCommit = r.xmax!==0 && isCommitted(r.xmax);       // deleted/superseded & committed
+    if(!abortedBirth && !deadByCommit) return;
+    // aborted-birth tuples are invisible to ALL snapshots -> always removable;
+    // committed-dead ones survive if a held snapshot still sees them (xmin horizon)
+    if(!abortedBirth && obsS && visibleToSnap(obsS, r)) pinned.push(r);
+    else removable.push(r);
+  });
+  for(const r of removable){ flashRow(r.id,'flash-bad'); }
+  await sleep(250);
+  rows = rows.filter(r=>!removable.includes(r));
+  render();
+  if(removable.length===0 && pinned.length===0){
+    logLine('info', 'VACUUM: nothing to do — no dead tuples.');
+    explain('<b>VACUUM</b> found no dead tuples. DELETE or UPDATE something (or ROLLBACK an INSERT), then run it again.');
+  } else {
+    if(removable.length) logLine('ok', `VACUUM: reclaimed ${removable.length} dead tuple(s) — heap space freed, index entries removed. (Space is reusable, file not shrunk.)`);
+    if(pinned.length){
+      pinned.forEach(r=>flashRow(r.id,'flash-bad'));
+      logLine('warn', `VACUUM: ${pinned.length} dead tuple(s) NOT reclaimed — still visible to the observer's frozen snapshot (xid ≤ ${obsS.atXid}). The xmin horizon is pinned.`);
+      explain(`<b>The xmin-horizon gotcha, live.</b> VACUUM may only remove versions <b>no active snapshot can see</b>. The RR observer's frozen snapshot still sees ${pinned.length} "deleted" tuple(s), so they survived. This is exactly how one <code>idle in transaction</code> session bloats tables fleet-wide. End it (flip to Read Committed) and VACUUM again.`);
+    } else {
+      explain(`<b>VACUUM</b> removed ${removable.length} dead tuple(s): their space is reusable and their index entries are gone. Note what it did <i>not</i> do: shrink the file (that's VACUUM FULL / pg_repack) or touch live tuples.`);
+    }
+  }
   busy=false;
 }
 
@@ -559,15 +717,23 @@ function toggleIndex(){
 document.getElementById('insBtn').onclick = doInsert;
 document.getElementById('selBtn').onclick = doSelect;
 document.getElementById('updBtn').onclick = doUpdate;
+document.getElementById('delBtn').onclick = doDelete;
 document.getElementById('idxBtn').onclick = toggleIndex;
 document.getElementById('beginBtn').onclick = doBegin;
 document.getElementById('commitBtn').onclick = doCommit;
 document.getElementById('rollbackBtn').onclick = doRollback;
+document.getElementById('isoBtn').onclick = toggleIso;
+document.getElementById('vacBtn').onclick = doVacuum;
 document.getElementById('resetBtn').onclick = reset;
 
-// pending-row styling (uses only existing palette vars, not restyling shared classes)
+// page-specific tuple-state styling (uses only existing palette vars, not restyling shared classes)
 const st = document.createElement('style');
-st.textContent = '.kv.pending{border-style:dashed;border-color:var(--warn);opacity:.7;color:var(--warn)}';
+st.textContent = [
+  '.kv.pending{border-style:dashed;border-color:var(--warn);opacity:.75;color:var(--warn)}',
+  '.kv.delpending{border-style:dashed;border-color:var(--bad);opacity:.8}',
+  '.kv.deadrow{border-style:dotted;border-color:var(--bad);opacity:.45}',
+  '.kv .syscol{font-size:10px;opacity:.75;white-space:nowrap;margin-left:6px;font-family:ui-monospace,Menlo,Consolas,monospace}'
+].join('\n');
 document.head.appendChild(st);
 
 reset();
