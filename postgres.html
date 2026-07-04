@@ -75,6 +75,49 @@
     </div>
   </div>
 
+  <!-- ===== XMIN / XMAX DEEP DIVE ===== -->
+  <div class="card ref">
+    <h2 style="margin-top:0">🔬 <code>xmin</code> / <code>xmax</code> — how MVCC actually decides visibility</h2>
+    <p class="small muted" style="margin-top:0">Every heap tuple carries hidden <b>system columns</b>. The two that drive MVCC are <code>xmin</code> and <code>xmax</code> — a pair of transaction IDs (XIDs) that stamp a row version's <b>birth</b> and <b>death</b>. There is no separate "current value"; a live row is simply the tuple version that is visible to <i>your</i> snapshot. Query them directly: <code>SELECT xmin, xmax, ctid, * FROM users;</code></p>
+
+    <table class="cmd-tbl">
+      <tr><td><code>xmin</code></td><td>XID of the transaction that <b>created</b> this tuple version (INSERT, or the new version an UPDATE produced). Never changes after write.</td></tr>
+      <tr><td><code>xmax</code></td><td><b>0</b> = live/current. Non-zero = the XID that <b>deleted or superseded</b> this version (DELETE, or the old version of an UPDATE). Also set — with a lock flag in <code>infomask</code> — by <code>SELECT … FOR UPDATE/SHARE</code>.</td></tr>
+      <tr><td><code>cmin</code>/<code>cmax</code></td><td>command IDs — order visibility <i>within the same transaction</i> (statement N doesn't see rows a later statement N+1 writes).</td></tr>
+      <tr><td><code>ctid</code></td><td>physical location <code>(page, offset)</code>. An UPDATE points the old tuple's <b>t_ctid</b> at the new version, forming the <b>update chain</b> Postgres walks to find the latest row.</td></tr>
+    </table>
+
+    <div class="note info"><b>The visibility rule (simplified).</b> A tuple version is visible to a snapshot when <b>its <code>xmin</code> is committed and in the past</b>, <b>and</b> <b>its <code>xmax</code> is 0, or points to a transaction that is aborted / still in progress / in the future.</b> In pseudocode:
+<pre class="code">visible(tuple, snapshot) =
+     committed(tuple.xmin) AND NOT in_progress(tuple.xmin, snapshot)   <span class="c">-- born &amp; already committed</span>
+  AND ( tuple.xmax == 0                                                <span class="c">-- never deleted, OR…</span>
+        OR NOT committed(tuple.xmax)                                   <span class="c">-- …deleter aborted / not yet committed</span>
+        OR in_progress(tuple.xmax, snapshot) )                         <span class="c">-- …deleter still running vs my snapshot</span></pre>
+    That's the whole engine: <b>readers never block writers</b> because a reader just evaluates this predicate against tuple versions that already exist — it never waits on a lock.</div>
+
+    <h3>A snapshot is what "now" means to you</h3>
+    <p class="small">When a statement (or transaction) begins, Postgres takes a <b>snapshot</b>: <code>{xmin, xmax, xip_list}</code> — the lowest still-running XID, the next XID to be assigned, and the list of XIDs in-progress at that instant. The visibility rule above is evaluated against this snapshot. <b>Isolation level is entirely about when the snapshot is taken and how long it's held.</b></p>
+
+    <table class="cmd-tbl">
+      <tr><td><b>Read Committed</b> (default)</td><td>A <b>fresh snapshot per statement</b>. Each new SELECT sees everything committed <i>before it started</i> → non-repeatable reads &amp; phantoms are possible. On a write conflict it doesn't abort: it <b>walks the update chain</b> (via <code>ctid</code>) to the latest committed version and re-evaluates the <code>WHERE</code> (EvalPlanQual).</td></tr>
+      <tr><td><b>Repeatable Read</b> (snapshot isolation)</td><td>One snapshot taken at the <b>first</b> statement, held for the whole transaction. You never see XIDs that committed after you started, so reads are stable. A concurrent UPDATE/DELETE to a row you also write raises <code>could not serialize access</code> → you retry.</td></tr>
+      <tr><td><b>Serializable</b> (SSI)</td><td>Repeatable Read's snapshot <b>plus</b> Serializable Snapshot Isolation: tracks read/write dependencies with <b>predicate locks</b> (SIReadLock) and aborts one transaction in a dangerous cycle. Guarantees the result equals <i>some</i> serial order. Same <code>xmin</code>/<code>xmax</code> machinery underneath — SSI only adds conflict detection on top.</td></tr>
+    </table>
+    <div class="note warn"><b>Key point for the interview:</b> the tuple's <code>xmin</code>/<code>xmax</code> are identical regardless of isolation level. What changes is <b>which snapshot</b> the visibility check runs against. Read Committed re-snapshots every statement; Repeatable Read and Serializable freeze one snapshot at transaction start.</div>
+
+    <h3>What each operation does to <code>xmin</code>/<code>xmax</code></h3>
+    <table class="cmd-tbl">
+      <tr><td><b>INSERT</b></td><td>Writes one new tuple: <code>xmin = my_xid</code>, <code>xmax = 0</code>. Invisible to others until <code>my_xid</code> commits.</td></tr>
+      <tr><td><b>SELECT</b></td><td>Reads nothing, writes nothing. Just evaluates the visibility rule against each tuple version and returns the ones that pass. This is why it never blocks.</td></tr>
+      <tr><td><b>UPDATE</b></td><td>Two-step, <b>never in place</b>: set the old version's <code>xmax = my_xid</code>, then INSERT a <b>new tuple</b> with <code>xmin = my_xid</code>, and chain old→new via <code>ctid</code>. Old readers keep seeing the old version; the old tuple becomes <b>dead</b> once no snapshot needs it → reclaimed by VACUUM.</td></tr>
+      <tr><td><b>DELETE</b></td><td>Sets <code>xmax = my_xid</code> on the current version. <b>No new tuple.</b> Others still see the row until you commit; once committed and past all snapshots, VACUUM frees the space.</td></tr>
+      <tr><td><b>SELECT … FOR UPDATE</b></td><td>Sets <code>xmax = my_xid</code> too, but flags it as a <b>lock, not a delete</b>, in the tuple's <code>infomask</code>. The row stays live &amp; visible; other writers of that row block. This is how a row-level lock and a delete share the same field.</td></tr>
+      <tr><td><b>ROLLBACK</b></td><td>Nothing is physically undone. The aborted <code>xid</code> is simply marked aborted in <code>pg_xact</code> (commit log); the visibility rule then treats any tuple with that <code>xmin</code> as never-born and any <code>xmax</code> as never-deleted.</td></tr>
+    </table>
+
+    <div class="note gotcha"><b>The cost of never overwriting.</b> Because UPDATE and DELETE only stamp XIDs and leave old versions behind, tables accumulate <b>dead tuples</b> → <b>bloat</b>. <b>VACUUM</b> reclaims them, but only versions older than the oldest snapshot still running (the <b>xmin horizon</b>) — so one long-running or <code>idle in transaction</code> session pins the horizon and blocks cleanup fleet-wide. Separately, XIDs are <b>32-bit</b>, so <b>VACUUM FREEZE</b> must stamp very old, still-live tuples as "frozen / always visible" before the counter wraps — miss it and you hit <b>transaction-ID wraparound</b>, the canonical Postgres outage.</div>
+  </div>
+
   <!-- ===== AT SCALE ===== -->
   <div class="card scale">
     <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
