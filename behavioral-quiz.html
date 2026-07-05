@@ -27,6 +27,9 @@
     padding:6px 13px;font-size:13px;cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:6px}
   .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
   .chip .ct{opacity:.7;font-size:11px}
+  .chip{flex-wrap:wrap;row-gap:1px}
+  .chip .chip-stat{flex-basis:100%;font-size:10px;line-height:1.25;opacity:.9;font-weight:600}
+  .chip.on .chip-stat, .chip.on .chip-stat span{color:#fff !important}
   .label{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px}
   /* question */
   .qtop{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
@@ -304,12 +307,13 @@ function loadStore(){
   try{ return JSON.parse(localStorage.getItem(LS_KEY)) || defaultStore(); }
   catch(e){ return defaultStore(); }
 }
-function defaultStore(){ return {topics:{}, sessions:[], levels:{}, missed:{}}; }
+function defaultStore(){ return {topics:{}, sessions:[], levels:{}, missed:{}, qstats:{}}; }
 function saveStore(s){ try{ localStorage.setItem(LS_KEY, JSON.stringify(s)); }catch(e){} }
 let STORE = loadStore();
-// migrate older saved stores that predate levels/missed
+// migrate older saved stores that predate levels/missed/qstats
 if(!STORE.levels) STORE.levels = {};
 if(!STORE.missed) STORE.missed = {};
+if(!STORE.qstats) STORE.qstats = {};
 
 function topicStat(t){
   if(!STORE.topics[t]) STORE.topics[t] = {correct:0, total:0};
@@ -335,6 +339,29 @@ function recordAnswer(q, correct){
     // got it right later — mark recovered but keep the record
     STORE.missed[q.id].recoveredAt = Date.now();
   }
+  // per-question stats: drive the weighted selection (well-known questions appear rarer)
+  const qs = STORE.qstats[q.id] || (STORE.qstats[q.id] = {c:0, t:0, streak:0, last:0});
+  qs.t++;
+  if(correct){ qs.c++; qs.streak++; } else { qs.streak = 0; }
+  qs.last = Date.now();
+}
+
+/* selection weight: unseen = 1.0 · last answer wrong = 1.2 (review boost)
+   · correct streak s = 1/(1+s), floored at 0.15 so nothing vanishes forever */
+function qWeight(q){
+  const st = STORE.qstats[q.id];
+  if(!st || st.t === 0){
+    const m = STORE.missed[q.id];               // pre-qstats stores: missed{} still boosts
+    return (m && !m.recoveredAt) ? 1.2 : 1.0;
+  }
+  if(st.streak === 0) return 1.2;
+  return Math.max(0.15, 1/(1 + st.streak));
+}
+/* weighted shuffle (Efraimidis–Spirakis): sort by U^(1/w) desc — a question with
+   half the weight is ~half as likely to make the session cut */
+function weightedOrder(pool){
+  return pool.map(q=>({q, k: Math.pow(Math.random(), 1/qWeight(q))}))
+             .sort((a,b)=>b.k-a.k).map(x=>x.q);
 }
 function isWeak(t){
   const s = STORE.topics[t];
@@ -353,14 +380,34 @@ const topicChipsEl = document.getElementById("topicChips");
 
 function topicCount(t){ return QUESTIONS.filter(q=>q.topic===t).length; }
 
+/* per-topic progress: coverage = distinct questions tried; accuracy = all-time;
+   grade = accuracy × coverage (you can't "know" a topic you've barely sampled) */
+function topicProgress(t){
+  const qs = QUESTIONS.filter(q=>q.topic===t);
+  let seen = 0;
+  qs.forEach(q=>{ const st = STORE.qstats[q.id]; if(st && st.t>0) seen++; });
+  const agg = STORE.topics[t];
+  const acc = (agg && agg.total>0) ? agg.correct/agg.total : null;
+  const score = acc===null ? null : acc * (seen/qs.length);
+  const grade = score===null ? null : score>=.7 ? "A" : score>=.5 ? "B" : score>=.3 ? "C" : "D";
+  return {n:qs.length, seen, acc, score, grade};
+}
+
 function renderTopicChips(){
   topicChipsEl.innerHTML = "";
   allTopics().forEach(t=>{
     const c = document.createElement("div");
     c.className = "chip" + (selectedTopics.has(t) ? " on":"");
     const weak = isWeak(t);
-    c.innerHTML = `${weak?'⚠️ ':''}${t} <span class="ct">${topicCount(t)}</span>`;
-    if(weak) c.title = "Weak topic — accuracy below 60%";
+    const p = topicProgress(t);
+    const accCol = p.acc===null ? 'var(--muted)' : p.acc>=.8 ? 'var(--ok)' : p.acc>=.6 ? 'var(--warn)' : 'var(--bad)';
+    const stat = p.seen===0
+      ? `<span class="chip-stat" style="opacity:.55">0/${p.n} · not started</span>`
+      : `<span class="chip-stat">${p.seen}/${p.n} · <span style="color:${accCol}">${Math.round(p.acc*100)}%</span> · <b>${p.grade}</b></span>`;
+    c.innerHTML = `${weak?'⚠️ ':''}${t}${stat}`;
+    c.title = p.seen===0
+      ? `${t}: not attempted yet (${p.n} questions)`
+      : `${t}: tried ${p.seen} of ${p.n} questions · all-time accuracy ${Math.round(p.acc*100)}% · grade ${p.grade} = accuracy × coverage${weak?' · ⚠ weak (<60%)':''}`;
     c.onclick = ()=>{
       if(selectedTopics.has(t)) selectedTopics.delete(t); else selectedTopics.add(t);
       renderTopicChips(); updatePoolInfo();
@@ -402,7 +449,9 @@ function shuffle(a){ a=a.slice(); for(let i=a.length-1;i>0;i--){const j=Math.flo
 
 function startQuiz(pool){
   let qs = pool.slice();
-  if(document.getElementById("shuffleChk").checked) qs = shuffle(qs);
+  // weighted, not uniform: mastered questions (long correct streaks) surface rarely,
+  // fresh and recently-missed ones first — see qWeight()
+  if(document.getElementById("shuffleChk").checked) qs = weightedOrder(qs);
   const len = parseInt(document.getElementById("lenSel").value,10);
   if(len>0) qs = qs.slice(0,len);
   // shuffle option order per question while tracking correct indices
@@ -492,8 +541,18 @@ document.getElementById("checkBtn").onclick = ()=>{
   s.answered[s.i] = {correct:isCorrect};
   s.results[s.i] = {topic:q.topic, correct:isCorrect};
   recordAnswer(q, isCorrect);
+  // incremental session record: stats are complete after EVERY answer —
+  // quitting mid-quiz loses nothing (created lazily on the first answer)
+  if(!s.rec){
+    s.rec = {date:Date.now(), correct:0, total:0, topics:[]};
+    STORE.sessions.unshift(s.rec);
+    STORE.sessions = STORE.sessions.slice(0,50);
+  }
+  s.rec.total++; if(isCorrect) s.rec.correct++;
+  if(!s.rec.topics.includes(q.topic)) s.rec.topics.push(q.topic);
   saveStore(STORE);
   window.SDQSync && SDQSync.pushAnswer(q, isCorrect);
+  window.SDQSync && SDQSync.pushSession(s.rec);   // same date key -> idempotent overwrite
   renderQ();
 };
 
@@ -512,12 +571,7 @@ function finishQuiz(){
   // per-topic this session
   const byTopic = {};
   answered.forEach(r=>{ (byTopic[r.topic]=byTopic[r.topic]||{c:0,t:0}); byTopic[r.topic].t++; if(r.correct)byTopic[r.topic].c++; });
-  // save session summary
-  const sess = {date:Date.now(), correct, total, topics:Object.keys(byTopic)};
-  STORE.sessions.unshift(sess);
-  STORE.sessions = STORE.sessions.slice(0,50);
-  saveStore(STORE);
-  window.SDQSync && SDQSync.pushSession(sess);
+  // session summary was already maintained incrementally per answer (s.rec)
 
   document.getElementById("progFill").style.width = "100%";
   const pct = total? Math.round(correct/total*100):0;
@@ -690,7 +744,7 @@ show("setup");
 window.SDQSync && SDQSync.init({
   store: "behavioral",
   getStore: ()=>STORE,
-  setStore: s=>{ STORE = s; saveStore(STORE); },
+  setStore: s=>{ STORE = Object.assign(defaultStore(), s); saveStore(STORE); },  // normalize: old server code may lack qstats
   onRemoteUpdate: ()=>{ renderTopicChips(); updatePoolInfo(); },
 });
 </script>

@@ -57,13 +57,17 @@ window.SDQSync = (function(){
   }
 
   // ---------- queue & flush ----------
+  function scheduleFlush(){
+    if(!loadCfg()) return;
+    clearTimeout(flushTimer);
+    flushTimer = setTimeout(flush, FLUSH_DEBOUNCE_MS);
+  }
   function enqueue(ev){
-    const q = loadQ(); q.push(ev); saveQ(q);
+    const q = loadQ(); q.push(ev);
+    if(q.length > 2000) q.splice(0, q.length - 2000);   // never let an unconfigured queue grow unbounded
+    saveQ(q);
     setBadge();
-    if(loadCfg()){
-      clearTimeout(flushTimer);
-      flushTimer = setTimeout(flush, FLUSH_DEBOUNCE_MS);
-    }
+    scheduleFlush();
   }
 
   async function flush(){
@@ -200,7 +204,13 @@ window.SDQSync = (function(){
     },
     pushSession(sess){
       if(!ctx) return;
-      enqueue({type:"session", date:sess.date, correct:sess.correct, total:sess.total, topics:sess.topics});
+      const ev = {type:"session", date:sess.date, correct:sess.correct, total:sess.total, topics:sess.topics.slice()};
+      // engines push the running session after EVERY answer (same date key) —
+      // coalesce in the queue so one session = one event, not one per answer
+      const q = loadQ();
+      const i = q.findIndex(e=>e.type==="session" && e.date===ev.date);
+      if(i>=0){ q[i] = ev; saveQ(q); setBadge(); scheduleFlush(); }
+      else enqueue(ev);
     },
   };
 })();

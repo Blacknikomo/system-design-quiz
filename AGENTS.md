@@ -113,10 +113,11 @@ IDs are a short stable hash of the question text (djb2 → base36, prefixed `q`,
   topics: { [topic]: {correct, total} },
   sessions: [ {date, correct, total, topics:[...]} ],   // recent first, capped 50
   levels:  { [level]: {correct, total} },                // per seniority
-  missed:  { [id]: {id, topic, level, question, misses, lastMissed, recoveredAt?} }
+  missed:  { [id]: {id, topic, level, question, misses, lastMissed, recoveredAt?} },
+  qstats:  { [id]: {c, t, streak, last} }                // per-question: drives weighted selection
 }
 ```
-`recordAnswer(q, correct)` updates topics + levels + missed. `defaultStore()` defines the shape; on load, missing `levels`/`missed` are migrated in. **If you change this shape, add a migration**, don't break existing saved history.
+`recordAnswer(q, correct)` updates topics + levels + missed + qstats. The **session entry is maintained incrementally**: lazily unshifted on the first answer of a run and mutated after every answer (`session.rec`) — quitting mid-quiz loses nothing; `finishQuiz` adds no entry of its own. `defaultStore()` defines the shape; on load, missing `levels`/`missed`/`qstats` are migrated in. **If you change this shape, add a migration**, don't break existing saved history.
 
 ### 3.5 Weak-topics export (`sd-quiz-weak-analysis/v1`)
 
@@ -125,11 +126,15 @@ IDs are a short stable hash of the question text (djb2 → base36, prefixed `q`,
 ### 3.6 Rendering & filters
 
 - Setup: topic chips (`selectedTopics`), `diffSel`, `levelSel`, `lenSel`, shuffle. `matchingPool()` = questions whose topic is selected AND match diff AND match level.
+- **Topic chips show progress + a grade:** `topicProgress(t)` = coverage (distinct questions tried via `qstats`) + all-time accuracy (`topics`), grade = accuracy × coverage banded A(≥.7)/B(≥.5)/C(≥.3)/D. Chip line 2 (`.chip-stat`): `tried/n · acc% · grade`, accuracy color-banded ok/warn/bad.
+- **Weighted selection (spaced-repetition-lite):** with shuffle ON, `startQuiz` orders the pool by `weightedOrder()` — Efraimidis–Spirakis sampling with `qWeight(q)`: unseen 1.0, last-answer-wrong 1.2, correct streak s → 1/(1+s) floored at 0.15. Mastered questions surface rarely but never disappear; shuffle OFF keeps bank order (deterministic study mode).
 - Per-question option order is shuffled at session start into `_opts`/`_correct` (originals untouched).
 - Feedback after answering shows: `why` → `accept` (gold "Also defensible") → `more` → `📖 Source` link.
 - Weak topics (⚠, red) surface in the chips and the Stats bars.
 
-### 3.7 Cross-device sync (`sync.js` + `sync-backend/`)
+### 3.7 Cross-device sync (`sync.js`; backend currently removed)
+
+> **Status:** the AWS backend (`sync-backend/`) was removed by the owner in commit `a2ff57e` ("Removed persistence layer"). The client layer below is still wired in and **dormant** — unconfigured, it queues events locally (capped 2000) and changes nothing else. To revive the backend, restore `sync-backend/` from git history (`git checkout 5895dc4 -- sync-backend/`) — but note it predates `qstats` (§3.4): its `getState`/`bootstrap`/`applyAnswer` would need a `qstat#<qid>` item type added.
 
 Both quiz pages load `sync.js`, which renders a fixed **☁ badge** (top-right) and exposes `SDQSync`. The engines call three hooks: `SDQSync.init({store, getStore, setStore, onRemoteUpdate})` at boot (`store` is `"sd"` or `"behavioral"`), `pushAnswer(q, correct)` right after `recordAnswer`+`saveStore`, and `pushSession(sess)` in `finishQuiz`. Design is **event deltas, not state blobs**: answers/sessions are queued in `localStorage` (`sdq_sync_queue_<store>`) and POSTed in batches to a Lambda Function URL, which applies them with DynamoDB atomic `ADD`s — so a stale device can never overwrite progress made elsewhere. On load the client GETs `/state` (assembled server-side into the exact §3.4 shape) and adopts it as the source of truth; an empty server + non-empty local store triggers a one-time guarded bootstrap upload. Endpoint URL + secret are entered per device via the badge and live only in `localStorage` (`sdq_sync_cfg_v1`) — **never commit them** (public repo). Everything is fail-soft: unconfigured or offline, the quizzes behave exactly as before. Backend contract, table layout, deploy and teardown: `sync-backend/README.md`. If you change the §3.4 store shape, update BOTH the Lambda's `getState`/`bootstrap` assembly and this client, with migrations.
 
