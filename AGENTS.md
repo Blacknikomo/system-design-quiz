@@ -17,6 +17,8 @@ interactive/
 ├── index.html           # hub: links every simulator + the quiz
 ├── style.css            # SHARED theme + visual primitives (EVERY page links it, incl. both quizzes)
 ├── site.js              # SHARED chrome: fills each sub-page's <div class="back" data-nav> with the back-nav
+├── sync.js              # OPTIONAL cross-device progress sync client (☁ badge on the two quiz pages; see §3.7)
+├── sync-backend/        # its AWS backend: Lambda handler (index.mjs) + deploy.sh + README (not served as a page)
 ├── system-design-quiz.html   # the quiz ENGINE (UI + logic); question bank lives in questions.js
 ├── questions.js         # window.QUESTIONS = [...] — the 591-question bank (loaded before the quiz engine)
 ├── walkthroughs.html    # 42 decision-chain ENGINE (Reveal + Quiz-me modes); data lives in walkthroughs-data.js
@@ -52,7 +54,7 @@ Related, **outside this repo** (in the parent `FAANG Interviews/` folder):
 
 ## 2. Global conventions (apply to every file)
 
-- **Self-contained, vanilla, offline.** Each page is plain HTML + CSS + vanilla JS. No build step, no frameworks, no external libraries, no network calls. A page must work by double-clicking it (over `file://`).
+- **Self-contained, vanilla, offline.** Each page is plain HTML + CSS + vanilla JS. No build step, no frameworks, no external libraries, no network calls. A page must work by double-clicking it (over `file://`). *Single sanctioned exception:* `sync.js` (§3.7) talks to the owner's own AWS endpoint — but only when explicitly configured on the device, and every failure degrades to the normal offline behavior.
 - **No external CDNs.** Do not add script/style `src` to remote hosts.
 - **Theming via `style.css`.** Every page links `<link rel="stylesheet" href="style.css">` (the two quizzes included) and uses the shared CSS variables/classes (see §5). Do **not** redefine the theme inline; small page-specific layout tweaks in a tiny `<style>` are acceptable only when necessary (and, being after the link, they win on conflict).
 - **Dark theme tokens** live in `:root` of `style.css` (`--bg --panel --accent --ok --bad --warn ...`). Use the variables, never hard-coded hex (except inside `style.css`). For translucent glows use `rgba(var(--accent-rgb), a)` (also `--ok-rgb --bad-rgb --accent2-rgb --warn-rgb`) — never hard-code `rgba(79,156,249,…)`.
@@ -126,6 +128,10 @@ IDs are a short stable hash of the question text (djb2 → base36, prefixed `q`,
 - Per-question option order is shuffled at session start into `_opts`/`_correct` (originals untouched).
 - Feedback after answering shows: `why` → `accept` (gold "Also defensible") → `more` → `📖 Source` link.
 - Weak topics (⚠, red) surface in the chips and the Stats bars.
+
+### 3.7 Cross-device sync (`sync.js` + `sync-backend/`)
+
+Both quiz pages load `sync.js`, which renders a fixed **☁ badge** (top-right) and exposes `SDQSync`. The engines call three hooks: `SDQSync.init({store, getStore, setStore, onRemoteUpdate})` at boot (`store` is `"sd"` or `"behavioral"`), `pushAnswer(q, correct)` right after `recordAnswer`+`saveStore`, and `pushSession(sess)` in `finishQuiz`. Design is **event deltas, not state blobs**: answers/sessions are queued in `localStorage` (`sdq_sync_queue_<store>`) and POSTed in batches to a Lambda Function URL, which applies them with DynamoDB atomic `ADD`s — so a stale device can never overwrite progress made elsewhere. On load the client GETs `/state` (assembled server-side into the exact §3.4 shape) and adopts it as the source of truth; an empty server + non-empty local store triggers a one-time guarded bootstrap upload. Endpoint URL + secret are entered per device via the badge and live only in `localStorage` (`sdq_sync_cfg_v1`) — **never commit them** (public repo). Everything is fail-soft: unconfigured or offline, the quizzes behave exactly as before. Backend contract, table layout, deploy and teardown: `sync-backend/README.md`. If you change the §3.4 store shape, update BOTH the Lambda's `getState`/`bootstrap` assembly and this client, with migrations.
 
 ---
 

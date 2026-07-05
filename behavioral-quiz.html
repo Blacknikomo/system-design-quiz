@@ -197,6 +197,7 @@
   </div>
 </div>
 
+<script src="sync.js"></script>
 <script>
 /* ============================================================
    QUESTION BANK
@@ -492,6 +493,7 @@ document.getElementById("checkBtn").onclick = ()=>{
   s.results[s.i] = {topic:q.topic, correct:isCorrect};
   recordAnswer(q, isCorrect);
   saveStore(STORE);
+  window.SDQSync && SDQSync.pushAnswer(q, isCorrect);
   renderQ();
 };
 
@@ -511,9 +513,11 @@ function finishQuiz(){
   const byTopic = {};
   answered.forEach(r=>{ (byTopic[r.topic]=byTopic[r.topic]||{c:0,t:0}); byTopic[r.topic].t++; if(r.correct)byTopic[r.topic].c++; });
   // save session summary
-  STORE.sessions.unshift({date:Date.now(), correct, total, topics:Object.keys(byTopic)});
+  const sess = {date:Date.now(), correct, total, topics:Object.keys(byTopic)};
+  STORE.sessions.unshift(sess);
   STORE.sessions = STORE.sessions.slice(0,50);
   saveStore(STORE);
+  window.SDQSync && SDQSync.pushSession(sess);
 
   document.getElementById("progFill").style.width = "100%";
   const pct = total? Math.round(correct/total*100):0;
@@ -683,6 +687,12 @@ document.getElementById("startBtn").onclick = ()=>{
 renderTopicChips();
 updatePoolInfo();
 show("setup");
+window.SDQSync && SDQSync.init({
+  store: "behavioral",
+  getStore: ()=>STORE,
+  setStore: s=>{ STORE = s; saveStore(STORE); },
+  onRemoteUpdate: ()=>{ renderTopicChips(); updatePoolInfo(); },
+});
 </script>
 <script src="site.js"></script>
 </body>
