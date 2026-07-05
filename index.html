@@ -59,6 +59,59 @@
     </a>
   </div>
 
+  <h2>Deep-Dive Articles</h2>
+  <p class="sub">HelloInterview-style long reads for the technologies that don't have a simulator yet — mental model, syntax, use cases, distributed setup, deep dives, at-scale numbers, and one hands-on widget each. Written to be read before bed.</p>
+  <div class="hub-grid">
+    <a class="hub-card" href="queues.html">
+      <div class="ic">📬</div><div class="nm">Message Queues</div>
+      <div class="ds">RabbitMQ &amp; SQS: competing consumers, visibility timeout &amp; redelivery, DLQ, FIFO head-of-line blocking — and the queue-vs-log boundary.</div>
+    </a>
+    <a class="hub-card" href="spanner.html">
+      <div class="ic">🌐</div><div class="nm">Spanner &amp; NewSQL</div>
+      <div class="ds">TrueTime + commit-wait, splits as Paxos groups, 2PC-over-Paxos, external consistency; CockroachDB / TiDB / Aurora contrasts.</div>
+    </a>
+    <a class="hub-card" href="clickhouse.html">
+      <div class="ic">📊</div><div class="nm">ClickHouse &amp; OLAP</div>
+      <div class="ds">Columns not rows: MergeTree parts &amp; sparse index, materialized views, batch inserts, scatter-gather sharding.</div>
+    </a>
+    <a class="hub-card" href="mongodb.html">
+      <div class="ic">🍃</div><div class="nm">MongoDB</div>
+      <div class="ds">Documents &amp; embed-vs-reference, replica sets with tunable consistency, and the shard-key bet: targeted vs scatter-gather.</div>
+    </a>
+    <a class="hub-card" href="s3.html">
+      <div class="ic">🪣</div><div class="nm">S3 &amp; Object Storage</div>
+      <div class="ds">Flat namespace, multipart upload, presigned URLs, strong consistency since 2020, per-prefix throughput, storage classes.</div>
+    </a>
+    <a class="hub-card" href="vectordb.html">
+      <div class="ic">🧲</div><div class="nm">Vector Databases</div>
+      <div class="ds">Embeddings &amp; ANN: HNSW vs IVF, the recall-vs-latency dial, filtered search, hybrid + rerank, the RAM math.</div>
+    </a>
+    <a class="hub-card" href="temporal.html">
+      <div class="ic">⏳</div><div class="nm">Temporal &amp; Workflows</div>
+      <div class="ds">Durable execution: event-sourced history, replay, activities &amp; retries, sagas as try/catch; vs Step Functions &amp; Airflow.</div>
+    </a>
+    <a class="hub-card" href="cdn.html">
+      <div class="ic">🌍</div><div class="nm">CDN</div>
+      <div class="ds">Cache keys &amp; TTLs, invalidation vs immutable assets, request coalescing, and hit-ratio economics: 98%→97% = +50% origin load.</div>
+    </a>
+    <a class="hub-card" href="timeseries.html">
+      <div class="ic">📈</div><div class="nm">Time-Series DBs</div>
+      <div class="ds">Cardinality as THE scaling axis, Gorilla compression (~1.37 B/sample), retention &amp; downsampling; Prometheus / Timescale.</div>
+    </a>
+    <a class="hub-card" href="graphdb.html">
+      <div class="ic">🧭</div><div class="nm">Graph Databases</div>
+      <div class="ds">Index-free adjacency, Cypher, why graphs shard badly, supernodes — and TAO / Zanzibar as the at-scale counterpoint.</div>
+    </a>
+    <a class="hub-card" href="memcached.html">
+      <div class="ic">🧊</div><div class="nm">Memcached</div>
+      <div class="ds">Slab allocator, client-side consistent hashing, leases &amp; gutter pools (Scaling Memcache at Facebook), vs Redis.</div>
+    </a>
+    <a class="hub-card" href="containers.html">
+      <div class="ic">📦</div><div class="nm">Compute &amp; Orchestration</div>
+      <div class="ds">VM → container → microVM ladder, the K8s control loop, readiness probes &amp; rollout strategies, autoscaling lag, serverless.</div>
+    </a>
+  </div>
+
   <h2>Scaling &amp; Estimation</h2>
   <p class="sub">How systems behave at scale, and how to size them on the spot — for the System Design &amp; Systems Architecture rounds.</p>
   <div class="hub-grid">

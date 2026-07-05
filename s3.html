@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S3 &amp; Object Storage — Deep Dive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap art">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🪣 S3 &amp; Object Storage — the internet's hard drive</h1>
+      <div class="sub">Buckets, keys and immutable blobs: the storage layer every design with files stands on — plus the two patterns interviewers actually probe, presigned URLs and multipart upload. <span class="rt">☕ ~15 min read</span></div>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">flat namespace</span>
+      <span class="tag">immutable objects</span>
+      <span class="tag">multipart upload</span>
+      <span class="tag">presigned URLs</span>
+      <span class="tag">11 nines</span>
+    </div>
+    <p class="lead">S3 is a <b>giant key→blob map over HTTPS</b>: PUT an immutable object under a key, GET it back from anywhere, never think about disks, RAID or filesystems again. You trade away filesystem semantics — no append, no rename, no real directories — and in exchange get effectively <b>bottomless capacity, eleven nines of durability, and a price per GB that made every other way of storing files obsolete</b>. Almost every system design that involves a file ends with the same sentence: "the bytes go to S3; the database keeps the key."</p>
+    <div class="note info"><b>In the interview:</b> any design with user files (photos, video, PDFs, ML datasets, backups) stores <b>blobs in object storage, metadata in a database</b>, and moves bytes with <b>presigned URLs</b> so your API never proxies payloads. Expect follow-ups on <b>multipart upload</b> (the 40 GB file on hotel Wi-Fi), <b>per-prefix request limits</b>, the <b>upload → event → worker</b> pipeline, and the egress bill you forgot about.</div>
+  </div>
+
+  <div class="card">
+    <h3>On this page</h3>
+    <div class="toc">
+      <a href="#model">Mental model</a>
+      <a href="#api">Syntax &amp; API</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#distributed">Distributed setup</a>
+      <a href="#play">🎛 Play with it</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#scale">At scale</a>
+      <a href="#interview">In the interview</a>
+      <a href="#check">Check yourself</a>
+    </div>
+  </div>
+
+  <!-- ===== 1. MENTAL MODEL ===== -->
+  <div class="card" id="model">
+    <h2>1 · The mental model: an infinite coat check</h2>
+    <p>Think of S3 as a coat check with no cloakroom limit. You hand over a blob and a ticket string of your choosing — the <b>key</b> — and the attendant stores it somewhere you will never see. Present the ticket, get the exact bytes back. The attendant never opens the box, never edits its contents, never rearranges your tickets into folders. Everything else about object storage falls out of this picture.</p>
+    <p>First: the namespace is <b>flat</b>. A bucket is one giant sorted map from key strings to objects; <code>photos/2026/07/cat.jpg</code> is a single opaque key that merely <i>contains</i> slashes. The console draws folders because LIST supports a <code>prefix</code> and a <code>delimiter</code>, so it can pretend — but there is no directory to create, no directory to be empty, and crucially <b>no atomic rename</b>: "moving" an object is a server-side copy to a new key plus a delete of the old one, and "renaming a folder" is a copy-storm over every key sharing the prefix.</p>
+    <p>Second: objects are <b>immutable</b>. There is no append, no edit-in-place, no "just update bytes 100–200". A PUT to an existing key replaces the whole object; if <b>versioning</b> is on, the old version is retained rather than destroyed (and DELETE just adds a <i>delete marker</i> you can undo). Concurrent PUTs to the same key resolve as last-writer-wins — object storage has no locks. This immutability is not a limitation to work around; it's the property that makes caching, replication and eleven-nines durability tractable. Systems that need mutable, appendable data (logs, databases) are built <i>on top of</i> immutable objects, not out of them.</p>
+    <p>Third: everything is an HTTP request to a service — there's no connection state, no mount point, no file handle. One object can be up to <b>5 TB</b>; each carries metadata (content type, cache headers, ~2 KB of your own key-values). Latency is that of an HTTPS round-trip to a regional service: <b>first byte in the tens of milliseconds</b>, not microseconds — S3 is a warehouse, not a cache.</p>
+    <div class="note warn"><b>The one-sentence test:</b> if you'd describe the data as <i>files that are written once and read whole (or in ranges)</i> — object storage. If you need to append, lock, rename atomically, or read at memory speed — you're describing a log, a filesystem, or a cache, and S3 will punish the impersonation.</div>
+  </div>
+
+  <!-- ===== 2. SYNTAX ===== -->
+  <div class="card" id="api">
+    <h2>2 · Syntax &amp; core API</h2>
+    <p>The API surface that matters in an interview is small — a handful of verbs plus two mechanisms (presigning and multipart) that carry the whole design pattern.</p>
+    <table class="cmd-tbl">
+      <tr><td>PUT /bucket/key</td><td>Write an object — whole thing, one shot, ≤ <b>5 GB</b> per single PUT. Replaces silently if the key exists.</td></tr>
+      <tr><td>GET /bucket/key</td><td>Read it back. Add <code>Range: bytes=0-1048575</code> for a byte slice — this is how video players seek and how download managers parallelize.</td></tr>
+      <tr><td>DELETE / COPY</td><td>Delete (or add a delete marker under versioning); server-side copy for "rename" — above 5 GB even the copy must be multipart.</td></tr>
+      <tr><td>LIST (prefix, delimiter)</td><td>Paginated, <b>1,000 keys per page</b>, lexicographic order. Fine for occasional listing; a disaster as a query engine (more below).</td></tr>
+      <tr><td>Multipart upload</td><td><code>CreateMultipartUpload → UploadPart ×N → CompleteMultipartUpload</code>. Parts <b>5 MB–5 GB</b>, up to <b>10,000</b>; parallel, individually retryable; <b>required past 5 GB</b>, recommended from ~100 MB.</td></tr>
+      <tr><td>Presigned URL</td><td>Any request, signed with your credentials, handed to someone who has none. Expiry up to 7 days. THE pattern for direct client upload/download.</td></tr>
+      <tr><td>Event notification</td><td><code>s3:ObjectCreated:*</code> → SQS / SNS / Lambda / EventBridge, delivered at-least-once. The trigger of every ingestion pipeline.</td></tr>
+      <tr><td>Lifecycle rule</td><td>Declarative aging: "after 30 days → Infrequent Access, after 365 → Glacier, after 7 years → delete; and always: abort incomplete multiparts after 7 days."</td></tr>
+    </table>
+    <pre class="code"><span class="c"># the verbs, as the CLI speaks them</span>
+aws s3api put-object    --bucket media --key videos/v42.mp4 --body v42.mp4
+aws s3api get-object    --bucket media --key videos/v42.mp4 --range bytes=0-1048575 first-mb.bin
+aws s3api list-objects-v2 --bucket media --prefix videos/ --delimiter / --max-keys 1000
+
+<span class="c"># presign: your API runs this (one HMAC computation, no I/O), client does the heavy lifting</span>
+aws s3 presign s3://media/videos/v42.mp4 --expires-in 900
+<span class="c"># → https://media.s3.amazonaws.com/videos/v42.mp4?X-Amz-Expires=900&amp;X-Amz-Signature=…</span>
+<span class="c"># the client PUTs/GETs that URL directly — your servers never see the bytes</span></pre>
+    <p class="small muted">Presigning is pure math — an HMAC over the canonical request using your secret key. No call to AWS happens when you sign; S3 verifies the signature when the client shows up. That's why it costs your API microseconds, and why expiry and clock skew live in the URL itself.</p>
+  </div>
+
+  <!-- ===== 3. USE CASES ===== -->
+  <div class="card" id="usecases">
+    <h2>3 · Use cases — when object storage is the answer</h2>
+
+    <div class="recipe">
+      <div class="rh">🎬 Media originals, with a CDN in front</div>
+      Users upload photos/video via presigned URLs; originals land in S3; workers derive thumbnails and transcodes back into S3; <b>CloudFront serves the public reads</b> with S3 as origin. The database stores keys and metadata only — never blobs.
+      <div class="why">Why S3: bottomless capacity and 11-nines durability for the one copy that must never be lost; the CDN absorbs read heat and the egress bill.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🧊 Data lake — storage and compute finally divorced</div>
+      Events land as Parquet files partitioned by prefix (<code>events/date=2026-07-05/…</code>); Athena / Trino / Spark query them <i>in place</i>. Storage costs ~2 cents/GB-month while compute spins up only for the query.
+      <div class="why">Why S3: this killed HDFS — no cluster to keep alive just to hold bytes, and ten teams' engines can read the same files without ten copies.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">💾 Backups &amp; archives on a lifecycle conveyor</div>
+      Database snapshots and compliance data PUT to Standard, then a lifecycle policy walks them down the price ladder: IA after 30 days, Glacier tiers after a year, delete after the retention period. Versioning + Object Lock for the ransomware/auditor conversation.
+      <div class="why">Why S3: durability is the product; retrieval latency (minutes–hours in Glacier tiers) is a price you volunteer to pay, not a surprise.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">📦 The claim check — big payloads for small pipes</div>
+      SQS caps messages at 256 KB; Kafka hates multi-MB blobs. So: PUT the payload to S3, enqueue <code>{bucket, key}</code>, and the consumer fetches the bytes itself. Same trick for email attachments, workflow engines, inter-service handoffs.
+      <div class="why">Why S3: queues move <i>coordination</i>, object storage moves <i>bulk</i> — each system does the thing it's priced and built for.</div>
+    </div>
+
+    <h3>When it's the WRONG answer</h3>
+    <table class="cmd-tbl">
+      <tr><td>filesystem semantics</td><td>Atomic rename, directories, appends, POSIX locks — the things build systems and legacy apps assume. That's EFS/NFS territory (or a redesign).</td></tr>
+      <tr><td>hot small reads</td><td>1 KB values at p99 &lt; 10 ms, millions of times a minute → that's a KV store / cache (DynamoDB, Redis). S3's tens-of-ms first byte and per-request pricing make it a terrible database.</td></tr>
+      <tr><td>append-heavy logs</td><td>Objects don't append — "add a line" means rewrite the object. Streams of records belong in Kafka / a log service, which may <i>tier</i> to S3 later.</td></tr>
+      <tr><td>query by anything but key</td><td>"Find all videos of user 7 longer than 2 min" via LIST = a full prefix scan, 1,000 keys a page. Metadata queries belong in a real database that stores the keys.</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 4. DISTRIBUTED SETUP ===== -->
+  <div class="card" id="distributed">
+    <h2>4 · Distributed setup — what AWS runs so you don't have to</h2>
+    <p>Under the flat API sits a storage fleet that treats disk, host and even datacenter failure as weather. Each object is <b>erasure-coded across at least three Availability Zones</b> (for Standard): the object is cut into fragments plus parity, spread so that losing an AZ still leaves enough pieces to reconstruct every byte. That redundancy — not heroic hardware — is where "designed for <b>99.999999999% durability</b>" comes from: the eleven nines are a math statement about independent failures, and the practical translation is "durability is no longer your problem; <i>deleting the wrong thing yourself</i> is" (hence versioning and MFA-delete). Availability is a separate, humbler number: Standard is designed for 99.99% and the SLA starts crediting you below ~99.9% — your design should tolerate a region having a bad afternoon.</p>
+    <p>The fact to state explicitly because half the internet's articles predate it: <b>since December 2020, S3 is strongly consistent for all operations</b> — read-after-write for new objects, overwrites, deletes, and LIST reflects completed writes immediately. The old "eventual consistency for overwrite PUTs" dance (and the read-your-stale-object bug reports it spawned) is history; if an interviewer's follow-up assumes the old model, correcting it politely is free senior signal. What remains asynchronous is everything <i>between</i> buckets and tiers: <b>cross-region replication</b> lags seconds to minutes (Replication Time Control adds a 15-minute SLA), and lifecycle transitions run as background jobs — strong consistency is per-key, per-bucket, not a global transaction.</p>
+    <p>Scale-wise, S3 partitions the keyspace by <b>prefix</b> and scales each partition to a ballpark of <b>3,500 writes/s and 5,500 reads/s</b>, splitting partitions as sustained traffic grows. More prefixes → more parallel capacity, effectively without limit. Storage classes are the same durability math at different temperatures: <b>Standard</b> for hot, <b>Standard-IA / One Zone-IA</b> for monthly-touched (retrieval fee, ~30-day minimum), the <b>Glacier tiers</b> for archives (instant / minutes–hours / half-a-day-plus, ~90–180-day minimums), and <b>Intelligent-Tiering</b> to have a robot make the call per object.</p>
+    <div class="note gotcha"><b>The gotcha cluster:</b> strong consistency did <i>not</i> add transactions — there's no multi-object atomicity, and two clients PUTting one key is still last-writer-wins (conditional writes with <code>If-None-Match</code>/<code>If-Match</code>, added in 2024, are the new escape hatch for create-if-absent and CAS). And replication is <i>not</i> a backup: it happily replicates your bad delete. Versioning is the backup.</div>
+  </div>
+
+  <!-- ===== 5. INTERACTIVE ===== -->
+  <div class="card" id="play">
+    <h2>5 · 🎛 Play with it — presigned flow + multipart upload</h2>
+    <p class="small muted" style="margin-top:0">The full upload pattern: the client asks <b>your API</b> to sign, then ships bytes <b>directly to S3</b> — watch the "bytes proxied" counter on your API stay at signature size. Pick a file size and mode: <b>multipart</b> cuts it into 100 MB parts uploaded in 8 parallel lanes with per-part retry; <b>single PUT</b> is one long request. Flip on the flaky network and compare how much each mode wastes when connections drop. (Time is compressed; failures are seeded — same settings replay the same run.)</p>
+    <div class="row" style="margin-bottom:10px">
+      <label class="fld" style="flex-direction:row;align-items:center;gap:8px">file size
+        <input type="range" id="sizeRange" min="0" max="7" value="6" style="width:150px">
+        <b id="sizeLbl" style="min-width:56px">2.5 GB</b>
+      </label>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px">mode
+        <select id="modeSel">
+          <option value="multi">multipart (100 MB parts)</option>
+          <option value="single">single PUT</option>
+        </select>
+      </label>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="flakyChk"> flaky network</label>
+      <button class="btn" id="upBtn">⬆️ Upload</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="stage" id="stage">
+      <div class="nodes" id="flow"></div>
+      <div id="parts" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:14px"></div>
+      <div class="small muted" id="statline" style="margin-top:8px"></div>
+    </div>
+    <div class="explain" id="explain">Press <b>Upload</b>: first the presigning handshake (three packets), then the parts race to S3 in parallel.</div>
+    <div class="cols" style="margin-top:12px">
+      <div><h3>Event log</h3><div class="log" id="log"></div></div>
+      <div><h3>What to try</h3>
+        <ol class="steps small">
+          <li>2.5 GB, multipart, flaky OFF → Upload. Watch: sign request → presigned URLs → parts stream in 8 lanes → <b>CompleteMultipartUpload</b> assembles 25 ETags into one object.</li>
+          <li>Flaky ON, Upload again → parts drop mid-flight, and <b>only the dead part retries</b>. Check the wasted-bytes counter: a failure costs at most ~100 MB.</li>
+          <li>Switch to <b>single PUT</b>, flaky ON → one drop restarts from <b>byte 0</b>. Compare wasted bytes and total time with step 2.</li>
+          <li>All the while: <b>Your API — bytes proxied: ~KB</b>. The payload never touched your servers; they only did HMAC math.</li>
+          <li>Slide to 5 GB, single PUT: you're at the hard ceiling — past this size the object can <i>only</i> exist via multipart (on up to 5 TB).</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 6. DEEP DIVES ===== -->
+  <div id="deep"></div>
+  <details class="fold">
+    <summary>🔍 Deep dive · Presigned URLs — why your servers never touch bytes <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>The naive upload design routes file bytes through your API: client → API → S3. Now every 2 GB upload occupies one of your app servers for minutes, your load balancer needs body-size limits raised, request timeouts stretched, and your fleet scales with <i>bandwidth</i> instead of with <i>requests</i>. The fix is to notice that the only thing your API adds is <b>authorization</b> — and a signature can carry authorization without carrying bytes.</p>
+        <p>A presigned URL is the request itself — method, bucket, key, expiry — HMAC-signed with your credentials. Generating one is local math: no AWS round-trip, microseconds of CPU. Your API authenticates the user, decides "yes, you may PUT to <code>uploads/u123/v42.mp4</code> for the next 15 minutes", signs exactly that, and steps out of the data path. The client talks to S3 directly; S3 verifies the signature and enforces the expiry. Downloads mirror it: sign a GET for a private object so the mobile app can fetch it without your proxying. (For browser form uploads there's the POST-policy variant, which can also cap the content length — a presigned PUT does not enforce size, so quota checks happen at the "sign" step and on the ObjectCreated event.)</p>
+        <p>The operational fine print interviewers poke at: URLs expire (max 7 days with SigV4) — so <b>clock skew</b> between you and the client can make fresh URLs "already expired", and long multiparts need re-signing logic; possession is authorization — anyone holding the URL can use it until expiry, so keep expiries short and keys unguessable; and the URL inherits the <i>signer's</i> permissions, so sign with a role scoped to that one prefix, not your admin credentials. For public hot content, the same idea graduates to <b>CDN signed URLs/cookies</b> at the edge.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Multipart upload &amp; ranged reads — parallelism as the throughput knob <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>A single HTTP connection to S3 tops out at some modest per-stream throughput — call it tens of MB/s on a good day — and a 40 GB upload over one connection is both slow and fragile: at 99% done, a dropped TCP session costs you 40 GB of retransmission. Multipart upload attacks both problems: <code>CreateMultipartUpload</code> opens a session, the client slices the file into parts (<b>5 MB–5 GB each, up to 10,000</b>, last part exempt from the minimum), uploads them <b>in parallel over separate connections</b>, collects an ETag per part, and finally <code>CompleteMultipartUpload</code> submits the ordered ETag list — at which point S3 stitches the object together server-side, atomically. The object either appears whole or not at all; readers never see half a file.</p>
+        <p>The properties that matter: <b>per-part retry</b> (a failed part re-uploads alone — the demo above makes the contrast visceral), <b>parallel throughput</b> (aggregate bandwidth scales with lanes until your NIC or S3's per-prefix limit pushes back), and <b>pause/resume</b> (parts already uploaded survive a client restart, since the session persists server-side). The dark corner: an abandoned session's parts <b>sit invisibly and bill forever</b> — they're not objects, LIST won't show them — until you <code>AbortMultipartUpload</code> or, better, set the lifecycle rule <code>AbortIncompleteMultipartUpload</code> after N days. Every real S3 estate has a story about finding terabytes of orphaned parts.</p>
+        <p>Downloads have the mirror-image trick: <b>ranged GETs</b>. <code>Range: bytes=…</code> lets a video player seek without fetching the file, lets a download manager run 8 parallel streams, and lets a data engine read just the Parquet footer + one column chunk out of a 1 GB file. Same lesson both directions: <i>S3 throughput is a parallelism game, not a single-stream game</i>.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Consistency — what changed in 2020, and what's still async <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>For its first 14 years, S3 was the canonical "eventually consistent" example: a new PUT was read-after-write (with caveats), but overwrites and deletes could serve stale data for a while, and LIST could lag reality. Whole design patterns existed just to cope — write-once keys, manifest files, "list-after-write" retry loops. In <b>December 2020</b> AWS flipped the model: <b>all S3 operations are now strongly consistent</b> — what a completed PUT wrote is what any subsequent GET or LIST sees, overwrites and deletes included, at no extra cost or latency. When you see an article (or an interviewer) reciting the old model, date-stamp your correction: it's the cleanest way to show your knowledge isn't secondhand.</p>
+        <p>What strong consistency does <i>not</i> mean: <b>no transactions</b> (you cannot atomically PUT two objects, or PUT + delete), <b>no isolation</b> (two writers to one key race, last-writer-wins; versioning retains both, but "current" is whoever finished last), and <b>no global convergence</b> — cross-region replication is asynchronous (seconds to minutes typically; RTC sells a 15-minute SLA), lifecycle transitions and inventory reports are batch jobs, and event notifications are at-least-once and can arrive out of order, so consumers stay idempotent.</p>
+        <p>The newest chapter: in 2024 S3 added <b>conditional writes</b> — <code>If-None-Match: *</code> to create-only-if-absent, and ETag-based <code>If-Match</code> compare-and-swap on overwrite. That upgrades S3 from "no coordination whatsoever" to "single-key optimistic concurrency", which is exactly enough for patterns like leader-elected manifest files and table-format commit protocols (the Iceberg/Delta crowd celebrated loudly). Multi-object atomicity still belongs to databases layered on top.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Storage classes &amp; the cost model — where the bill actually comes from <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>S3 pricing has three meters: <b>GB-months stored</b> (order of 2¢/GB-month in Standard), <b>requests</b> (order of $5 per million PUTs, $0.4 per million GETs), and <b>egress to the internet</b> (order of 5–9¢/GB, region-dependent). Intuition for which meter dominates: cold archives → storage; millions of tiny objects → requests; anything popular and public → <b>egress, by a mile</b>. A petabyte sitting still costs ~$25k/month; a petabyte <i>downloaded</i> costs multiples of that — which is why hot public content goes behind a CDN (cheaper per GB, and it absorbs the request storm), and why "we'll just serve it straight from S3" is a bill-shock story with a predictable ending.</p>
+        <p>The storage classes are one durability design sold at different temperatures. <b>Standard</b>: hot, no retrieval fee. <b>Standard-IA</b>: ~40% cheaper storage, but per-GB retrieval fees and a ~30-day minimum — for data touched monthly, not daily. <b>One Zone-IA</b>: same idea, one AZ, for re-derivable data only. The <b>Glacier tiers</b>: Instant (archive price, milliseconds access), Flexible (minutes-to-hours restores), Deep Archive (~half a day, cheapest — order of $1/TB-month), with ~90–180-day minimums. <b>Intelligent-Tiering</b> watches each object's access and moves it automatically for a small monitoring fee — the honest default when you can't predict access. At the opposite extreme, <b>Express One Zone</b> (2023) trades replication breadth for single-digit-millisecond access at a higher price — a niche for latency-sensitive analytics scratch space.</p>
+        <p><b>Lifecycle policies</b> are how any of this stays managed: declarative rules per prefix/tag that transition objects down the ladder and eventually delete them. Two rules belong in every bucket you design out loud: abort incomplete multiparts after ~7 days, and expire old versions if versioning is on — otherwise "durable" quietly becomes "hoarding".</p>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== 7. AT SCALE ===== -->
+  <div class="card scale" id="scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">The figures worth quoting — rounded, order-of-magnitude, as capacity talk should be.</p>
+    <table class="cmd-tbl">
+      <tr><td>object limits</td><td>Object ≤ <b>5 TB</b>; single PUT ≤ <b>5 GB</b>; multipart parts <b>5 MB–5 GB</b>, ≤ <b>10,000 parts</b>; key ≤ 1,024 bytes; user metadata ~2 KB.</td></tr>
+      <tr><td>request rates</td><td>Per prefix: ~<b>3,500 writes/s</b>, ~<b>5,500 reads/s</b> — and prefixes are unlimited, so aggregate scales with key design. Sudden ramps can briefly throw <code>503 SlowDown</code> while partitions split: back off, retry, keep ramping.</td></tr>
+      <tr><td>latency</td><td>First byte ~<b>tens of ms</b> (p99 into the low hundreds); per-connection throughput modest → <b>parallelize</b> (multipart up, ranged GETs down). Express One Zone exists for single-digit ms.</td></tr>
+      <tr><td>durability / availability</td><td>Designed for <b>11 nines durability</b> via erasure coding across ≥3 AZs; availability designed ~99.99%, SLA floor ~99.9%. Durability ≠ protection from your own DELETE — that's versioning / Object Lock.</td></tr>
+      <tr><td>LIST</td><td><b>1,000 keys/page</b>, lexicographic, strongly consistent — but O(keys under prefix) and priced per request. Never a query engine, never a queue.</td></tr>
+      <tr><td>consistency</td><td>Strong for all single-key ops since <b>Dec 2020</b>. Cross-region replication async (RTC: 15-min SLA); events at-least-once; conditional writes (2024) give single-key CAS.</td></tr>
+      <tr><td>cost anchors</td><td>~2¢/GB-month Standard · egress ~5–9¢/GB · ~$5/M PUTs, ~$0.4/M GETs · Deep Archive ~$1/TB-month. Egress and per-request costs are where designs go to die.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Failure modes that only appear at scale:</b>
+      <b>LIST-as-a-database</b> (a prefix with 50 M keys, paged 1,000 at a time, on the request path — index keys in a real DB instead);
+      <b>the hot key</b> (one viral object concentrates reads on one partition and can't be sharded — front it with a CDN/cache);
+      <b>tiny-object disease</b> (a billion 4 KB objects: request costs and LIST pain dwarf storage — pack/batch them);
+      <b>orphaned multipart parts</b> (invisible, billed, forever — lifecycle-abort them);
+      <b>presigned-URL expiry vs clock skew</b> (mobile clients with drifted clocks "can't upload" — sign with margin);
+      <b>egress bill shock</b> (serving hot public bytes region-direct instead of via CDN);
+      <b>replication ≠ backup</b> (CRR ships your deletes too; versioning + lifecycle is the undo button).</div>
+  </div>
+
+  <!-- ===== 8. INTERVIEW ===== -->
+  <div class="card" id="interview">
+    <h2>8 · In the interview</h2>
+    <p><b>How it comes up:</b> never as "design S3" (that's a specialty question) — always as the storage layer you place in the first five minutes of any file-bearing design: Instagram, YouTube, Dropbox, a document service, ML training data. The canonical pipeline you should be able to draw half-asleep: <b>client → (your API signs) → presigned PUT to S3 → ObjectCreated event → SQS → workers → derived artifacts back to S3 → CDN serves reads; the database stores keys + metadata, never blobs</b>. Each arrow is a follow-up: why presigned (bytes bypass your fleet), why an event+queue (retryable async processing), why CDN (egress + latency), why keys-in-DB (queryability).</p>
+    <p><b>The choice script:</b> object storage is the <i>default</i> for anything ≥ ~a few hundred KB that's written once and read whole or by range — say it, place it, move on. The interesting boundaries to name: metadata and small hot values go to a DB/cache, not S3 (latency + request cost); append/streaming workloads go to a log; if the requirement is POSIX (shared filesystem for legacy apps), that's EFS and it's fine to say so. And the pattern that upgrades your answer from correct to senior: <b>DB stores the pointer, S3 stores the bytes, and the two are reconciled by events + idempotent workers</b> — you've now answered the "what if the upload succeeds but your DB write fails" follow-up before it was asked.</p>
+    <h3>Alternatives — one line each</h3>
+    <table class="cmd-tbl">
+      <tr><td>GCS</td><td>Google's S3: strongly consistent from day one, dual-region buckets (one bucket, two regions, automatic) are its flex. Same design patterns apply verbatim.</td></tr>
+      <tr><td>Azure Blob</td><td>The Azure counterpart; block/append/page blob variants (append blobs bend the no-append rule); hot/cool/archive tiers mirror S3 classes.</td></tr>
+      <tr><td>MinIO</td><td>Self-hosted, S3-compatible API — the answer when the requirement says on-prem/sovereignty but you want to keep S3 patterns and tooling.</td></tr>
+      <tr><td>Ceph (RGW)</td><td>The open-source storage swiss army knife (object + block + FS) with an S3 gateway; what you run when you operate your own datacenter and have a team for it.</td></tr>
+      <tr><td>HDFS</td><td>The contrast case: compute-colocated file system from the "move code to data" era — largely displaced by object storage + disaggregated engines (Spark/Trino reading S3). Bring it up as history, not as a pick.</td></tr>
+    </table>
+    <div class="note info"><b>Phrases that score:</b> "the DB stores the key, S3 stores the bytes — my API never proxies payloads, it signs URLs" · "multipart above ~100 MB: parallel parts, per-part retry, and a lifecycle rule aborting incomplete uploads" · "S3 is strongly consistent since 2020 — but cross-region replication is still async, so my RPO is minutes unless I pay for RTC" · "reads go through the CDN; egress is the real bill" · "request rates scale per prefix, so my key layout spreads load — and the one viral object gets cached, because a hot key can't be sharded".</div>
+  </div>
+
+  <!-- ===== 9. CHECK YOURSELF ===== -->
+  <div class="card" id="check">
+    <h2>9 · Check yourself</h2>
+    <details class="qa">
+      <summary>Why do uploads go client → S3 directly with a presigned URL, instead of through your API servers?</summary>
+      <div class="a"><p>Because the API adds only <b>authorization</b>, and a signature carries that without the bytes. Proxying would make your fleet scale with upload <i>bandwidth</i> (long-held connections, big bodies, stretched timeouts, double egress) instead of with requests. The API authenticates, signs a narrowly-scoped URL (one method, one key, short expiry) in microseconds of local HMAC math, and steps out; S3 enforces the signature and expiry. Your servers see kilobytes of signing traffic while terabytes flow past them.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Design the upload of a 40 GB file from a flaky hotel connection. What mechanisms do you name?</summary>
+      <div class="a"><p><b>Multipart upload</b> — mandatory anyway above 5 GB: slice into parts (say 100 MB → 400 parts; limits are 5 MB–5 GB per part, ≤10,000 parts), upload 6–10 in parallel over separate connections, <b>retry only failed parts</b>, resume across client restarts (the session and completed parts persist server-side), then <code>CompleteMultipartUpload</code> assembles the object atomically. Presigned URLs per part (re-sign as they expire), and a lifecycle rule to <b>abort incomplete multiparts</b> so an abandoned attempt doesn't bill silently forever.</p></div>
+    </details>
+    <details class="qa">
+      <summary>A teammate says "S3 is eventually consistent, so after upload we must poll until the object appears." Correct them precisely.</summary>
+      <div class="a"><p>Outdated by half a decade: <b>since December 2020 S3 is strongly consistent for all operations</b> — a completed PUT is immediately visible to GET and LIST, overwrites and deletes included. What <i>is</i> still asynchronous: cross-region replication (seconds–minutes; 15-min SLA with RTC), lifecycle transitions, and event notification delivery (at-least-once, possibly reordered — keep the consumer idempotent). And strong consistency isn't atomicity: multi-object updates still race; single-key CAS exists via conditional writes (2024).</p></div>
+    </details>
+    <details class="qa">
+      <summary>One meme image in your bucket goes viral — 500k requests/min. What breaks, and what's the fix?</summary>
+      <div class="a"><p>A single key lives on one partition; per-prefix capacity is on the order of 5,500 GETs/s, and a hot <i>single object</i> can't be split across prefixes — key-sharding tricks don't help one key. You may see 503s, and even if S3 keeps up, you're paying internet egress per view. Fix: put a <b>CDN in front</b> (CloudFront) so the edge absorbs ~all reads with S3 as origin fetching once per edge location, add cache headers, and for private content use CDN signed URLs. In-region, an application cache does the same job.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Why is building a work queue on "workers LIST the bucket and grab new files" a design smell, and what's the idiomatic pipeline?</summary>
+      <div class="a"><p>LIST is paginated (1,000/page), priced per request, O(keys under the prefix), and has <b>no claim semantics</b> — two workers list the same "new" object and both process it; nothing marks progress; polling burns money as the bucket grows to millions of keys. Idiom: <b>S3 event notification → SQS</b> — ObjectCreated events enqueue work, SQS provides visibility timeouts, retries and DLQ, workers scale on queue depth. Events are at-least-once, so processing stays idempotent (e.g., conditional write of the derived artifact).</p></div>
+    </details>
+  </div>
+
+  <p class="small muted">Sources: this page condenses the Amazon S3 User Guide (consistency model, multipart, performance guidelines, storage classes), AWS pricing pages (order-of-magnitude anchors), and standard system-design framing. Numbers are interview ballparks — verify current quotas and prices before quoting in production.</p>
+</div>
+
+<script src="site.js"></script>
+<script>
+/* ===== Presigned flow + multipart upload simulator ===== */
+const SIZES = [5, 25, 100, 250, 500, 1000, 2500, 5000];   // MB
+const PART_MB = 100, CONC = 8, PART_TICKS = 12, TICK_MS = 90;
+
+let S = null, timer = null;
+const $ = id => document.getElementById(id);
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};}
+function fmt(mb){
+  if (mb >= 1000) return (Math.round(mb/100)/10) + ' GB';
+  return Math.round(mb*10)/10 + ' MB';
+}
+function logLine(cls, msg){
+  const d = document.createElement('div');
+  d.className = 'l ' + cls;
+  d.textContent = msg;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function explain(html){ $('explain').innerHTML = html; }
+
+function buildParts(size, single){
+  const parts = [];
+  if (single){
+    parts.push({ i:0, mb:size, prog:0, state:'queued', attempts:0, failAt:null,
+      dur: Math.max(6, Math.round(PART_TICKS * 0.7 * Math.sqrt(size / PART_MB))) });
+  } else {
+    const n = Math.max(1, Math.ceil(size / PART_MB));
+    for (let i = 0; i < n; i++){
+      const mb = Math.min(PART_MB, size - i * PART_MB);
+      parts.push({ i, mb, prog:0, state:'queued', attempts:0, failAt:null,
+        dur: Math.max(3, Math.round(PART_TICKS * Math.sqrt(mb / PART_MB))) });
+    }
+  }
+  return parts;
+}
+function defaultState(){
+  const size = SIZES[+$('sizeRange').value];
+  const single = $('modeSel').value === 'single';
+  return {
+    size, single, flaky: $('flakyChk').checked,
+    parts: buildParts(size, single),
+    rng: mulberry32(1),
+    phase: 'idle', ticks: 0, wasted: 0, retries: 0, s3: 0, signed: 0, objects: 0,
+  };
+}
+function apiKB(){ return S.single ? 1 : Math.max(1, Math.round(S.parts.length * 0.5)); }
+
+function center(el){
+  const s = $('stage').getBoundingClientRect(), r = el.getBoundingClientRect();
+  return { x: r.left - s.left + r.width/2, y: r.top - s.top + r.height/2 };
+}
+function spawnPacket(fromId, toId, text, kind, delay){
+  setTimeout(() => {
+    const from = $(fromId), to = $(toId);
+    if (!from || !to) return;
+    const p = document.createElement('div');
+    p.className = 'packet' + (kind === 'ok' ? ' read' : '');
+    p.textContent = text;
+    const a = center(from), b = center(to);
+    p.style.left = (a.x - 30) + 'px'; p.style.top = (a.y - 10) + 'px';
+    $('stage').appendChild(p);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      p.style.left = (b.x - 30) + 'px'; p.style.top = (b.y - 10) + 'px';
+    }));
+    setTimeout(() => { p.style.opacity = '0'; }, 800);
+    setTimeout(() => p.remove(), 1100);
+  }, delay || 0);
+}
+
+function armFail(p){
+  if (!S.flaky){ p.failAt = null; return; }
+  const pf = p.attempts === 1 ? (S.single ? 0.95 : 0.3) : (p.attempts === 2 ? 0.12 : 0);
+  p.failAt = (S.rng() < pf) ? (0.25 + S.rng() * 0.6) : null;
+}
+
+function stopTimer(){ if (timer){ clearInterval(timer); timer = null; } }
+
+function upload(){
+  stopTimer();
+  S = defaultState();
+  S.rng = mulberry32(1337 + S.size * 7 + (S.single ? 13 : 0) + (S.flaky ? 29 : 0));
+  S.phase = 'signing';
+  const n = S.parts.length;
+  $('log').innerHTML = '';
+  logLine('t', `upload ${fmt(S.size)} — ${S.single ? 'single PUT' : n + ' parts × ' + fmt(PART_MB) + ', ' + CONC + ' parallel lanes'}${S.flaky ? ' · flaky network ON' : ''}`);
+  logLine('cmd', 'client → your API: POST /uploads {name: "v42.mp4", size: ' + fmt(S.size) + '}');
+  spawnPacket('clientN', 'apiN', '① sign?', null, 0);
+  setTimeout(() => {
+    S.signed = S.single ? 1 : n;
+    logLine('info', S.single
+      ? 'API → client: 1 presigned PUT URL (expires 15 min) — ~1 KB. That is ALL your API contributes.'
+      : `API: CreateMultipartUpload → UploadId "u-7f3a"; presigns ${n} part URLs — ~${apiKB()} KB total. That is ALL your API contributes.`);
+    spawnPacket('apiN', 'clientN', '② presigned URL' + (S.single ? '' : 's ×' + n), 'ok', 0);
+    render();
+  }, 750);
+  setTimeout(() => {
+    logLine('cmd', 'client → S3: PUT bytes DIRECTLY — your API has left the data path');
+    spawnPacket('clientN', 's3N', '③ PUT bytes ⇢', null, 0);
+    if (S.single && S.size >= 5000) logLine('warn', 'note: 5 GB is the single-PUT ceiling — one byte more and multipart is mandatory');
+    if (!S.single && S.size <= PART_MB) logLine('info', 'note: only ' + n + ' part at this size — multipart starts paying off above ~100 MB');
+    S.phase = 'up';
+    timer = setInterval(tick, TICK_MS);
+  }, 1500);
+  explain('The handshake: client asks your API to sign (①), gets presigned URLs back (②), then ships the payload straight to S3 (③).');
+  render();
+}
+
+function tick(){
+  S.ticks++;
+  let active = S.parts.filter(p => p.state === 'up');
+  while (active.length < CONC){
+    const nxt = S.parts.find(p => p.state === 'queued');
+    if (!nxt) break;
+    nxt.state = 'up'; nxt.attempts++; armFail(nxt);
+    active.push(nxt);
+  }
+  if (!active.length){ finish(); return; }
+  for (const p of active){
+    p.prog += 1 / p.dur;
+    if (p.failAt !== null && p.prog >= p.failAt){
+      const lost = p.mb * Math.min(1, p.prog);
+      S.wasted += lost; S.retries++;
+      logLine('err', `✗ ${S.single ? 'PUT' : 'part #' + (p.i+1)} dropped at ${Math.round(Math.min(1,p.prog)*100)}% — ${fmt(lost)} thrown away; ${S.single ? 'single PUT restarts from byte 0 (no partial retry!)' : 'ONLY this ' + fmt(p.mb) + ' part retries'}`);
+      p.prog = 0; p.failAt = null; p.state = 'queued';
+    } else if (p.prog >= 1){
+      p.prog = 1; p.state = 'done'; S.s3 += p.mb;
+      const done = S.parts.filter(x => x.state === 'done').length;
+      if (S.single) logLine('ok', `✓ PUT finished — ${fmt(p.mb)} received by S3 (attempt ${p.attempts})`);
+      else if (done === S.parts.length || done % 10 === 0) logLine('ok', `✓ parts ${done}/${S.parts.length} done (ETags collected client-side)`);
+    }
+  }
+  render();
+}
+
+function finish(){
+  stopTimer();
+  if (S.phase !== 'up') return;
+  S.phase = 'done'; S.objects = 1;
+  if (!S.single){
+    logLine('cmd', `client → S3: CompleteMultipartUpload (${S.parts.length} part ETags, in order)`);
+    logLine('ok', '✓ S3 assembles the parts into ONE object — s3://media/videos/v42.mp4 appears atomically');
+    spawnPacket('clientN', 's3N', 'CompleteMultipartUpload', 'ok', 0);
+  } else {
+    logLine('ok', '✓ object live — s3://media/videos/v42.mp4');
+  }
+  logLine('info', 'event: s3:ObjectCreated → SQS → transcode workers take over (and your API saw ~' + apiKB() + ' KB total)');
+  explain(`Done in ${S.ticks} ticks. Your API handled <b>~${apiKB()} KB of signing traffic</b>; the ${fmt(S.size)} payload went <b>client → S3 directly</b>. Wasted re-upload: <b>${fmt(S.wasted)}</b> · retries: <b>${S.retries}</b>.${S.flaky ? ' Now switch mode and compare the waste.' : ' Turn on the flaky network and run both modes.'}`);
+  render();
+}
+
+function render(){
+  const done = S.parts.filter(p => p.state === 'done').length;
+  const up = S.parts.filter(p => p.state === 'up').length;
+  let h = `<div class="node" id="clientN" style="min-width:150px"><div class="title">💻 Client <span class="badge">browser / app</span></div>
+    <div class="kv"><span class="k">file</span><span>${fmt(S.size)}</span></div>
+    <div class="kv"><span class="k">plan</span><span>${S.single ? '1 × PUT' : S.parts.length + ' parts'}</span></div>
+    <div class="kv${S.retries ? ' stale' : ''}"><span class="k">retries</span><span>${S.retries}</span></div></div>`;
+  h += `<div class="node primary" id="apiN" style="min-width:170px"><div class="title">🖥 Your API <span class="badge">signs only</span></div>
+    <div class="kv"><span class="k">URLs signed</span><span>${S.signed}</span></div>
+    <div class="kv"><span class="k">bytes proxied</span><span>~${S.phase === 'idle' ? 0 : apiKB()} KB</span></div>
+    <div class="small muted" style="margin-top:6px">never touches the payload</div></div>`;
+  h += `<div class="node replica" id="s3N" style="min-width:170px"><div class="title">🪣 S3 <span class="badge">bucket: media</span></div>
+    <div class="kv"><span class="k">received</span><span>${fmt(S.s3)} / ${fmt(S.size)}</span></div>
+    <div class="kv"><span class="k">objects</span><span>${S.objects}</span></div>
+    <div class="small muted" style="margin-top:6px">${S.single ? 'one long stream' : 'parts land in parallel'}</div></div>`;
+  $('flow').innerHTML = h;
+
+  let g = '';
+  for (const p of S.parts){
+    const bg = p.state === 'done' ? 'var(--ok)' : 'var(--accent)';
+    const bord = p.attempts > 1 ? 'var(--bad)' : 'var(--line)';
+    g += `<div title="${S.single ? 'single PUT' : 'part #' + (p.i+1)} — attempt ${Math.max(1, p.attempts)}" style="${S.single ? 'flex:1 1 100%' : 'flex:0 0 54px'};height:14px;border:1px solid ${bord};border-radius:4px;background:var(--panel2);overflow:hidden"><div style="height:100%;width:${Math.round(Math.min(1, p.prog) * 100)}%;background:${bg}"></div></div>`;
+  }
+  $('parts').innerHTML = g;
+  $('statline').textContent = `${S.single ? '' : 'parts done: ' + done + '/' + S.parts.length + ' · in flight: ' + up + ' · '}wasted re-upload: ${fmt(S.wasted)} · retries: ${S.retries} · your API proxied: ~${S.phase === 'idle' ? 0 : apiKB()} KB`;
+}
+
+function syncControls(){
+  $('sizeLbl').textContent = fmt(SIZES[+$('sizeRange').value]);
+  if (S && (S.phase === 'idle')){ S = defaultState(); render(); }
+}
+function reset(){
+  stopTimer();
+  S = defaultState();
+  $('log').innerHTML = '';
+  logLine('t', 'reset — pick a size and mode, then Upload. Failures are seeded: same settings, same run.');
+  explain('Press <b>Upload</b>: first the presigning handshake (three packets), then the parts race to S3 in parallel.');
+  render();
+}
+
+$('upBtn').onclick = upload;
+$('resetBtn').onclick = reset;
+$('sizeRange').oninput = syncControls;
+$('modeSel').onchange = syncControls;
+$('flakyChk').onchange = syncControls;
+
+reset();
+</script>
+</body>
+</html>

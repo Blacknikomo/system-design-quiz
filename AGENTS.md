@@ -37,10 +37,14 @@ interactive/
 ├── flink.html
 ├── zookeeper.html
 ├── api-gateway.html
-└── ds-*.html            # 15 data-structure visualizers (arrays, linked-lists,
-                         # stacks, queues, hash-tables, heaps, sorted-sets,
-                         # skip-lists, tries, btrees, graphs, union-find,
-                         # lru-lfu, bloom-filters, count-min-sketch) — same simulator contract (§5)
+├── ds-*.html            # 15 data-structure visualizers (arrays, linked-lists,
+│                        # stacks, queues, hash-tables, heaps, sorted-sets,
+│                        # skip-lists, tries, btrees, graphs, union-find,
+│                        # lru-lfu, bloom-filters, count-min-sketch) — same simulator contract (§5)
+└── (articles)           # 12 deep-dive ARTICLE pages — long reads, article contract (§5.5):
+                         # queues.html spanner.html clickhouse.html mongodb.html s3.html
+                         # vectordb.html temporal.html cdn.html timeseries.html graphdb.html
+                         # memcached.html containers.html
 ```
 
 Related, **outside this repo** (in the parent `FAANG Interviews/` folder):
@@ -212,6 +216,21 @@ Each simulator must (a) describe the technology, (b) let the user run its typica
 **At Scale card (required on the 9 key-technology pages).** Between the simulator and the Reference card, each tech page has a `<div class="card scale">` titled "⚖️ At scale — numbers, limits & failure modes": a `<table class="cmd-tbl">` of concrete capacity figures (per-node throughput, per-partition/shard ceilings, sizing rules of thumb) followed by a `.note.gotcha` listing the failure modes that only emerge at scale (hot partitions, rebalance storms, XID wraparound, oversharding, etc.). Styled via `.card.scale` in `style.css` (purple accent + first-col override). **Verify every hard number before writing it** — these are interview talking points; accuracy is non-negotiable (§2). Standalone scale *mechanics* (consistent-hashing rebalance, consumer-group rebalance) live in `scaling.html`, not bolted onto the delicate tech simulators.
 
 **Reference section (required on the 9 key-technology pages).** Below the At Scale card, each tech page ends with a `<div class="card ref">` titled "📖 Reference" containing: a `.ref-cols` grid of *Infrastructure & deployment* and *Sharding & scaling* bullets; a `<table class="cmd-tbl">` of key commands/API (cmd → meaning); and several `<div class="recipe">` use-case recipes (a `.rh` title, a `<pre class="code">` with real commands — comments via `<span class="c">`, escape `&lt;`/`&gt;` — and a `.why`). `redis.html` is the canonical example. Use the shared `.ref / .ref-cols / .cmd-tbl / pre.code / .recipe` classes in `style.css`; don't restyle. The DS pages (`ds-*.html`) don't need this — their complexity table + gotcha suffices.
+
+---
+
+### 5.5 Article pages (deep-dive long reads)
+
+The 12 article pages (`queues, spanner, clickhouse, mongodb, s3, vectordb, temporal, cdn, timeseries, graphdb, memcached, containers`) are a second page type: **HelloInterview-style prose deep dives** with one embedded mini-simulator, for technologies that don't have a full simulator page. `queues.html` is the reference implementation — mirror it.
+
+Contract (in order):
+1. `<div class="wrap art">`; topbar with `data-nav` back-slot; `h1` with emoji; `.sub` with a `.rt` reading-time pill.
+2. Hero card: tags row, `p.lead` (one-sentence essence), `.note.info` "In the interview: …".
+3. TOC card (`.toc` anchor chips) → numbered section cards: **1·Mental model** (narrative prose + physical analogy) · **2·Syntax & core API** (`.cmd-tbl` + `pre.code`) · **3·Use cases** (`.recipe` blocks + a "when it's the WRONG answer" table) · **4·Distributed setup** (prose + `.note.gotcha`) · **5·🎛 Play with it** (widget: `.stage` + Event log + "What to try" `.steps` + Reset).
+4. 3–4 `details.fold` deep dives → `card.scale` At-Scale card (same bar as §5.4: verified numbers only) → "In the interview" card (how it comes up, choice script, **alternatives table**, `.note.info` "Phrases that score") → "Check yourself" card: 4–5 `details.qa` reveal cards (pure `<details>`, no JS).
+5. Sources line (`p.small.muted`), `<script src="site.js"></script>`, widget `<script>`.
+
+Article-specific CSS primitives live in `style.css` under "Article pages": `.art` (prose rhythm), `.rt`, `.toc`, `details.qa`. **Tone:** flowing long-read prose — analogies, short paragraphs, bold key terms; bullet-dumps are a contract violation. Tables only for API/numbers/comparisons. Widgets follow the §5.2 helper pattern (state objects + `render()`, `logLine`, `explain`) and must be deterministic (seeded PRNG if randomness is needed). Validation: same as simulators (§7) — extract + `node --check`, then click through every control.
 
 ---
 

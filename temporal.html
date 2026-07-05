@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Temporal &amp; Durable Workflows — Deep Dive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap art">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>⏳ Temporal &amp; Durable Workflows — code that survives crashes</h1>
+      <div class="sub">Durable execution: event-sourced workflow histories, replay, deterministic code, sagas as try/catch — and where Step Functions and Airflow end and Temporal begins. <span class="rt">☕ ~15 min read</span></div>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">durable execution</span>
+      <span class="tag">event sourcing</span>
+      <span class="tag">replay</span>
+      <span class="tag">determinism</span>
+      <span class="tag">saga</span>
+      <span class="tag">durable timers</span>
+    </div>
+    <p class="lead">Temporal runs multi-step business logic as <b>durable execution</b>: your workflow code is deterministic orchestration, every side effect goes through an <b>activity</b>, and every step is event-sourced into a server-side <b>history</b> — so when the process dies mid-flow, another worker <b>replays</b> the history, lands in exactly the same state, and keeps going. <b>The program outlives the process.</b></p>
+    <div class="note info"><b>In the interview:</b> the moment your design has 3+ sequential side effects with retries, waits, or human steps — <i>charge → reserve → ship → email</i> — name durable workflow orchestration instead of hand-rolling queues + cron sweepers + a state-machine table. The interviewer then expects you to explain, unprompted: <b>replay</b> (activities are NOT re-executed), <b>the determinism contract</b>, <b>at-least-once activities → idempotency</b>, and <b>the boundary vs Step Functions / Airflow</b>.</div>
+  </div>
+
+  <div class="card">
+    <h3>On this page</h3>
+    <div class="toc">
+      <a href="#model">Mental model</a>
+      <a href="#api">Syntax &amp; API</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#distributed">Distributed setup</a>
+      <a href="#play">🎛 Play with it</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#scale">At scale</a>
+      <a href="#interview">In the interview</a>
+      <a href="#check">Check yourself</a>
+    </div>
+  </div>
+
+  <!-- ===== 1. MENTAL MODEL ===== -->
+  <div class="card" id="model">
+    <h2>1 · The mental model: a chess game with a written move log</h2>
+    <p>Start with the problem. An order comes in: <b>charge the card → reserve inventory → ship → email the customer</b>. Four calls to four services, any of which can fail, timeout, or half-succeed. The charge goes through and the process crashes before reserving — now you have money and no order. So you build the usual scaffolding: a state-machine table (<code>status = 'CHARGED'</code>), a queue per step, a cron sweeper that finds rows stuck in limbo, retry counters, a dedupe table, and compensation scripts for support to run by hand. Congratulations: you have written a workflow engine. Badly. Every team in the company has written this engine, badly, and each copy has its own novel bugs. That is the pitch for <b>durable execution</b>: extract the engine once, make it correct, let application code go back to being a plain function.</p>
+    <p>The mental model is a <b>chess game with a written move log</b>. The rules of chess are deterministic (your workflow code); the moves played so far are written in a ledger (the <b>event history</b>, kept on the Temporal server); a player (a <b>worker</b> — your ordinary stateless process) sits at the board. If the player leaves — crashes, gets deployed over, loses power — <i>the game is not lost</i>. Any other player can pick up the ledger, replay the moves on a fresh board, arrive at exactly the same position, and play on. Nothing about the game lives in the player's head; the ledger is the game.</p>
+    <p>One rule makes this work. Some "moves" are <b>dice rolls</b> — calls into the messy outside world: charging a card, calling an API, reading the clock. Those are <b>activities</b>, and their results get <i>written into the ledger</i>. When a new player replays the game, they do <b>not</b> re-roll the dice — they read the recorded roll and move on. Concretely: on replay, the workflow function runs again from the top, but every <code>await chargeCard(...)</code> whose result already exists in history returns <b>instantly, with the recorded result</b>. The card is not charged twice. Replay re-executes <i>decisions</i>, never <i>side effects</i>. Execution resumes for real only at the first step with no recorded result.</p>
+    <p>This is why the <b>determinism contract</b> exists: replay only reconstructs the right state if the code takes the <i>same path</i> given the same history. So workflow code must not read the wall clock, generate randomness, do I/O, or iterate a hash map in nondeterministic order. The SDK gives you deterministic substitutes — workflow time, seeded random, <code>sideEffect</code> — and everything else goes in an activity. Break the rule and replay diverges from the ledger: the SDK detects the mismatch and fails the workflow task with a non-determinism error rather than corrupting state.</p>
+    <div class="note warn"><b>Misconception to kill early: the Temporal server never runs your code.</b> It stores histories, timers and task queues. Your <i>workers</i> — plain processes you deploy, scale and secure like any service — long-poll task queues, execute workflow and activity code, and report results back. The server is the ledger and the scheduler; the workers are the players.</div>
+  </div>
+
+  <!-- ===== 2. SYNTAX ===== -->
+  <div class="card" id="api">
+    <h2>2 · Syntax &amp; core API</h2>
+    <p>The vocabulary below is Temporal's (TypeScript SDK flavor), but Cadence, Azure Durable Functions and the newer engines share the concepts almost 1:1.</p>
+    <table class="cmd-tbl">
+      <tr><td>activity</td><td>The unit of side effect — any I/O lives here. Auto-retried per policy (initial interval, backoff coefficient, max attempts); each invocation's result is recorded in history.</td></tr>
+      <tr><td>retry policy</td><td>Per-activity: <code>{ initialInterval: '1s', backoffCoefficient: 2, maximumAttempts: 5 }</code>. Default is retry-forever with capped backoff — set limits or a downstream outage becomes an infinite retry storm.</td></tr>
+      <tr><td>sleep('30 days')</td><td><b>Durable timer</b> — a history event plus a server-side timer, not a thread. Survives worker restarts, deploys, and the server's own failover. Waiting a month costs ~nothing.</td></tr>
+      <tr><td>signal</td><td>Async input <i>into a running workflow</i> — "manager approved", "payment webhook arrived", "cancel". Delivered through history, so it's never lost even if no worker is up.</td></tr>
+      <tr><td>query</td><td>Read live workflow state (e.g. "which step is this order on?") without perturbing it. (Newer SDKs also have <b>update</b>: a synchronous, validated mutate-and-respond.)</td></tr>
+      <tr><td>child workflow</td><td>A workflow started by a workflow — fan-out, per-item lifecycles, separate histories and retries.</td></tr>
+      <tr><td>continueAsNew</td><td>Close this execution and atomically start a fresh one with carried-over args — the escape hatch for the history size cap (loops, entity workflows).</td></tr>
+      <tr><td>task queue</td><td>Named queue workers poll. Routing (GPU work → GPU workers), rate control, and deploy isolation happen here.</td></tr>
+      <tr><td>heartbeat</td><td>Long activities report liveness + progress; a missed <code>heartbeatTimeout</code> fails the attempt fast instead of waiting out a huge timeout, and the recorded progress lets the retry resume mid-list.</td></tr>
+    </table>
+    <pre class="code"><span class="c">// order fulfillment as a SAGA — compensations are just a stack + try/catch</span>
+const { chargeCard, reserveInventory, shipOrder, sendEmail,
+        refundCard, releaseInventory } = proxyActivities({
+  startToCloseTimeout: '30s',
+  retry: { initialInterval: '1s', backoffCoefficient: 2, maximumAttempts: 5 },
+});
+
+export async function orderWorkflow(order) {
+  const compensations = [];
+  try {
+    await chargeCard(order);                    <span class="c">// activity → result recorded in history</span>
+    compensations.push(() =&gt; refundCard(order));
+    await reserveInventory(order);
+    compensations.push(() =&gt; releaseInventory(order));
+    await sleep('2 days');                      <span class="c">// durable timer — survives every restart</span>
+    await shipOrder(order);
+    await sendEmail(order, 'shipped');
+    return 'fulfilled';
+  } catch (err) {
+    for (const undo of compensations.reverse()) <span class="c">// unwind in REVERSE order</span>
+      await undo();
+    throw err;                                  <span class="c">// workflow ends failed-but-consistent</span>
+  }
+}</pre>
+    <pre class="code"><span class="c">// human-in-the-loop: wait for a signal OR a durable timeout — no polling anywhere</span>
+let approved = false;
+setHandler(approveSignal, () =&gt; { approved = true; });
+
+const inTime = await condition(() =&gt; approved, '7 days');  <span class="c">// blocks "for a week" durably</span>
+if (!inTime) {
+  await escalateToManager(order);              <span class="c">// nobody clicked — escalate</span>
+}</pre>
+  </div>
+
+  <!-- ===== 3. USE CASES ===== -->
+  <div class="card" id="usecases">
+    <h2>3 · Use cases — when durable workflows are the answer</h2>
+
+    <div class="recipe">
+      <div class="rh">📦 Order fulfillment / booking sagas</div>
+      Charge, reserve, ship, notify — across services that each fail independently. The workflow is the saga coordinator: forward steps as activities, compensations in the catch block, every state transition durable and auditable.
+      <div class="why">Why durable workflows: retries, recovery and compensation ordering come from the engine; the business logic reads top-to-bottom like the spec.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🧑‍⚖️ Human-in-the-loop approvals</div>
+      KYC review, expense approval, content moderation: <code>await condition(approved, '7 days')</code>, remind at day 3 with a timer, escalate on timeout. The "process" may live for weeks; no thread, cron job, or state table exists anywhere.
+      <div class="why">Why durable workflows: signals + durable timers model "wait for a human, but not forever" in three lines — the DIY version is a cron sweeper reading a status table.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">💳 Payment retries &amp; dunning</div>
+      Subscription renewal fails → retry tomorrow, then in 3 days, email a warning, downgrade after a week. A workflow per subscription cycle sleeps for days between attempts and keeps exact count of where it is.
+      <div class="why">Why durable workflows: the schedule is <i>stateful</i> — "attempt 3 of 4, warned once" — precisely what queues and cron are bad at expressing.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🏗 Infra provisioning &amp; "cron with state"</div>
+      Create network → database → deploy → DNS → verify, with rollback on failure; or a nightly reconciliation that must never double-run and must resume from item 40,231 after a crash (heartbeats carry the cursor).
+      <div class="why">Why durable workflows: long-running, resumable, idempotent orchestration is the whole product; this is what control planes are made of.</div>
+    </div>
+
+    <h3>When it's the WRONG answer</h3>
+    <table class="cmd-tbl">
+      <tr><td>high-throughput data pipelines</td><td>Millions of records/sec through transforms is stream processing — <b>Flink/Spark</b>. A workflow engine event-sources every step; per-record orchestration at that volume is cost and latency suicide.</td></tr>
+      <tr><td>one async job + retry</td><td>"Resize the image, retry 3×" — a <b>queue + worker + DLQ</b> is enough. Orchestration earns its keep at multiple steps, long waits, or compensation logic.</td></tr>
+      <tr><td>sub-second request paths</td><td>Every step is a durable write + task dispatch — think <b>tens of ms of overhead per transition</b>, not µs. Keep synchronous user-facing hops as plain RPC.</td></tr>
+      <tr><td>scheduled batch DAGs for data</td><td>"Rebuild the warehouse tables at 2am, backfill last month" — that's <b>Airflow/Dagster</b> territory: schedule-centric, data-aware, ops tooling for engineers. See the boundary deep dive.</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 4. DISTRIBUTED SETUP ===== -->
+  <div class="card" id="distributed">
+    <h2>4 · Distributed setup — what "running it for real" means</h2>
+    <p>A Temporal cluster is a set of stateless services over a database. <b>Frontend</b> terminates gRPC and routes; <b>History</b> is the heart — it owns workflow executions, appends events, and is <b>sharded</b> so millions of concurrent executions spread across nodes; <b>Matching</b> hosts the task queues workers poll; an internal worker service runs system logic. Underneath sits a <b>persistence store</b> — Cassandra or SQL (MySQL/Postgres) — holding histories and mutable state, with <b>visibility</b> (search/list "all failed order workflows for customer X") typically backed by Elasticsearch. One ops gotcha worth quoting: the history <b>shard count is fixed at cluster creation</b> and effectively sets the scaling ceiling — pick it generously. Or skip all of this: <b>Temporal Cloud</b> is the managed control plane, and your workers still run in your VPC — code and data plane stay yours.</p>
+    <p><b>Your side of the contract is workers</b>: ordinary stateless processes (deploy on k8s, autoscale like anything else) that long-poll task queues, execute workflow/activity code, and report back. Nothing pushes to them; no inbound ports. For efficiency the SDK keeps recently-active workflows cached in worker memory (<b>sticky execution</b>) so most workflow tasks continue in-place without replay — a cache eviction or worker death is what triggers the full replay you'll watch in the simulator. Heritage, for the interview: this lineage runs <b>AWS Simple Workflow → Cadence (built at Uber by Maxim Fateev &amp; Samar Abbas) → Temporal</b>, with Azure Durable Functions as the same idea grown at Microsoft.</p>
+    <div class="note gotcha"><b>The orchestration tax is real.</b> Every step becomes durable writes to the history store plus task-queue hops — per-transition latency is <b>milliseconds to tens of milliseconds</b>, and cluster capacity is measured in <b>state transitions per second</b>, not workflows. Fine for business processes (an order doesn't care about 50 ms between steps); wrong for hot request paths and per-record data processing. Say this trade out loud before the interviewer pokes it.</div>
+  </div>
+
+  <!-- ===== 5. INTERACTIVE ===== -->
+  <div class="card" id="play">
+    <h2>5 · 🎛 Play with it — kill the worker, watch the replay</h2>
+    <p class="small muted" style="margin-top:0">A 4-step order workflow. <b>▶ Advance</b> appends the next event to the server-side history (the log below <i>is</i> the history — append-only, event ids in order; workflow-task bookkeeping events elided). <b>💥 Kill the worker</b> mid-flow, then press ▶: a new worker <b>replays</b> the history — watch the ⟳ lines feed recorded results back <i>without re-executing anything</i> — and resumes exactly where the old one died. <b>⚠️</b> injects one transient failure (server-side retry with backoff, history untouched); <b>☠️</b> exhausts retries and triggers the saga's reverse-order compensations.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn" id="advBtn">▶ Advance</button>
+      <button class="btn warn" id="killBtn">💥 Kill worker</button>
+      <button class="btn sec" id="failBtn">⚠️ Fail next attempt</button>
+      <button class="btn bad" id="permBtn">☠️ Exhaust retries</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="stage" id="stage"><div class="nodes" id="nodes"></div></div>
+    <div class="explain" id="explain">Press <b>▶ Advance</b> to start the workflow. Each press = the next event appended to history.</div>
+    <div class="cols" style="margin-top:12px">
+      <div><h3>Event history (server-side truth)</h3><div class="log" id="log"></div></div>
+      <div><h3>What to try</h3>
+        <ol class="steps small">
+          <li>▶ through the happy path: each activity = <b>two</b> history events — Scheduled, then Completed <i>with its result recorded</i>.</li>
+          <li>After <code>chargeCard</code> completes, 💥 kill the worker → ▶: worker-2 <b>replays</b> — ⟳ lines read results from history, nothing re-executes, and it resumes at <code>reserveInventory</code>.</li>
+          <li>⚠️ then ▶: the attempt fails, the server retries with backoff (1s→2s→4s) — and the <b>history doesn't grow</b>: retry state is mutable state, not events.</li>
+          <li>☠️ at <code>shipOrder</code> (after two ✓): retries exhaust → the failure finally lands in history → compensations run in <b>reverse</b>, in red.</li>
+          <li>Watch the server node: the event count only ever goes up. The history is the program's ledger — immutable, auditable, replayable.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 6. DEEP DIVES ===== -->
+  <div id="deep"></div>
+  <details class="fold">
+    <summary>🔍 Deep dive · Replay &amp; the determinism contract <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Walk one crash precisely. The workflow has completed <code>chargeCard</code> and <code>reserveInventory</code>; history holds their Scheduled/Completed events, results included. The worker dies. The server notices only an expired task; it re-dispatches the workflow task to another worker, <i>with the history attached</i>. The new worker runs <code>orderWorkflow()</code> <b>from the first line</b>. The first <code>await chargeCard(order)</code>? History says: completed, result <code>{authId: "ch_0091"}</code> — the await resolves <i>immediately</i> with that value; no charge happens. Same for the reserve. The code path arrives at <code>shipOrder</code>, finds no recorded result — <b>this</b> is where real execution resumes. Replay is milliseconds of pure computation; in steady state you rarely even pay it, because <b>sticky execution</b> keeps live workflows cached on a worker and replay happens only on eviction or death.</p>
+        <p>The contract that makes this sound: given the same history, the code must make the <b>same calls in the same order</b>. Forbidden in workflow code: <code>Date.now()</code>, <code>Math.random()</code>, UUID generation, network/disk I/O, environment reads, iteration with nondeterministic order, spawning raw threads. Allowed: the SDK's <code>workflow.now()</code> (the time is itself sourced from history), deterministic random/UUIDs, <code>sideEffect</code> (execute once, record the value), and activities for everything with a wire attached. SDKs detect divergence — "history says ActivityTaskScheduled(shipOrder), but the code just asked for sendEmail" — and fail the workflow task with a <b>non-determinism error</b> instead of corrupting state.</p>
+        <p>The subtle consequence: <b>deploying new workflow code while old executions are in flight</b>. A workflow sleeping for 30 days will replay against code deployed weeks later; if the new code takes a different path, that's non-determinism. Temporal's answers: <b>patching/versioning APIs</b> (branch on <code>patched('fix-123')</code> — old histories take the old branch, new executions the new one) and <b>worker versioning</b> (pin executions to worker build ids). Saying "long-lived workflows make deploys a compatibility problem, and here's the patching story" is a staff-level flex few candidates make.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · What's exactly-once and what's at-least-once — don't oversell <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>The workflow's <b>state machine</b> advances effectively exactly-once: every transition is an event appended to one history in one database, replay is idempotent by construction, and two workers can't both own a workflow task. That's the honest strong claim. The equally honest weak one: <b>activities are at-least-once</b>. An activity can complete its side effect and crash <i>before reporting</i>; the server sees a timeout and retries; the outside world experiences the effect twice. No orchestration engine can fix this — it's the Two Generals problem wearing a lanyard — so <b>activity code must be idempotent</b>: pass an idempotency key (payment processors take one; <code>workflowId + activityId</code> is a natural choice), use conditional writes, or make the operation naturally idempotent ("set status=shipped", not "increment shipments").</p>
+        <p>Know the <b>timeout taxonomy</b>, because it's where reliability is actually configured: <code>startToClose</code> (one attempt's budget — the one you should always set), <code>scheduleToClose</code> (all attempts including retries), <code>scheduleToStart</code> (how long a task may wait unclaimed — your "no workers polling" alarm), and <code>heartbeatTimeout</code> (fast death detection for long activities, with recorded progress so a retry resumes at item 40,231 instead of item 0).</p>
+        <p>And the default that bites: Temporal's default retry policy retries activities <b>indefinitely</b> with exponentially growing, capped backoff. Wonderful for riding out a 20-minute dependency outage; dangerous if a bug makes an activity fail forever — the workflow just… waits, retrying. Production hygiene: set <code>maximumAttempts</code> or <code>scheduleToClose</code>, mark non-retryable error types (a 400 will never succeed on retry), and alert on workflows stuck in retry loops.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · History limits, continue-as-new &amp; entity workflows <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Everything durable has a price: <b>the history must stay loadable and replayable</b>. Temporal caps a single execution's history at roughly <b>tens of thousands of events / ~50 MB</b> (warnings fire well before the hard limits). A workflow looping "process signal, sleep, repeat" forever will hit the cap — the escape hatch is <b>continue-as-new</b>: close this execution and atomically start a fresh one with the accumulated state passed as arguments. Same workflow id, new run, history back to a handful of events. Any workflow with an unbounded loop should continue-as-new on a schedule (every N iterations / when the SDK suggests it).</p>
+        <p>That pattern unlocks the <b>entity workflow</b> (actor) style: one long-lived workflow per user / order / subscription, holding its state in workflow variables, mutated by signals, read by queries, rolling over via continue-as-new for years. It's an actor model where the mailbox and state survive any crash — many teams use it as a replacement for "status columns plus sweepers" entirely.</p>
+        <p>Payloads have limits too — single arguments/results are capped around <b>a couple of MB</b> (and the whole gRPC message not much more). The idiom is the same as with queues: <b>pass references, not data</b> — the S3/GCS key travels through history; the bytes never do. Design smell to call out: an activity returning a 50 MB report into workflow state. History is a ledger, not a bus.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · The boundary: Temporal vs Step Functions vs Airflow <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Three tools get conflated because all draw boxes and arrows. Separate them by <b>what flows</b> and <b>what triggers</b>. <b>Airflow/Dagster</b>: <i>data</i> flows, a <i>schedule</i> triggers — batch DAGs, backfills, sensor-and-retry ops tooling for data engineering. It is not built for millions of concurrent per-order executions or waiting on a human. <b>Temporal / Step Functions</b>: <i>business transactions</i> flow, <i>events</i> trigger — one execution per order/user/payment, thousands starting per second, living seconds to months.</p>
+        <p>Within transactional orchestration, the split is <b>code vs configuration</b>. <b>AWS Step Functions</b> defines the state machine in JSON (Amazon States Language): fully managed, IAM-integrated, direct service integrations, per-state-transition pricing, and two flavors — <b>Standard</b> (durable, up to <b>1 year</b>, exactly-once-style execution semantics, history capped at ~25k events) and <b>Express</b> (up to <b>5 minutes</b>, at-least-once, high-throughput, priced by duration). It's a superb answer <i>inside AWS</i> for moderately-sized flows. It gets painful where JSON is a bad programming language: complex branching, collections, compensation stacks, versioning of long-lived executions, local testing.</p>
+        <p><b>Temporal</b> is the inverse: the workflow <i>is code</i> (loops, types, unit tests, your IDE), signals/queries/timers are first-class, it's portable (self-host or Temporal Cloud) — and you own workers plus a nontrivial dependency. The interview script: <i>"all-in on AWS with a modest state machine → Step Functions; complex, long-lived, signal-heavy business logic or multi-cloud → Temporal; scheduled data DAGs → Airflow."</i> Bonus point: they converge — Step Functions is what you get when orchestration is <i>configuration</i>, Temporal when it's <i>code</i>.</p>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== 7. AT SCALE ===== -->
+  <div class="card scale" id="scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Order-of-magnitude figures for capacity talk — Temporal's own limits move between versions, so quote the order, not the digit.</p>
+    <table class="cmd-tbl">
+      <tr><td>history / execution</td><td>~<b>tens of thousands of events / ~50 MB</b> hard ceiling per execution (warnings earlier) → loops and entities must <b>continue-as-new</b>.</td></tr>
+      <tr><td>payloads</td><td>Single payloads capped around <b>~2 MB</b> (gRPC message ~4 MB) — pass S3/blob <i>references</i> through history, never bytes.</td></tr>
+      <tr><td>timers</td><td>Durable sleeps of <b>days–months are routine</b>; a sleeping workflow consumes no worker resources — only rows in the store.</td></tr>
+      <tr><td>step overhead</td><td>Each transition = durable writes + task dispatch: <b>ms to tens of ms</b> per hop. Workflows are for business time, not request time.</td></tr>
+      <tr><td>throughput</td><td>Capacity is <b>state transitions/sec</b> (one activity ≈ a handful of transitions). Scales with history shards + the persistence tier; shard count is <b>fixed at cluster creation</b>.</td></tr>
+      <tr><td>workers</td><td>Stateless, horizontally scaled; autoscale on task-queue backlog. <b>Schedule-to-start latency</b> is the metric that says "not enough workers".</td></tr>
+      <tr><td>retention</td><td>Closed-workflow histories retained for a configurable window (typically days–months), then deleted or archived — history doubles as an audit log while it lives.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Failure modes that only appear at scale:</b>
+      <b>non-deterministic deploys</b> (new code breaks replay of in-flight executions — patch/version instead);
+      <b>history blow-up</b> (unbounded loops without continue-as-new);
+      <b>fat payloads</b> (MB-sized results dragged through every replay);
+      <b>silent stalls</b> (no worker polling a task queue — nothing errors, everything waits; alert on schedule-to-start);
+      <b>retry storms</b> (default infinite retries × a downed dependency × thousands of workflows — cap attempts, mark non-retryables);
+      <b>hot entity</b> (one workflow receiving a signal flood serializes on its single history).</div>
+  </div>
+
+  <!-- ===== 8. INTERVIEW ===== -->
+  <div class="card" id="interview">
+    <h2>8 · In the interview</h2>
+    <p><b>How it comes up:</b> rarely as "design Temporal" — usually you invoke it inside "design checkout / subscription billing / trip booking / KYC onboarding", the moment the design needs multi-step side effects with retries, long waits, or compensation. The follow-ups: <i>what if the worker dies mid-flow?</i> (replay from history; activities not re-executed), <i>can a step run twice?</i> (activities at-least-once → idempotency keys), <i>how do you wait 30 days?</i> (durable timer, not a thread), <i>how do you change code with workflows in flight?</i> (patching/versioning), <i>why not just queues?</i> (you'd rebuild state, retries, timers, recovery and audit by hand — the DIY engine).</p>
+    <p><b>The choice script:</b> single async job → queue + DLQ. Modest state machine, all-in on AWS → <b>Step Functions</b>. Complex, long-lived, signal-heavy business logic, or portability/self-hosting → <b>Temporal</b>. Scheduled data DAGs → <b>Airflow/Dagster</b>. BPMN-shaped org where analysts co-own diagrams → <b>Camunda</b>. Then the senior close: whatever the engine, <i>activities stay idempotent and payloads stay references</i> — the engine moves the hard parts, it doesn't delete them.</p>
+    <h3>Alternatives — one line each</h3>
+    <table class="cmd-tbl">
+      <tr><td>AWS Step Functions</td><td>Managed JSON state machine (ASL); Standard ≤ 1 yr &amp; exactly-once-style, Express ≤ 5 min &amp; at-least-once; per-transition pricing. Great inside AWS; less expressive than code.</td></tr>
+      <tr><td>Airflow / Dagster</td><td>Schedule-centric batch <b>data</b> DAGs, backfills, ops UI. Wrong tool for per-order transactional flows or human waits.</td></tr>
+      <tr><td>Camunda 8 / Zeebe</td><td>BPMN diagrams executed by a horizontally scalable engine. Shines where business analysts co-own the process model.</td></tr>
+      <tr><td>Netflix Conductor</td><td>JSON-defined microservice orchestration; Netflix archived the OSS project — continued by the community/Orkes. Legacy-encounter likely, greenfield rare.</td></tr>
+      <tr><td>Restate / Inngest</td><td>The newer durable-execution wave: lighter ops (single binary / serverless functions), same replay ideas, younger ecosystems.</td></tr>
+      <tr><td>Azure Durable Functions</td><td>Durable execution grown inside Azure Functions (same intellectual lineage) — the Azure-flavored answer.</td></tr>
+      <tr><td>DIY: outbox + queues + sweepers</td><td>What it actually costs: a state table, per-step queues, cron recovery, retry bookkeeping, dedupe, compensation scripts, zero replay/audit — a workflow engine, minus correctness.</td></tr>
+    </table>
+    <div class="note info"><b>Phrases that score:</b> "workflow code is deterministic; every side effect is an activity with a retry policy" · "on crash, a new worker replays the history — recorded results are fed back, activities are never re-executed" · "activities are at-least-once, so they're idempotent, keyed on workflowId+activityId" · "the 30-day wait is a durable timer, not a sleeping thread" · "unbounded loops continue-as-new before the ~50 MB history cap" · "state transitions per second is the capacity metric, and schedule-to-start latency is the worker-health alarm".</div>
+  </div>
+
+  <!-- ===== 9. CHECK YOURSELF ===== -->
+  <div class="card" id="check">
+    <h2>9 · Check yourself</h2>
+    <details class="qa">
+      <summary>A worker dies right after <code>chargeCard</code> succeeds. Is the customer charged twice? Walk the two sub-cases.</summary>
+      <div class="a"><p><b>Case 1 — the result was recorded:</b> ActivityTaskCompleted is in history; the new worker replays, the await resolves from history, no second charge. <b>Case 2 — the charge succeeded but the worker died before reporting:</b> the server only sees a timed-out attempt and <b>retries the activity</b> — at-least-once. The retry re-calls the payment provider, so the activity must be idempotent (idempotency key, e.g. workflowId+activityId, which processors accept). Replay protects you from re-running <i>recorded</i> steps; idempotency protects you from re-running <i>unreported</i> ones.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Why can't workflow code call <code>Date.now()</code> or make an HTTP request directly? What exactly breaks?</summary>
+      <div class="a"><p>Replay re-executes the code against the recorded history and must reproduce the <b>same decisions in the same order</b>. A raw clock or network call returns a different value on replay → the code branches differently → the commands it issues no longer match the history → the SDK raises a <b>non-determinism error</b> (better than silently corrupting state). Fix: <code>workflow.now()</code>/deterministic random (values sourced from history), <code>sideEffect</code> for one-shot recorded values, and activities for all I/O.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Interviewer: "So Temporal gives us exactly-once, right?"</summary>
+      <div class="a"><p>Split the claim. Workflow <b>state transitions</b> are effectively exactly-once — event-sourced, single history, idempotent replay. Activity <b>side effects</b> are <b>at-least-once</b>: completion can happen without being reported, and the retry re-executes. So the engine gives exactly-once <i>orchestration</i> over at-least-once <i>actions</i>, and your activities still need idempotency. Overselling this is the classic way to lose the room.</p></div>
+    </details>
+    <details class="qa">
+      <summary>What is continue-as-new, and when are you forced to use it?</summary>
+      <div class="a"><p>It atomically closes the current execution and starts a fresh one (same workflow id, new run) with state carried in the arguments — resetting the history. Forced whenever history would grow unboundedly: polling/processing loops, entity workflows alive for months, signal-heavy actors — because a single execution's history is capped around tens of thousands of events / ~50 MB, and replay must stay cheap.</p></div>
+    </details>
+    <details class="qa">
+      <summary>A 12-step KYC flow with human review, on AWS. Step Functions or Temporal — and what tips it?</summary>
+      <div class="a"><p>Both can do it. <b>Step Functions</b> if the org is all-in on AWS and the flow stays a modest state machine: zero infra, IAM-native, Standard supports year-long waits and callbacks. <b>Temporal</b> tips when the logic outgrows JSON — complex branching and data shaping, rich signal/query interaction, real unit tests, or portability requirements — and when executions must evolve safely over months (patching/versioning). The tiebreaker is honest: "who maintains this, and is the logic configuration or code?"</p></div>
+    </details>
+  </div>
+
+  <p class="small muted">Sources: condenses Temporal documentation and architecture write-ups (durable execution, replay, timeouts, limits), the Cadence/SWF lineage, and AWS Step Functions docs. Limits and defaults move between versions — figures here are order-of-magnitude interview numbers; verify before production use.</p>
+</div>
+
+<script src="site.js"></script>
+<script>
+/* ===== Durable execution stepper ===== */
+const ACTS = [
+  { name: 'chargeCard',       comp: 'refundCard',       res: '{authId:"ch_0091"}' },
+  { name: 'reserveInventory', comp: 'releaseInventory', res: '{sku:"A-17",qty:2}' },
+  { name: 'shipOrder',        comp: 'cancelShipment',   res: '{tracking:"1Z83F4"}' },
+  { name: 'sendEmail',        comp: null,               res: '{msgId:"m_5512"}' },
+];
+const MAX_ATT = 3;
+let S = null;
+const $ = id => document.getElementById(id);
+
+function defaultState(){
+  return {
+    hist: [],                 // {kind:'wf'|'sched'|'done'|'fail', name, label}
+    step: 0, phase: 'start',  // start | sched | run | comp | closed
+    attempt: 1, failArmed: false, perma: false,
+    worker: { n: 1, alive: true, replaying: false },
+    compIdx: null, comped: [], failedAt: null,
+    status: 'not started',
+  };
+}
+
+function logLine(cls, msg){
+  const d = document.createElement('div');
+  d.className = 'l ' + cls;
+  d.textContent = msg;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function explain(html){ $('explain').innerHTML = html; }
+function ev(kind, name, label, cls){
+  S.hist.push({ kind, name, label });
+  logLine(cls, '[#' + S.hist.length + '] ' + label);
+}
+function commentary(cls, msg){ logLine(cls, '      · ' + msg); }
+
+function render(){
+  const running = S.status === 'running' || S.status === 'compensating';
+  let h = '';
+
+  h += '<div class="node ' + (running ? 'primary' : '') + '" style="min-width:250px"><div class="title">⚙️ orderWorkflow(order-42) <span class="badge">' + S.status + '</span></div>';
+  ACTS.forEach((a, i) => {
+    let right = '·', style = '';
+    if (i < S.step) { right = '✓ done'; style = ' style="border-color:var(--ok)"'; }
+    if (i === S.step && S.status === 'running'){
+      right = (S.phase === 'run') ? '⏳ attempt ' + S.attempt + '/' + MAX_ATT : 'next';
+      style = ' style="border-color:var(--accent)"';
+    }
+    if (S.failedAt === i){ right = '✗ failed'; style = ' style="border-color:var(--bad);color:var(--bad)"'; }
+    if (S.comped.indexOf(i) !== -1){ right = '↩ ' + a.comp; style = ' style="border-color:var(--bad);color:var(--bad)"'; }
+    h += '<div class="kv"' + style + '><span class="k">' + (i+1) + '·' + a.name + '</span><span>' + right + '</span></div>';
+  });
+  h += '</div>';
+
+  const w = S.worker;
+  h += '<div class="node ' + (w.alive ? (w.replaying ? 'replica' : '') : 'dead') + '"><div class="title">🧑‍💻 worker-' + w.n +
+       ' <span class="badge">' + (w.alive ? (w.replaying ? 'replaying…' : 'polling') : 'dead') + '</span></div>' +
+       '<div class="small muted">' + (w.alive
+          ? (w.replaying ? 'rebuilding state from history' : 'stateless · long-polls task queue<br>holds state only in cache')
+          : 'crashed — local state gone;<br>history is safe on the server') + '</div></div>';
+
+  h += '<div class="node primary"><div class="title">🗄 Temporal server <span class="badge">history</span></div>' +
+       '<div class="kv"><span class="k">events</span><span>' + S.hist.length + '</span></div>' +
+       '<div class="kv"><span class="k">store</span><span>Cassandra / SQL</span></div>' +
+       '<div class="small muted">append-only event history<br>= the single source of truth</div></div>';
+
+  $('nodes').innerHTML = h;
+}
+
+function advance(){
+  if (S.worker.replaying) return;
+  if (S.phase === 'closed'){
+    explain('This execution is closed — its history is immutable now. Press <b>↺ Reset</b> to start a new one.');
+    return;
+  }
+  if (!S.worker.alive){ recover(); return; }
+  const a = ACTS[S.step];
+
+  if (S.phase === 'start'){
+    ev('wf', '', 'WorkflowExecutionStarted   orderWorkflow(order-42)', 'cmd');
+    S.status = 'running'; S.phase = 'sched';
+    explain('Event #1 is durably written on the <b>server</b>. From now on this execution survives any number of process deaths. <span class="muted">(Workflow-task bookkeeping events elided for readability.)</span>');
+  }
+  else if (S.phase === 'sched'){
+    ev('sched', a.name, 'ActivityTaskScheduled    ' + a.name + '()', 'info');
+    S.phase = 'run';
+    explain('The workflow code hit <code>await ' + a.name + '(…)</code>. The server recorded the intent and put an activity task on the task queue — a worker will pick it up.');
+  }
+  else if (S.phase === 'run'){
+    if (S.perma && S.attempt >= MAX_ATT){
+      ev('fail', a.name, 'ActivityTaskFailed       ' + a.name + '()  after ' + MAX_ATT + ' attempts — retries exhausted', 'err');
+      S.failedAt = S.step; S.compIdx = S.step - 1;
+      S.phase = 'comp'; S.status = 'compensating';
+      explain('Retries exhausted → the failure is finally recorded in history and <b>thrown inside the workflow code</b>. The catch block now runs compensations in <b>reverse</b> order.');
+    }
+    else if (S.perma || S.failArmed){
+      commentary('err', 'worker-' + S.worker.n + ': ' + a.name + '() attempt ' + S.attempt + ' threw ECONNRESET');
+      commentary('warn', 'server: retry in ' + Math.pow(2, S.attempt - 1) + 's (backoff ×2) — attempt ' + (S.attempt + 1) + '/' + MAX_ATT + ' next · history unchanged');
+      S.attempt++; S.failArmed = false;
+      explain('Transient failures are retried <b>server-side</b> per the retry policy (1s → 2s → 4s…). Note the event counter: retries do <b>not</b> append history events — attempt state lives in mutable state, so flaky dependencies can\'t bloat the ledger.');
+    }
+    else {
+      ev('done', a.name, 'ActivityTaskCompleted    ' + a.name + '() → ' + a.res, 'ok');
+      S.step++; S.attempt = 1;
+      if (S.step >= ACTS.length){
+        ev('wf', '', 'WorkflowExecutionCompleted  result="fulfilled"', 'cmd');
+        S.status = 'completed'; S.phase = 'closed';
+        explain('All four activities done; the terminal event closes the workflow. The full history stays queryable until retention expires — a free audit log.');
+      } else {
+        S.phase = 'sched';
+        explain('<b>' + a.name + '</b> returned <code>' + a.res + '</code> — and that result is now <b>part of history</b>. On any future replay it will be read back, not recomputed.');
+      }
+    }
+  }
+  else if (S.phase === 'comp'){
+    while (S.compIdx >= 0 && !ACTS[S.compIdx].comp) S.compIdx--;
+    if (S.compIdx >= 0){
+      const c = ACTS[S.compIdx];
+      ev('sched', c.comp, 'ActivityTaskScheduled    ' + c.comp + '()  ← compensation for ' + c.name, 'err');
+      ev('done', c.comp, 'ActivityTaskCompleted    ' + c.comp + '() ✓', 'err');
+      S.comped.push(S.compIdx); S.compIdx--;
+      explain('Unwinding the saga: <b>' + c.comp + '</b> undoes <b>' + c.name + '</b>. Compensations pop in reverse completion order — a stack, not a list.');
+    } else {
+      const msg = S.comped.length
+        ? 'WorkflowExecutionFailed     "' + ACTS[S.failedAt].name + ' failed — order compensated"'
+        : 'WorkflowExecutionFailed     "' + ACTS[S.failedAt].name + ' failed — nothing to compensate"';
+      ev('wf', '', msg, 'err');
+      S.status = 'compensated'; S.phase = 'closed';
+      explain('The workflow ends <b>failed-but-consistent</b>: every completed side effect was undone. That is the saga guarantee — atomicity replaced by ordered compensation.');
+    }
+  }
+  render();
+}
+
+function kill(){
+  if (!S.worker.alive){ commentary('warn', 'worker is already dead'); return; }
+  if (S.status !== 'running' && S.status !== 'compensating'){
+    explain('Start the workflow first (<b>▶ Advance</b>), then kill the worker mid-flight.');
+    return;
+  }
+  S.worker.alive = false;
+  commentary('err', '💥 worker-' + S.worker.n + ' killed (SIGKILL) — its RAM (and the sticky cache) is gone');
+  explain('The worker is dead — every local variable with it. But the <b>history on the server</b> is intact. Press <b>▶ Advance</b>: a fresh worker will <b>replay</b> the history and land in exactly this state.');
+  render();
+}
+
+function describePosition(){
+  if (S.phase === 'sched') return 'about to schedule ' + ACTS[S.step].name;
+  if (S.phase === 'run')   return 'waiting on ' + ACTS[S.step].name + ' (attempt ' + S.attempt + ')';
+  if (S.phase === 'comp')  return 'mid-compensation';
+  return 'workflow start';
+}
+
+function recover(){
+  S.worker = { n: S.worker.n + 1, alive: true, replaying: true };
+  commentary('info', 'worker-' + S.worker.n + ' started — polls the task queue, receives workflow task + full history (' + S.hist.length + ' events)');
+  render();
+  const lines = [];
+  lines.push('⟳ replay: running orderWorkflow() from the first line, against recorded history…');
+  S.hist.forEach(e => {
+    if (e.kind === 'done') lines.push('⟳ replay: await ' + e.name + '() → result fed FROM HISTORY — activity NOT re-executed');
+    if (e.kind === 'fail') lines.push('⟳ replay: recorded failure of ' + e.name + '() re-thrown into the code path');
+  });
+  lines.push('⟳ replay complete — position restored: ' + describePosition() + ' · code path matched history ✓');
+  let i = 0;
+  const t = setInterval(() => {
+    if (i < lines.length){
+      logLine(i === lines.length - 1 ? 'ok' : 't', lines[i]);
+      i++;
+    } else {
+      clearInterval(t);
+      S.worker.replaying = false;
+      explain('Replay fed <b>recorded results</b> back into the code — no card re-charged, no email re-sent, and it took milliseconds. Worker-' + S.worker.n + ' now continues from the first <i>unrecorded</i> step' +
+        (S.phase === 'run' ? ' (the in-flight activity hit its start-to-close timeout and was re-queued — at-least-once in action)' : '') +
+        '. <b>The program outlived the process.</b>');
+      render();
+    }
+  }, 340);
+}
+
+function armFail(){
+  if (S.phase === 'closed' || S.status === 'compensating'){ explain('No pending activity to fail — reset or advance first.'); return; }
+  if (S.perma){ explain('Retries are already set to exhaust — every attempt will fail.'); return; }
+  S.failArmed = true;
+  commentary('warn', 'fault injected: the NEXT activity attempt will throw');
+  explain('Armed. The next <b>▶ Advance</b> during an in-flight activity will fail that attempt; the server retries it with exponential backoff — watch the event count stay put.');
+}
+function armPerma(){
+  if (S.phase === 'closed' || S.status === 'compensating'){ explain('Execution already closed or compensating — reset first.'); return; }
+  S.perma = true;
+  commentary('err', 'fault injected: ALL further attempts of the current activity will fail (retries will exhaust)');
+  explain('Armed. Keep pressing <b>▶ Advance</b>: attempts fail 1 → 2 → 3, backoff doubles, then the failure is recorded in history and the saga <b>compensates in reverse</b>.');
+}
+
+function reset(){
+  S = defaultState();
+  $('log').innerHTML = '';
+  logLine('t', 'reset — event history is empty; retry policy: 1s → 2s → 4s, max ' + MAX_ATT + ' attempts');
+  explain('Press <b>▶ Advance</b> to start the workflow. Each press = the next event appended to history.');
+  render();
+}
+
+$('advBtn').onclick   = advance;
+$('killBtn').onclick  = kill;
+$('failBtn').onclick  = armFail;
+$('permBtn').onclick  = armPerma;
+$('resetBtn').onclick = reset;
+
+reset();
+</script>
+</body>
+</html>

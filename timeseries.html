@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Time-Series Databases (Prometheus &amp; TimescaleDB) — Deep Dive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap art">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>📈 Time-Series Databases — a million points a second</h1>
+      <div class="sub">Prometheus, TimescaleDB and the physics of metrics: append-only writes, Gorilla compression, retention by the truckload — and why one bad label can set your RAM on fire. <span class="rt">☕ ~15 min read</span></div>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">append-mostly</span>
+      <span class="tag">series = metric + labels</span>
+      <span class="tag">cardinality</span>
+      <span class="tag">Gorilla ~1.37 B/sample</span>
+      <span class="tag">downsampling</span>
+      <span class="tag">retention</span>
+    </div>
+    <p class="lead">A time-series database is built around one sentence: <b>writes arrive append-mostly and roughly in time order, are almost never updated, are read as time-window aggregations grouped by tags, and die by retention.</b> Every design choice — immutable time-chunks, delta compression, an inverted index on labels, expiry by dropping whole partitions — falls straight out of that sentence. And the scaling axis that makes or breaks the whole thing is <b>cardinality</b>: the number of distinct series you're tracking.</p>
+    <div class="note info"><b>In the interview:</b> TSDBs star in <i>"design a metrics / monitoring system"</i> (a genuine L6 favorite) and cameo in every design's observability box. Expected unprompted: the <b>series/label data model</b>, a <b>cardinality budget</b> (and what a <code>user_id</code> label does to it), <b>retention + downsampling tiers</b>, and the arithmetic <b>samples/s = active series ÷ scrape interval</b>.</div>
+  </div>
+
+  <div class="card">
+    <h3>On this page</h3>
+    <div class="toc">
+      <a href="#model">Mental model</a>
+      <a href="#api">Syntax &amp; API</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#distributed">Distributed setup</a>
+      <a href="#play">🎛 Play with it</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#scale">At scale</a>
+      <a href="#interview">In the interview</a>
+      <a href="#check">Check yourself</a>
+    </div>
+  </div>
+
+  <!-- ===== 1. MENTAL MODEL ===== -->
+  <div class="card" id="model">
+    <h2>1 · The mental model: a wall of strip-chart recorders</h2>
+    <p>Picture an old control room: a wall of strip-chart recorders, each with a pen scratching one wiggly line onto paper that scrolls at constant speed. The pen only ever moves <i>forward</i> — nobody goes back and redraws yesterday. When the paper reaches the end of the wall, the oldest meter of it is torn off and binned. Reading is done by eye, over a window: "what did boiler pressure do in the last hour?"</p>
+    <p>That wall <i>is</i> a TSDB. Each pen is a <b>series</b>; the paper is time-partitioned storage; tearing off old paper is <b>retention</b>; squinting at a window is a <b>range query</b>. And the one thing that determines the size of the building is not how fast the pens wiggle — it's <b>how many pens you've installed</b>.</p>
+    <p>Concretely, a series is <b>a metric name plus a unique set of label (tag) pairs</b>: <code>http_requests_total{host="web-1", method="GET", code="500"}</code>. Each distinct combination is its own pen, its own stream of <code>(timestamp, value)</code> points. <b>Cardinality</b> = how many such combinations are alive. Adding a host adds series <i>linearly</i>. Adding a <b>label</b> multiplies: every existing series forks into one per new label value. A label with bounded values (<code>method</code>: ~5, <code>code</code>: ~dozens) is fine. A label with unbounded values — <code>user_id</code>, <code>request_id</code>, a raw URL with IDs in it — multiplies your series count by your user count, and the index and RAM go with it. This is <b>the</b> classic TSDB outage, it has a widget below, and it is the single most valuable thing to say out loud in an interview.</p>
+    <p>Why not just use Postgres? At 100 points/sec — absolutely, use Postgres. But the workload sentence turns hostile at scale: a B-tree is machinery for random <i>updates</i>, and every generic row carries tens of bytes of header/index overhead for what is fundamentally 16 bytes of physics (an 8-byte timestamp + an 8-byte float). A TSDB instead says: writes only ever land "on the right edge" of time → buffer recent points in RAM, seal them into <b>immutable, time-partitioned chunks</b> (an LSM-flavored life cycle), compress brutally because neighboring points are nearly identical (Gorilla, § deep dive: <b>~1.37 bytes per sample</b> instead of 16), find series by an <b>inverted index on labels</b>, and expire data by <b>dropping whole chunks</b> — a file delete, not a billion row-deletes. Out-of-order arrivals get only a bounded grace window; truly late data is the workload sentence being violated, and TSDBs mostly just drop it.</p>
+    <div class="note warn"><b>The one-sentence test.</b> If you would never UPDATE a row, and every query looks like <i>"aggregate value over a time window, grouped by tags"</i> — it's a time-series workload. If you need to mutate entities (OLTP) or join raw events ad hoc (OLAP), a TSDB is the wrong shape, no matter how many timestamps your data has.</div>
+  </div>
+
+  <!-- ===== 2. SYNTAX ===== -->
+  <div class="card" id="api">
+    <h2>2 · Syntax &amp; core API</h2>
+    <p>Two dialects cover the interview: <b>PromQL</b> (the lingua franca of monitoring) and <b>SQL with time-series extensions</b> (TimescaleDB). Ten minutes of fluency in each signals you've actually run these.</p>
+
+    <h3>PromQL (Prometheus)</h3>
+    <table class="cmd-tbl">
+      <tr><td>metric{label="x"}</td><td>Series selection by name + label matchers (<code>=</code>, <code>!=</code>, <code>=~</code> regex). Returns the latest value of every matching series.</td></tr>
+      <tr><td>metric[5m]</td><td>Range selector: the raw points from the last 5 minutes, per series — the input to <code>rate()</code> and friends.</td></tr>
+      <tr><td>rate(c[5m])</td><td>Per-second increase of a <b>counter</b> over the window — <b>the</b> PromQL idiom. Counters only go up (and reset to 0 on restart); <code>rate()</code> handles resets for you. <code>increase()</code> = same thing, as a total.</td></tr>
+      <tr><td>sum by (svc) (…)</td><td>Aggregate across series, keeping the <code>svc</code> label. <code>avg</code>, <code>max</code>, <code>topk(5, …)</code> likewise.</td></tr>
+      <tr><td>histogram_quantile</td><td>Estimates percentiles from histogram buckets (which are just counters per bucket): p99 latency without storing raw events.</td></tr>
+      <tr><td>avg_over_time(g[1h])</td><td>Window functions over a <b>gauge</b> (a value that goes up and down: memory, queue depth, temperature).</td></tr>
+      <tr><td>offset 1w</td><td>Same query, shifted back — week-over-week comparisons for free.</td></tr>
+      <tr><td>recording rules</td><td>Precompute expensive expressions on a schedule into new series (<code>job:errors:ratio5m</code>) — the Prometheus form of rollups.</td></tr>
+      <tr><td>alerting rules</td><td>An expression plus <code>for: 10m</code> — must stay true that long before firing. Evaluated inside the server on recent data.</td></tr>
+    </table>
+    <pre class="code"><span class="c"># error ratio per service, last 5 minutes</span>
+sum by (service) (rate(http_requests_total{code=~"5.."}[5m]))
+/ sum by (service) (rate(http_requests_total[5m]))
+
+<span class="c"># p99 latency from histogram buckets (buckets are counters too)</span>
+histogram_quantile(0.99,
+  sum by (le) (rate(http_request_duration_seconds_bucket[5m])))
+
+<span class="c"># alert only on sustained pain, not blips</span>
+- alert: HighErrorRate
+  expr: job:errors:ratio5m &gt; 0.01
+  for: 10m</pre>
+    <p>The model behind it: Prometheus is <b>pull-based</b> — it scrapes each target's <code>/metrics</code> endpoint every interval (15 s is the working convention), discovers targets via service discovery (it's Kubernetes-native), and records an <code>up</code> series per target, so "is it even alive?" is just another query. Push-style sources (batch jobs, IoT) enter via gateways/agents — or via a push-native TSDB.</p>
+
+    <h3>TimescaleDB (Postgres extension)</h3>
+    <table class="cmd-tbl">
+      <tr><td>create_hypertable</td><td>Turns a normal table into a <b>hypertable</b>: auto-partitioned by time into <b>chunks</b> (+ optional space dimension). All of SQL still works — indexes, joins, constraints.</td></tr>
+      <tr><td>time_bucket('5 min', ts)</td><td>The GROUP-BY-time-window primitive — <code>date_trunc</code> with arbitrary bucket sizes.</td></tr>
+      <tr><td>continuous aggregate</td><td>A materialized view over a hypertable, refreshed incrementally on a policy — Timescale's rollups.</td></tr>
+      <tr><td>add_retention_policy</td><td>"Drop chunks older than 30 days" — expiry as cheap file drops, on a schedule.</td></tr>
+      <tr><td>compression policy</td><td>Rewrites older chunks into a columnar format — order-of-10× typical savings — while staying queryable via plain SQL.</td></tr>
+    </table>
+    <pre class="code"><span class="c">-- a normal table becomes time-partitioned</span>
+SELECT create_hypertable('readings', 'ts');
+
+<span class="c">-- dashboard query: joins with business tables just work — the superpower</span>
+SELECT time_bucket('5 minutes', r.ts) AS bucket, d.customer_id, avg(r.temp)
+FROM readings r JOIN devices d ON d.id = r.device_id
+WHERE r.ts &gt; now() - interval '1 day'
+GROUP BY bucket, d.customer_id;
+
+<span class="c">-- precompute + expire: rollups live long, raw data dies young</span>
+CREATE MATERIALIZED VIEW readings_5m WITH (timescaledb.continuous) AS
+  SELECT time_bucket('5 minutes', ts) AS bucket, device_id, avg(temp)
+  FROM readings GROUP BY bucket, device_id;
+SELECT add_retention_policy('readings', INTERVAL '30 days');</pre>
+    <p>One line on <b>InfluxDB</b> for completeness: purpose-built, push-based, with its own wire format — <code>cpu,host=web1,region=eu usage=0.64 1720000000000000000</code> (the "line protocol"). v1/v2 were famously cardinality-sensitive; v3 was rebuilt on Arrow/Parquet. Know it exists; don't dwell.</p>
+  </div>
+
+  <!-- ===== 3. USE CASES ===== -->
+  <div class="card" id="usecases">
+    <h2>3 · Use cases — when a TSDB is the answer</h2>
+
+    <div class="recipe">
+      <div class="rh">🖥 Infrastructure &amp; application monitoring</div>
+      The canonical case: every host, pod and service exports counters and gauges; Prometheus scrapes them; Grafana draws them; alerting rules watch the recent window. Kubernetes made this the default stack — service discovery finds pods as they come and go.
+      <div class="why">Why a TSDB: millions of samples/s of append-only floats, queried as windows, dead in 15 days — the workload sentence verbatim.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🌡 IoT / sensor fleets — TimescaleDB's home turf</div>
+      100k devices reporting every few seconds, but devices ARE relational: they belong to customers, sites, firmware versions. Timescale keeps readings in hypertables and lets you <code>JOIN devices</code>, <code>JOIN customers</code> in the same SQL query — no export pipeline between "metrics" and "business data".
+      <div class="why">Why Timescale specifically: the queries that matter ("avg temp per <i>customer</i>", "alerts for devices on firmware 1.2") need joins that pure metric stores can't do.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">💹 Financial ticks &amp; market data</div>
+      Price points arrive in time order at high volume and are never updated; queries are windows (VWAP over 5 min, OHLC bars = <code>time_bucket</code> aggregations). The field historically ran on specialized column stores (kdb+); modern builds use TSDBs or ClickHouse.
+      <div class="why">Why a TSDB: compression loves slowly-changing numeric streams; bar-building is exactly windowed aggregation.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🔥 SLO burn-rate alerting</div>
+      Recording rules precompute <code>error_ratio</code> series; alerts compare short-window and long-window burn rates (fast-burn catches sudden fires, slow-burn catches smolder) so you page on <i>budget consumption</i>, not on every blip.
+      <div class="why">Why a TSDB: burn rates are ratios of windowed rates over counters — one PromQL expression per SLO, evaluated continuously near the data.</div>
+    </div>
+
+    <h3>When a TSDB is the WRONG answer</h3>
+    <table class="cmd-tbl">
+      <tr><td>entity data with updates</td><td>Users, orders, inventory — things you mutate and read by key. That's OLTP (Postgres/DynamoDB). Timestamps in the rows don't make it a time-series workload; UPDATE does make it not one.</td></tr>
+      <tr><td>ad-hoc analytics over raw events</td><td>"Join purchases with sessions, group by campaign" over billions of rows at rest → columnar OLAP (<a href="clickhouse.html">ClickHouse</a>, BigQuery, lakehouse). TSDBs aggregate along time per series; they are not general query engines.</td></tr>
+      <tr><td>logs / full-text search</td><td>Unstructured text with needle-in-haystack queries → Elasticsearch or ClickHouse. Metrics answer "how much/how fast"; logs answer "what exactly happened".</td></tr>
+      <tr><td>exact per-record audit</td><td>Billing and compliance need every event, exactly, forever. TSDBs are built to downsample and expire — lossiness is a feature here and a lawsuit there. Use a log/ledger (Kafka → warehouse).</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 4. DISTRIBUTED SETUP ===== -->
+  <div class="card" id="distributed">
+    <h2>4 · Distributed setup — one node by design, then object storage</h2>
+    <p>Here's the twist interviewers enjoy: <b>Prometheus is deliberately single-node</b>. One binary, one local TSDB on one disk; no clustering, no replication, no consensus. That's a philosophy, not a limitation they forgot to fix: a monitoring system must be the <i>simplest, most reliable</i> thing in the building, because it's what you stare at while everything else burns. So HA is done by brute force — <b>run two identical Prometheus servers</b> scraping the same targets. Each holds its own (slightly different — scrapes aren't synchronized) copy of the truth; each evaluates the same alerts; Alertmanager deduplicates the pages.</p>
+    <p>Scale beyond one box splits along two axes. <b>Functional sharding</b>: run a Prometheus per team / per region / per cluster — each scrapes its own targets, and most orgs get surprisingly far on this alone. <b>Long-term + global view</b>: the local servers <b>remote-write</b> (or upload 2-hour blocks, in Thanos's sidecar model) into a horizontally scalable backend — <b>Thanos, Grafana Mimir, or VictoriaMetrics</b> — which lands the data in <b>object storage</b> (S3/GCS), serves a global query view across all shards, <b>deduplicates the HA pairs</b> at query time (by replica label), and runs compaction/downsampling over the bucket. Cheap bottomless retention, one Grafana datasource, and the local Prometheis stay small and boring.</p>
+    <p><b>TimescaleDB distributes like what it is — Postgres.</b> One strong primary plus read replicas, scaled vertically and stretched by compression and continuous aggregates; its multi-node sharding mode existed but was deprecated — the honest pitch is "one very capable box + replicas", which for most sensor fleets is genuinely enough, and you keep transactions, SQL and joins. If ingest outgrows a big Postgres box, that's usually the moment the architecture conversation moves to Mimir-style ingesters or <a href="clickhouse.html">ClickHouse</a> rather than to sharded Timescale.</p>
+    <div class="note gotcha"><b>The gotcha cluster:</b> (1) <b>Alerts must not depend on the fancy global layer.</b> Evaluate alerting rules on the local Prometheus, next to the data — if the query federation is down, you still get paged. (2) <b>Remote-write lags and buffers</b>: it queues on local disk (WAL) through backend hiccups — great for durability, but your "global" view can silently run minutes behind; monitor remote-write lag like a consumer lag. (3) <b>HA pairs double everything</b> — ingest, storage, scrape load on targets. Budget ×2 from day one, and make sure dedup-by-replica-label is configured, or every graph shows two jittery lines.</div>
+  </div>
+
+  <!-- ===== 5. INTERACTIVE ===== -->
+  <div class="card" id="play">
+    <h2>5 · 🎛 Play with it — the cardinality bomb</h2>
+    <p class="small muted" style="margin-top:0">Pure arithmetic, zero randomness — the numbers <i>are</i> the drama. Series = hosts × metrics-per-host, then someone ships a deploy that adds <code>user_id</code> as a label on everything (a one-line change in shared middleware — this is exactly how it happens). RAM is estimated at ~3 KB per active series (real range ~1–4 KB depending on version and churn); ingest assumes the conventional 15 s scrape.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn sec" id="healthyBtn">✅ Preset: healthy fleet</button>
+      <button class="btn warn" id="bombBtn">💣 Preset: cardinality incident</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="row" style="gap:24px;margin-bottom:10px">
+      <label class="fld" style="min-width:170px">hosts: <b id="hVal">100</b>
+        <input type="range" id="hSlider" min="0" max="9" value="3"></label>
+      <label class="fld" style="min-width:170px">metrics per host: <b id="mVal">100</b>
+        <input type="range" id="mSlider" min="0" max="7" value="3"></label>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px;margin-top:14px"><input type="checkbox" id="labelChk"> someone added <code>user_id</code> as a label</label>
+      <label class="fld" style="min-width:170px">distinct user_ids: <b id="uVal">1,000</b>
+        <input type="range" id="uSlider" min="0" max="8" value="2" disabled></label>
+    </div>
+    <div class="stage" id="stage">
+      <div class="nodes" id="nodes"></div>
+      <div id="gauge"></div>
+    </div>
+    <div class="explain" id="explain"></div>
+    <div class="cols" style="margin-top:12px">
+      <div><h3>Event log</h3><div class="log" id="log"></div></div>
+      <div><h3>What to try</h3>
+        <ol class="steps small">
+          <li>Slide hosts to 10,000 with 200 metrics each → 2M series: the meter crosses into <span style="color:var(--warn)">warn</span>. Growth by hosts is <i>linear</i> — manageable.</li>
+          <li>✅ Healthy fleet: 200 hosts × 150 metrics = 30k series ≈ ~90 MB of head RAM. Monitoring an entire company on one small VM.</li>
+          <li>💣 Now the incident: same modest fleet, plus <code>user_id</code> with just 1,000 users → <b>10M series</b>. Nothing about the infrastructure changed — one label multiplied everything.</li>
+          <li>Push user_ids toward 1M and watch the RAM line. The math still "works" — that's the point: nothing warns you at deploy time.</li>
+          <li>Compare storage/day raw vs Gorilla — the ~12× gap is why TSDBs can afford to keep raw data for weeks.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 6. DEEP DIVES ===== -->
+  <div id="deep"></div>
+  <details class="fold">
+    <summary>🔍 Deep dive · Gorilla compression — 16 bytes down to ~1.37 <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>A sample is a timestamp and a float — 16 raw bytes. Facebook's <b>Gorilla</b> paper (VLDB 2015) showed how to store it in <b>~1.37 bytes on average</b>, and its two tricks are now the genome of every modern TSDB (Prometheus's chunk format is a direct descendant).</p>
+        <p><b>Trick 1 — delta-of-delta timestamps.</b> Scrapes arrive on a metronome: …10:00:15, 10:00:30, 10:00:45… The deltas are all 15 s; the <i>delta of deltas</i> is 0. Encode that zero in <b>a single bit</b>, spend more bits only when the rhythm hiccups. On production data the paper found the overwhelming majority of timestamps (~96%) collapsed to that one bit.</p>
+        <p><b>Trick 2 — XOR'd floats.</b> Successive values of one series are nearly identical — CPU 47.1% then 47.3%, or a counter incrementing steadily. XOR a value with its predecessor and you get mostly zero bits, with a short burst of "what changed" in the middle; encode just that burst (and when the value repeats exactly — about half the time in practice — a single bit). This is why <b>per-series</b> storage matters: compression feeds on self-similarity, which only exists <i>within</i> a series, never across them.</p>
+        <p>The consequences cascade. Compressed streams are append-only by construction → chunks are <b>immutable</b> once sealed (Prometheus: ~2-hour blocks, memory-buffered then flushed, later compacted — the LSM life cycle). Random updates are impossible-by-design, which is fine — the workload sentence said we'd never update. And the economics: <b>~12× compression</b> means keeping two weeks of raw 15-second data is routine. Prometheus's observed on-disk cost is <b>~1–2 bytes per sample</b> all-in. Quote that and the interviewer knows you've run one.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Cardinality &amp; the inverted index — anatomy of the classic outage <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>How does <code>{service="api", code="500"}</code> find its series among millions? An <b>inverted index</b>, exactly like a search engine: for every label pair, a postings list of series IDs that carry it; the query intersects the lists. Elegant — and it's precisely this index, plus per-series in-memory state (the "head" chunk of recent points), that cardinality attacks. Every <i>active</i> series costs RAM — ballpark <b>a few KB each</b> — and every <i>new</i> series costs index entries that live as long as the data does.</p>
+        <p>Now replay the classic incident in slow motion. A developer adds one label in shared HTTP middleware — <code>user_id</code>, to "make debugging easier". Every HTTP metric that middleware touches — request counters, latency histogram buckets (each bucket is its own series!), size gauges — forks into one series <i>per user who shows up</i>. 30k series become 30M. The TSDB doesn't reject this; it valiantly allocates index and head chunks until the OOM killer arrives. The restart makes it worse: WAL replay tries to rebuild the same head into the same too-small RAM — a crash loop. Recovery means shipping a config that drops the label, and often deleting the poisoned blocks.</p>
+        <p>There's a slyer variant: <b>churn</b>. Kubernetes pod names (<code>pod="api-7f9b4-xk2x"</code>) are bounded at any instant but <i>new on every deploy</i> — cardinality-over-time. Each rollout retires thousands of series and mints thousands more; the index accumulates both. Active series stay flat; the index and block sizes bloat quietly.</p>
+        <p>Defenses, in the order you'd say them: <b>label hygiene rules</b> (labels are for bounded dimensions: region, code, method — never user IDs, request IDs, raw paths; anything per-request belongs in <i>logs or traces</i>, not metrics); <b>hard limits at ingest</b> (per-scrape <code>sample_limit</code>, per-tenant series quotas in Mimir/VictoriaMetrics — reject, don't absorb); <b>observability of the observability</b> (a dashboard of top metrics by series count; alert on series growth rate); and <b>relabeling</b> to drop or aggregate hostile labels at the door.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Retention &amp; downsampling — data that ages gracefully <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Nobody needs 15-second resolution from last March. The standard shape is a <b>resolution pyramid</b>: raw 15 s data for ~15 days (Prometheus's default retention), 5-minute rollups for months, 1-hour rollups for years. Thanos's compactor produces exactly 5m and 1h downsampled tiers over the object-store bucket; Prometheus expresses rollups as <b>recording rules</b> (precomputed series like <code>job:http_errors:rate5m</code>); Timescale as <b>continuous aggregates</b> refreshed incrementally. Dashboards over long ranges hit the rollups — a year-long graph reads thousands of points, not billions.</p>
+        <p><b>Expiry is a partition drop, and that's a design point, not a convenience.</b> Deleting a billion expired rows from a B-tree means finding, tombstoning and vacuuming each one — hours of I/O that competes with ingest. Dropping a whole time-chunk is unlinking a file: O(1)-ish, instant, no fragmentation. This is why every TSDB partitions by time <i>even on one node</i>, and why "retention = 30 days" is a cheap config line rather than a nightly batch job. (It's also the same trick as Kafka segment deletion — append-only systems all converge here.)</p>
+        <p>Two traps to name. <b>Rollup lag</b>: continuous aggregates and recording rules refresh on a schedule; a dashboard reading only rollups can be minutes behind — during an incident, that's the difference between "recovering" and "still on fire". Real-time views should union recent raw data with historical rollups (Timescale's real-time aggregates do this). And <b>averages lie in rollups</b>: a 5-minute <i>average</i> flattens a 30-second 100%-CPU spike into a gentle bump. Keep <code>max</code> (and histogram buckets) in the rollup, not just <code>avg</code>, or your post-incident graphs will gaslight you.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · The interview blueprint — "design a metrics/monitoring system" <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>This question is a gift: the architecture is nearly canonical, and every box is a chance to show judgment. <b>Collection</b>: agents/exporters on every host expose or push samples; at company scale you put a <b>Kafka tier</b> in front — it absorbs ingest spikes, survives TSDB restarts without data loss, and lets you fan out (one consumer writes the TSDB, another feeds anomaly detection). <b>Ingest</b>: horizontally scaled ingesters (Mimir-style) buffer recent data in RAM, seal 2-hour immutable blocks, upload to <b>object storage</b> — S3 is the real database; the ingesters are a write-through cache. <b>Query</b>: a stateless layer fans out over ingesters (recent) + store gateways (historical), with a results cache for dashboard traffic. <b>Alerting</b>: a separate evaluator loop reads only recent windows — small data, hard availability requirement; keep it decoupled from the big query path so dashboards being down never means alerts are down.</p>
+        <p>The senior differentiators to say unprompted: a <b>cardinality budget per team, enforced at ingest</b> (reject or aggregate; never absorb unbounded labels); <b>downsampling tiers</b> with retention per tier; <b>multi-tenancy isolation</b> (one team's runaway query or label bomb can't starve the cluster); and the honest note that <b>self-monitoring is a bootstrap problem</b> — the metrics system needs its own tiny, independent watcher.</p>
+        <p>Finally, place the boundary: metrics are <i>aggregates over labeled series</i>. The moment requirements say "arbitrary dimensions", "per-event drill-down", or "logs" — you've left TSDB territory for columnar OLAP: <a href="clickhouse.html">ClickHouse</a> is the usual heavyweight (several observability vendors are built on it), trading TSDB simplicity for general SQL over raw events. Naming that boundary crisply is worth more than any single technology choice.</p>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== 7. AT SCALE ===== -->
+  <div class="card scale" id="scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Ballparks to reason with out loud — the arithmetic matters more than the digits.</p>
+    <table class="cmd-tbl">
+      <tr><td>single Prometheus</td><td>Order of <b>hundreds of thousands to ~1M samples/s</b> ingest and <b>millions of active series</b> on a beefy box. RAM ≈ <b>a few KB per active series</b> — series count, not sample rate, is what OOMs it.</td></tr>
+      <tr><td>scrape math</td><td><b>samples/s = active series ÷ scrape interval.</b> 1M series @ 15 s ≈ 67k samples/s. Halving the interval doubles ingest, storage and RAM churn — 15 s is the convention for a reason.</td></tr>
+      <tr><td>compression</td><td>Raw sample = 16 B; Gorilla-style ≈ <b>1.37 B average</b> (~12×). Prometheus on disk: <b>~1–2 B/sample</b> all-in. 100k samples/s ≈ 8.6B samples/day ≈ <b>~10–17 GB/day</b> compressed (vs ~140 GB raw).</td></tr>
+      <tr><td>storage layout</td><td>2-hour immutable blocks, compacted into larger ones; default retention <b>15 d</b>. Long-term = object storage via Thanos/Mimir — capacity effectively becomes an S3 bill.</td></tr>
+      <tr><td>out-of-order</td><td>Mostly rejected; bounded grace windows are configurable (Prometheus gained an experimental out-of-order window). Clock skew on agents = silently dropped samples — run NTP and alert on drop counters.</td></tr>
+      <tr><td>HA cost</td><td>The standard HA pair <b>doubles</b> scrape load, ingest and storage; dedup happens at query time by replica label. Budget it from day one.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Failure modes that only appear at scale:</b>
+      <b>cardinality bomb</b> (a deploy adds an unbounded label → series ×1000 → OOM → WAL-replay crash loop);
+      <b>scrape-interval creep</b> (someone "just" wants 5 s resolution → 3× everything);
+      <b>disk-full from retention misconfig</b> (retention set by time only while ingest doubled — cap by size too);
+      <b>rollup lag hiding incidents</b> (dashboards on aggregates run minutes behind reality);
+      <b>query-of-death</b> (a Grafana panel selecting a month of raw data across 100k series OOMs the query path — enforce limits/timeouts);
+      <b>silent out-of-order drops</b> (skewed clocks make data vanish without errors).</div>
+  </div>
+
+  <!-- ===== 8. INTERVIEW ===== -->
+  <div class="card" id="interview">
+    <h2>8 · In the interview</h2>
+    <p><b>How it comes up:</b> directly — "design a metrics/monitoring/observability platform" (a Datadog-shaped classic) — or sideways, as the observability box of any other design when the interviewer asks <i>"how do you know it's healthy?"</i>. Predictable follow-ups: <i>what's a series?</i> (name + label set) · <i>what happens if someone labels by user ID?</i> (multiplicative explosion — give the numbers) · <i>how long do you keep data?</i> (resolution pyramid + drop-chunks expiry) · <i>how do alerts work?</i> (rules over recent windows, evaluated close to the data, HA-paired) · <i>Prometheus is single-node — so how do you scale it?</i> (HA pairs + functional sharding + remote-write to object-storage backends).</p>
+    <p><b>The choice script:</b> default to <b>Prometheus</b> for infra/app monitoring — pull model, Kubernetes-native, the ecosystem default — and add <b>Thanos or Mimir</b> the moment requirements say long retention or global view. Pick <b>TimescaleDB</b> when the time-series must <b>join business tables</b> (IoT fleets, product analytics on Postgres) or the team is SQL-native. Say <b>ClickHouse</b> when the real workload is events/logs with arbitrary dimensions — that's OLAP wearing a monitoring costume. Mention managed (CloudWatch, Managed Prometheus, Datadog) when the constraint is ops headcount, with the cost caveat: per-series/per-metric pricing makes cardinality mistakes <i>financially</i> explosive too.</p>
+    <h3>Alternatives — one line each</h3>
+    <table class="cmd-tbl">
+      <tr><td>Prometheus (+Thanos/Mimir)</td><td>The default. Single-node core, pull-based, PromQL; Thanos/Mimir bolt on object-storage retention, global query and HA dedup. Weakness: not for per-event data, and cardinality is a constant diet.</td></tr>
+      <tr><td>VictoriaMetrics</td><td>Prometheus-compatible drop-in (remote-write + PromQL-ish), single binary or clustered; claims — and users often report — significantly lower RAM/disk. Pragmatic self-hosted choice.</td></tr>
+      <tr><td>TimescaleDB</td><td>Postgres extension: hypertables, continuous aggregates, columnar compression, <b>full SQL + joins</b> — its superpower. Scaling is one strong box + replicas.</td></tr>
+      <tr><td>InfluxDB</td><td>Purpose-built, push-based line protocol; v1/v2 historically cardinality-sensitive; v3 rebuilt on Arrow/Parquet. Niche but common in IoT estates.</td></tr>
+      <tr><td>ClickHouse</td><td>Not a TSDB — columnar OLAP that eats metrics <i>and</i> logs <i>and</i> events at billions/day; several observability products are built on it. See <a href="clickhouse.html">the ClickHouse page</a>.</td></tr>
+      <tr><td>Graphite</td><td>The legacy layer: dotted metric paths, fixed-size whisper files, no labels. You inherit it; you don't choose it in 2026.</td></tr>
+      <tr><td>M3DB</td><td>Uber's answer to metrics at extreme scale — powerful, heavyweight to operate; mostly a "we are Uber-sized" signal.</td></tr>
+    </table>
+    <div class="note info"><b>Phrases that score:</b> "labels are multiplicative — a <code>user_id</code> label turns 30k series into 30M, so per-request data goes to logs/traces, never metrics" · "cardinality budget per team, enforced at ingest with series limits" · "samples/s = active series ÷ scrape interval" · "raw 15 s for 15 days, 5-minute rollups for a year — and rollups keep <code>max</code>, not just <code>avg</code>" · "retention is a chunk drop, not a DELETE" · "alerts evaluate on the local Prometheus; the global store is for dashboards".</div>
+  </div>
+
+  <!-- ===== 9. CHECK YOURSELF ===== -->
+  <div class="card" id="check">
+    <h2>9 · Check yourself</h2>
+    <details class="qa">
+      <summary>A deploy adds <code>user_id</code> as a label in shared middleware. Walk through what happens to Prometheus over the next hour.</summary>
+      <div class="a"><p>Every metric the middleware touches forks into one series per active user — 100 hosts × 100 metrics × 1,000 users = <b>10M series</b> where 10k lived before. Each active series costs a few KB of head RAM plus index entries, so memory climbs toward ~30 GB; the OOM killer fires; on restart, WAL replay rebuilds the same oversized head and it OOMs again — a crash loop. Recovery: ship a relabel/drop config for the label (or roll back), and let the poisoned blocks age out or delete them. Prevention: label-hygiene review, per-scrape <code>sample_limit</code>, and an alert on series-count growth.</p></div>
+    </details>
+    <details class="qa">
+      <summary>You have 1M active series scraped every 15 s. Estimate samples/s, daily sample count, and disk per day.</summary>
+      <div class="a"><p>Samples/s = 1M ÷ 15 ≈ <b>67k/s</b>. Per day ≈ 67k × 86,400 ≈ <b>5.8 billion samples</b>. Raw at 16 B ≈ ~92 GB/day; Gorilla-compressed at ~1.4 B ≈ <b>~8 GB/day</b> (Prometheus's observed 1–2 B/sample says the same). The follow-up trap: "let's scrape every 5 s" — that's ×3 on every one of those numbers for prettier graphs nobody needed.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Why do you graph <code>rate(http_requests_total[5m])</code> instead of just graphing the counter — and why counters at all instead of gauges?</summary>
+      <div class="a"><p>The counter itself is a monotonically climbing line — useless to eyeball. <code>rate()</code> turns it into per-second throughput over the window. Counters beat pre-computed rates because they survive <b>scrape gaps and restarts</b>: a missed scrape loses no information (the next value still contains the total), and <code>rate()</code> detects the reset-to-zero of a restart and compensates. A gauge of "requests in the last second" computed app-side loses data on every hiccup and can't be re-aggregated across windows after the fact.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Prometheus is single-node. How do you get HA and two years of retention without replacing it?</summary>
+      <div class="a"><p>HA: run <b>two identical Prometheus servers</b> scraping the same targets; both evaluate alerts; Alertmanager dedups. Retention/global view: both <b>remote-write</b> (or sidecar-upload blocks) to Thanos/Mimir/VictoriaMetrics, which store compacted, downsampled blocks in <b>object storage</b>, serve one global query endpoint, and deduplicate the pair by replica label. Local servers keep ~15 days and own alerting; the object-store tier owns history. Two years of 5-minute rollups is an S3 bill, not a hardware project.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Why is TSDB retention nearly free while <code>DELETE FROM metrics WHERE ts &lt; …</code> would be a nightly ordeal?</summary>
+      <div class="a"><p>Because the data is <b>partitioned by time into immutable chunks</b>, expiry = unlink the oldest files — no row lookups, no tombstones, no vacuum, no index rebalancing, no contention with ingest. A row-wise DELETE must find and mark a billion rows inside B-trees and then reclaim space. Append-only systems converge on this trick (Kafka drops segments the same way). It's also why you should state retention <i>by size as well as time</i> — the drop is cheap, but only if it actually runs before the disk fills.</p></div>
+    </details>
+  </div>
+
+  <p class="small muted">Sources: this page condenses the Prometheus documentation and storage design notes, Facebook's Gorilla paper (VLDB 2015), TimescaleDB documentation, and HelloInterview's monitoring-system walkthroughs. Numbers are order-of-magnitude interview figures — benchmark before trusting them with a budget.</p>
+</div>
+
+<script src="site.js"></script>
+<script>
+/* ===== The cardinality bomb — pure arithmetic, no randomness ===== */
+const HOSTS   = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
+const METRICS = [10, 20, 50, 100, 150, 200, 300, 500];
+const USERS   = [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000];
+const KB_PER_SERIES = 3;         // ballpark; real range ~1–4 KB by version & churn
+const SCRAPE_S = 15;
+const RAW_B = 16, GOR_B = 1.37;
+const $ = id => document.getElementById(id);
+let S = null;
+
+function defaultState(){ return { h: 3, m: 3, label: false, u: 2 }; }   // 100 hosts × 100 metrics
+
+function trim(x){
+  const s = x >= 100 ? String(Math.round(x)) : x >= 10 ? x.toFixed(1) : x.toFixed(2);
+  return s.replace(/\.0+$/, '');
+}
+function fmt(n){
+  if (n >= 1e12) return trim(n / 1e12) + 'T';
+  if (n >= 1e9)  return trim(n / 1e9)  + 'B';
+  if (n >= 1e6)  return trim(n / 1e6)  + 'M';
+  if (n >= 1e3)  return trim(n / 1e3)  + 'k';
+  return String(Math.round(n));
+}
+function fmtBytes(b){
+  const u = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB'];
+  let i = 0;
+  while (b >= 1024 && i < u.length - 1){ b /= 1024; i++; }
+  return trim(b) + ' ' + u[i];
+}
+const full = n => n.toLocaleString('en-US');
+
+function compute(){
+  const hosts = HOSTS[S.h], metrics = METRICS[S.m], users = S.label ? USERS[S.u] : 1;
+  const series = hosts * metrics * users;
+  const sps    = series / SCRAPE_S;
+  const ramB   = series * KB_PER_SERIES * 1024;
+  const rawDay = sps * 86400 * RAW_B;
+  const gorDay = sps * 86400 * GOR_B;
+  const zone   = series < 1e6 ? 'ok' : series < 1e7 ? 'warn' : 'bad';
+  return { hosts, metrics, users, series, sps, ramB, rawDay, gorDay, zone };
+}
+
+function logLine(cls, msg){
+  const d = document.createElement('div');
+  d.className = 'l ' + cls;
+  d.textContent = msg;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+function render(){
+  const c = compute();
+  const zc = c.zone === 'ok' ? 'var(--ok)' : c.zone === 'warn' ? 'var(--warn)' : 'var(--bad)';
+  const zoneLabel = c.zone === 'ok' ? 'comfortable' : c.zone === 'warn' ? 'big-league — plan ahead' : 'incident territory';
+
+  const formula = `${full(c.hosts)} hosts × ${full(c.metrics)} metrics` + (S.label ? ` × ${full(c.users)} user_ids` : '');
+  let h = '';
+  h += `<div class="node" style="min-width:230px"><div class="title">🧮 Series math</div>
+    <div class="kv"><span class="k">formula</span><span>${formula}</span></div>
+    <div style="font-size:22px;font-weight:700;margin:8px 0 2px;color:${zc}">${fmt(c.series)} <span style="font-size:12px;font-weight:400;color:var(--muted)">active series</span></div>
+    <div class="small muted">${S.label ? 'one label multiplied everything' : 'labels off: growth is linear'}</div></div>`;
+
+  h += `<div class="node ${c.zone === 'bad' ? 'dead' : ''}" style="min-width:200px"><div class="title">🧠 Prometheus RAM</div>
+    <div class="kv"><span class="k">per series</span><span>~${KB_PER_SERIES} KB</span></div>
+    <div class="kv ${c.zone !== 'ok' ? 'stale' : ''}"><span class="k">head total</span><span>≈ ${fmtBytes(c.ramB)}</span></div>
+    <div class="small muted">${c.zone === 'bad' ? 'OOM → restart → WAL replay → OOM…' : c.zone === 'warn' ? 'a very fat box, one deploy from trouble' : 'fits in a small VM'}</div></div>`;
+
+  h += `<div class="node" style="min-width:200px"><div class="title">📥 Ingest</div>
+    <div class="kv"><span class="k">scrape interval</span><span>${SCRAPE_S} s</span></div>
+    <div class="kv"><span class="k">samples/s</span><span>${fmt(c.sps)}</span></div>
+    <div class="small muted">${c.sps > 1e6 ? 'above the ~1M/s single-node ballpark' : 'single-node ballpark ceiling ~1M/s'}</div></div>`;
+
+  h += `<div class="node" style="min-width:210px"><div class="title">💾 Storage / day</div>
+    <div class="kv"><span class="k">raw 16 B</span><span>${fmtBytes(c.rawDay)}</span></div>
+    <div class="kv"><span class="k">Gorilla ~1.4 B</span><span>${fmtBytes(c.gorDay)}</span></div>
+    <div class="small muted">delta-of-delta + XOR ≈ 12× smaller</div></div>`;
+  $('nodes').innerHTML = h;
+
+  const pos = Math.max(0, Math.min(100, (Math.log10(c.series) - 2) * 10));   // log scale: 10² → 10¹²
+  $('gauge').innerHTML = `
+    <div class="small muted" style="margin-top:14px">cardinality meter (log scale) — <b style="color:${zc}">${zoneLabel}</b></div>
+    <div style="position:relative;height:16px;border:1px solid var(--line);border-radius:8px;margin-top:4px;overflow:hidden;
+      background:linear-gradient(90deg, rgba(var(--ok-rgb),.15) 0 40%, rgba(var(--warn-rgb),.15) 40% 50%, rgba(var(--bad-rgb),.15) 50% 100%)">
+      <div style="position:absolute;left:0;top:0;height:100%;width:${pos}%;background:${zc};opacity:.6;transition:width .3s"></div>
+      <div style="position:absolute;left:40%;top:0;bottom:0;width:1px;background:var(--line)"></div>
+      <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--line)"></div>
+    </div>
+    <div style="position:relative;height:14px;font-size:10px;color:var(--muted)">
+      <span style="position:absolute;left:0">100</span>
+      <span style="position:absolute;left:40%;transform:translateX(-50%)">1M</span>
+      <span style="position:absolute;left:50%;transform:translateX(-50%)">10M</span>
+      <span style="position:absolute;right:0">1T</span>
+    </div>`;
+
+  let ex;
+  if (c.zone === 'ok'){
+    ex = `<b>${fmt(c.series)} active series</b> — a single Prometheus shrugs: head RAM ≈ <b>${fmtBytes(c.ramB)}</b> (at ~${KB_PER_SERIES} KB/series) and ${fmt(c.sps)} samples/s is far below the ~1M/s ballpark ceiling. Growth by hosts or metrics is linear — boring, in the good way.`;
+  } else if (c.zone === 'warn'){
+    ex = `<b>${fmt(c.series)} series</b> — big-league. RAM ≈ <b>${fmtBytes(c.ramB)}</b>: you need a fat box, per-scrape <code>sample_limit</code>s, and a Thanos/Mimir plan before the next growth spurt. You are one careless label away from the red zone.`;
+  } else {
+    ex = `<b>${fmt(c.series)} series ⇒ RAM ≈ ${fmtBytes(c.ramB)}</b> just for the in-memory head and index. This is why your Prometheus OOMed after that deploy — and the restart replays the WAL into the same OOM, a crash loop. `;
+    ex += S.label
+      ? `One label did this: <code>user_id</code> multiplied every series by ${full(c.users)} — <b>labels are multiplicative, never additive</b>.`
+      : `Even without a label bomb, this fleet needs sharding: one Prometheus per region/team, remote-writing to an object-storage backend.`;
+    if (c.series >= 1e9) ex += ` At ${fmt(c.series)} series this stopped being a monitoring system — it's a write-only database of doom. Enforce a cardinality budget at ingest.`;
+  }
+  $('explain').innerHTML = ex;
+}
+
+function syncControls(){
+  $('hSlider').value = S.h; $('mSlider').value = S.m; $('uSlider').value = S.u;
+  $('labelChk').checked = S.label; $('uSlider').disabled = !S.label;
+  $('hVal').textContent = full(HOSTS[S.h]);
+  $('mVal').textContent = full(METRICS[S.m]);
+  $('uVal').textContent = full(USERS[S.u]);
+}
+
+function stateLog(cls, prefix){
+  const c = compute();
+  logLine(cls, `${prefix}${full(c.hosts)} hosts × ${full(c.metrics)} metrics${S.label ? ' × ' + full(c.users) + ' user_ids' : ''} = ${fmt(c.series)} series (${c.zone})`);
+}
+
+$('hSlider').oninput = () => { S.h = +$('hSlider').value; syncControls(); render(); };
+$('mSlider').oninput = () => { S.m = +$('mSlider').value; syncControls(); render(); };
+$('uSlider').oninput = () => { S.u = +$('uSlider').value; syncControls(); render(); };
+$('hSlider').onchange = () => stateLog('info', 'hosts changed → ');
+$('mSlider').onchange = () => stateLog('info', 'metrics changed → ');
+$('uSlider').onchange = () => stateLog('warn', 'user_id values grew → ');
+$('labelChk').onchange = () => {
+  S.label = $('labelChk').checked;
+  syncControls(); render();
+  if (S.label) stateLog('err', '💥 deploy shipped: user_id label added in shared middleware → ');
+  else stateLog('ok', 'label removed (rollback + relabel config) → ');
+};
+$('healthyBtn').onclick = () => {
+  S = { h: 4, m: 4, label: false, u: 2 };
+  syncControls(); render();
+  stateLog('ok', '✅ preset “healthy fleet”: ');
+};
+$('bombBtn').onclick = () => {
+  S = { h: 3, m: 3, label: true, u: 2 };
+  syncControls(); render();
+  stateLog('err', '💣 preset “cardinality incident”: ');
+};
+$('resetBtn').onclick = () => {
+  S = defaultState();
+  $('log').innerHTML = '';
+  syncControls(); render();
+  stateLog('t', 'reset — ');
+};
+
+S = defaultState();
+syncControls();
+render();
+stateLog('t', 'ready — ');
+</script>
+</body>
+</html>

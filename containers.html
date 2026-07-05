@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Compute &amp; Orchestration — VMs, Containers, Kubernetes &amp; Serverless — Deep Dive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap art">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>📦 Compute &amp; Orchestration — VMs, containers, K8s, serverless</h1>
+      <div class="sub">From hypervisors to Firecracker: the isolation ladder, the Kubernetes control loop, rollouts that don't page you — and when the right answer is "just use Cloud Run". <span class="rt">☕ ~18 min read</span></div>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">isolation ladder</span>
+      <span class="tag">namespaces + cgroups</span>
+      <span class="tag">control loop</span>
+      <span class="tag">readiness gates traffic</span>
+      <span class="tag">canary</span>
+      <span class="tag">Firecracker</span>
+    </div>
+    <p class="lead">Every compute platform is an answer to one question: <b>how thick a wall do you build around a process?</b> Thick walls (VMs) are safe but slow and expensive; thin walls (containers) start in milliseconds and pack densely but share a kernel; Firecracker microVMs split the difference, and serverless rents you the wall by the millisecond. Kubernetes then adds the second big idea: don't place workloads by hand — <b>declare what should exist, and let a control loop make it true, forever</b>.</p>
+    <div class="note info"><b>In the interview:</b> compute choice is usually <i>one sentence</i> — "stateless services in containers behind a load balancer, autoscaled on CPU/QPS" — and the minutes belong to your data tier. But the follow-ups are predictable and this page arms exactly them: <b>how do you deploy without downtime?</b> (readiness gates + canary), <b>what happens when a machine dies?</b> (the control loop), <b>Lambda or containers?</b> (duty cycle), and the EM special: <b>what does adopting Kubernetes cost in headcount?</b></div>
+  </div>
+
+  <div class="card">
+    <h3>On this page</h3>
+    <div class="toc">
+      <a href="#model">Mental model</a>
+      <a href="#api">Docker &amp; K8s vocabulary</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#distributed">The control loop</a>
+      <a href="#play">🎛 Play with it</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#scale">At scale</a>
+      <a href="#interview">In the interview</a>
+      <a href="#check">Check yourself</a>
+    </div>
+  </div>
+
+  <!-- ===== 1. MENTAL MODEL ===== -->
+  <div class="card" id="model">
+    <h2>1 · The mental model: the isolation ladder</h2>
+    <p>Think of compute as housing. <b>Bare metal</b> is a detached house: everything on the lot is yours, nobody shares your plumbing, and moving in takes weeks. A <b>virtual machine</b> is an apartment: the hypervisor is the concrete between units, and every apartment has its own plumbing — its own <b>kernel</b>. A <b>container</b> is a room in a shared flat: your door (namespaces) makes the flat <i>look</i> like it's all yours, the house rules (cgroups) cap how much hot water you may use, but there is <b>one plumbing stack for everyone</b> — the host kernel. You can move in with a suitcase in minutes, and you can hear the neighbors through the walls. A <b>microVM</b> is a capsule hotel: real walls, but the capsule is prefabricated and craned into place in a tenth of a second. And a <b>serverless function</b> isn't housing at all — it's renting a desk by the minute in a building someone else owns, patches, and guards.</p>
+    <p>Now the same ladder in engineering terms. A <b>VM</b> runs on a hypervisor that presents virtual hardware; the guest boots its <i>own</i> operating system kernel. That's why the isolation is strong — the attack surface between tenants is the narrow hypervisor interface, not the sprawling syscall API — and why the unit is heavy: gigabytes of memory per guest, boot times measured in tens of seconds, density measured in <i>tens</i> per host.</p>
+    <p>A <b>container</b> is not a small VM. It is a <b>normal Linux process wearing blinkers</b>. <b>Namespaces</b> limit what it can <i>see</i> — pid, net, mnt, uts, ipc, user (plus cgroup and time namespaces in modern kernels), each one hiding a global resource so the process believes it owns the machine. <b>Cgroups</b> limit what it can <i>use</i> — CPU shares and quotas, a memory ceiling enforced by the OOM killer. There is no guest kernel to boot, so starting a container is just starting a process: <b>milliseconds</b>, hundreds per host. The price of that density is the boundary itself: every container on a host is one kernel vulnerability away from every other. The wall is a syscall filter, not silicon.</p>
+    <p>For years the industry treated this as a binary choice — safe-but-slow or fast-but-shared. <b>Firecracker</b> broke the dichotomy: a minimal KVM-based virtual machine monitor that throws away legacy device emulation (no BIOS-era baggage, just virtio net/block and a serial console) and boots a real VM with its own kernel in <b>~100–125 ms</b>, with memory overhead small enough to run <i>thousands</i> of microVMs on one host. This is what <b>AWS Lambda and Fargate</b> actually run your code in — VM-grade walls at nearly container prices. Google plays the same game differently with <b>gVisor</b>, a user-space kernel that intercepts syscalls (stronger boundary than raw containers, some performance tax).</p>
+    <p>The ladder, with order-of-magnitude numbers worth remembering:</p>
+    <table class="cmd-tbl">
+      <tr><td>bare metal</td><td>Provisioning in minutes-to-days · one tenant per host · isolation: physical. Still real: latency-critical trading, licensing, GPUs you own.</td></tr>
+      <tr><td>VM</td><td>Boot ~tens of seconds · ~tens per host · own kernel per guest, hypervisor boundary. The unit clouds actually sell you (EC2, GCE).</td></tr>
+      <tr><td>container</td><td>Start in ~ms (plus image pull!) · hundreds per host · <b>shared host kernel</b>, namespaces + cgroups boundary.</td></tr>
+      <tr><td>microVM</td><td>Boot ~100 ms-order (Firecracker) · thousands per host · own kernel, minimal device model — VM isolation at near-container speed.</td></tr>
+      <tr><td>function</td><td>Warm invoke ~instant, cold start ~100 ms → seconds · density is the platform's problem · one microVM per concurrent execution (Lambda).</td></tr>
+    </table>
+    <div class="note warn"><b>The one-sentence rule:</b> pick the <i>weakest isolation you can defend</i>. Your own trusted code sharing a kernel is fine — use containers and enjoy the density. The moment you run <b>other people's code</b> (multi-tenant platforms, CI runners, plugin sandboxes, AI-generated code execution), containers alone are not a security boundary you should bet the company on — you want VM-grade walls, which today means microVMs.</div>
+  </div>
+
+  <!-- ===== 2. SYNTAX / VOCABULARY ===== -->
+  <div class="card" id="api">
+    <h2>2 · The vocabulary — Docker &amp; the Kubernetes objects</h2>
+    <p>Nobody will ask you to write YAML in a design round, but fluent vocabulary signals operational scar tissue. Two dialects matter: Docker (packaging) and Kubernetes (orchestration).</p>
+
+    <h3>Docker in six ideas</h3>
+    <p>An <b>image</b> is a stack of <b>immutable, content-addressed layers</b> merged by an overlay filesystem; at runtime the container gets one thin writable layer on top. Because layers are addressed by digest, registries store and ship each layer once — twenty services on the same base image share it. And because the image carries the <i>entire</i> filesystem, "works on my machine" dies: the machine ships with the code.</p>
+    <table class="cmd-tbl">
+      <tr><td>docker build -t web:9f2c .</td><td>Assemble an image from a Dockerfile. Every instruction produces a <b>cacheable layer</b> — order determines rebuild speed (see below).</td></tr>
+      <tr><td>docker run -p 8080:80 --memory 512m --cpus 1</td><td>Start a container — note the flags are just <b>cgroup knobs</b> exposed politely.</td></tr>
+      <tr><td>docker push / pull registry/web@sha256:9f2c…</td><td>Move images via a registry. <b>Tags move, digests don't</b> — production should pin digests.</td></tr>
+      <tr><td>docker history web:9f2c</td><td>Show the layer stack and per-layer sizes — the first thing to run when an image is mysteriously 2 GB.</td></tr>
+      <tr><td>docker exec -it api bash</td><td>Shell into a <i>running</i> container — debugging 101.</td></tr>
+      <tr><td>docker compose up</td><td>A local multi-service topology from one YAML file — the standard dev-environment answer.</td></tr>
+    </table>
+    <pre class="code"><span class="c"># Layer order IS cache strategy: stable lines first, volatile lines last.</span>
+FROM node:20-slim AS build          <span class="c"># base layers — shared by every service on this base</span>
+WORKDIR /app
+COPY package*.json ./               <span class="c"># the dependency manifest only — changes rarely</span>
+RUN npm ci --omit=dev               <span class="c"># fat layer, rebuilt ONLY when the manifest changes</span>
+COPY . .                            <span class="c"># your code — changes every commit, busts cache from HERE down</span>
+
+FROM gcr.io/distroless/nodejs20     <span class="c"># multi-stage: runtime image with no shell, no toolchain</span>
+COPY --from=build /app /app
+CMD ["/app/server.js"]              <span class="c"># small image = fast pulls = fast scale-out and rollbacks</span></pre>
+    <p>If you invert the order — <code>COPY . .</code> before <code>npm ci</code> — every one-line code change re-downloads every dependency. Teams lose minutes per build for months before someone notices. That's the whole game: <b>deps before code</b>.</p>
+
+    <h3>Kubernetes — the objects that matter in design talk</h3>
+    <table class="cmd-tbl">
+      <tr><td>Pod</td><td>The smallest schedulable unit: one or more containers <b>co-scheduled on the same node, sharing a network namespace</b> (they talk over localhost) and volumes. Sidecars live here.</td></tr>
+      <tr><td>Deployment → ReplicaSet</td><td>"Keep N replicas of this pod template running, and roll updates safely." The workhorse — 90% of what you'll ever declare.</td></tr>
+      <tr><td>Service</td><td>A <b>stable virtual IP + DNS name</b> load-balancing across an ever-churning set of pods. Solves service discovery: pods are cattle, the Service is the address.</td></tr>
+      <tr><td>Ingress / Gateway</td><td>L7 HTTP entry into the cluster: host/path routing, TLS termination. Backed by a real proxy (nginx, Envoy, cloud LB).</td></tr>
+      <tr><td>ConfigMap / Secret</td><td>Config injected as env vars or files. Gotcha worth saying out loud: a Secret is <b>base64-encoded, not encrypted</b>, unless you turn on encryption at rest / external KMS.</td></tr>
+      <tr><td>StatefulSet</td><td>Pods with <b>stable identities</b> (db-0, db-1, db-2) and per-pod persistent volumes — for quorum systems that care who's who. Necessary but not sufficient for databases (see the deep dives for why you still usually buy the managed one).</td></tr>
+      <tr><td>DaemonSet</td><td>Exactly one pod per node: log shippers, metrics agents, CNI plumbing.</td></tr>
+      <tr><td>Job / CronJob</td><td>Run-to-completion batch work, optionally on a schedule, with retries tracked by the cluster.</td></tr>
+      <tr><td>HPA</td><td>HorizontalPodAutoscaler — scale a Deployment's replica count on CPU or custom metrics (details in the autoscaling deep dive).</td></tr>
+    </table>
+    <pre class="code">apiVersion: apps/v1
+kind: Deployment                              <span class="c"># a statement of DESIRED state, not instructions</span>
+spec:
+  replicas: 6
+  strategy:
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }   <span class="c"># never dip below 6 Ready pods</span>
+  template:
+    spec:
+      containers:
+      - name: web
+        image: registry/web@sha256:9f2c…      <span class="c"># digest pin, not :latest</span>
+        resources:
+          requests: { cpu: 250m, memory: 256Mi }  <span class="c"># what the SCHEDULER reserves — bin-packing input</span>
+          limits:   { memory: 512Mi }             <span class="c"># cross this → OOMKill (exit 137). CPU limit omitted:</span>
+                                                  <span class="c"># CPU over-use is throttled, memory over-use is fatal</span>
+        readinessProbe:                       <span class="c"># gates TRAFFIC — the deploy-safety mechanism</span>
+          httpGet: { path: /healthz, port: 8080 }
+        livenessProbe:                        <span class="c"># gates RESTARTS — use sparingly</span>
+          httpGet: { path: /livez, port: 8080 }</pre>
+    <p>Two distinctions here carry disproportionate interview weight. First, <b>requests vs limits</b>: requests are the scheduler's booking (a pod only lands where its requests fit), limits are the cgroup ceiling at runtime. Blow past a <b>memory</b> limit and the kernel kills the container — exit code 137, the infamous <b>OOMKill</b>; blow past a CPU limit and you're merely throttled. Second, <b>readiness vs liveness</b>: a failing <b>readiness</b> probe removes the pod from the Service's endpoints — <i>no traffic</i>, pod keeps running; a failing <b>liveness</b> probe <i>restarts</i> the container. Readiness is what makes deploys safe. Liveness, misconfigured, turns a slow downstream dependency into a cluster-wide restart storm — the classic self-inflicted outage.</p>
+  </div>
+
+  <!-- ===== 3. USE CASES ===== -->
+  <div class="card" id="usecases">
+    <h2>3 · Use cases — matching workloads to rungs</h2>
+
+    <div class="recipe">
+      <div class="rh">🌐 The default: a fleet of stateless services</div>
+      Deployment + Service + HPA on a <b>managed</b> cluster (GKE/EKS) or on ECS/Cloud Run. The image is the deploy artifact, nodes are cattle, self-healing and bin-packing come free.
+      <div class="why">Why containers: one packaging standard for every language, high density on shared nodes, and the rollout machinery (probes, surge, canary) is where deploy safety lives.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">⚡ Event glue &amp; spiky async work — Lambda</div>
+      S3 upload → thumbnail; webhook receivers; a cron that runs 40 seconds a day; queue consumers with wildly variable depth. Zero idle cost, per-ms billing, scaling handled by the platform.
+      <div class="why">Why serverless: when duty cycle is low or spikes are unpredictable, paying only for execution beats keeping warm capacity — and there's nothing to patch on Sunday.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🚀 A product team with no platform team — Cloud Run / Fargate / App Runner</div>
+      Ship a container, get HTTPS, autoscaling (including to zero on Cloud Run), and rollbacks — with <b>no cluster to feed</b>. The compute choice that doesn't require hiring.
+      <div class="why">Why managed containers: you keep the container abstraction (portable, testable locally) and delete the orchestration ops. For most companies this is the honest default.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🧪 Batch, cron &amp; ML jobs — the scheduler earns its keep</div>
+      Nightly reports as CronJobs, training runs as Jobs on GPU node pools, opportunistic work on spot/preemptible instances. Kubernetes shines exactly when workloads are many, lumpy and heterogeneous — bin-packing them onto shared metal is real money.
+      <div class="why">Why K8s here: requests/limits give the scheduler honest sizes to pack; priorities and preemption let batch soak up whatever the online services aren't using.</div>
+    </div>
+
+    <h3>When it's the WRONG answer</h3>
+    <table class="cmd-tbl">
+      <tr><td>K8s for 3 services, 5 engineers</td><td>The cluster becomes your most complex component: version upgrades ~3×/year, CNI/ingress/secrets choices, node patching. The ops tax exceeds the product. Cloud Run/Fargate first; earn your way into K8s.</td></tr>
+      <tr><td>Lambda for steady 24/7 load</td><td>Per-ms pricing is renting by the minute what you use all day — at high, flat utilization always-on containers are typically far cheaper, and cold starts poison strict p99.</td></tr>
+      <tr><td>Lambda for long-lived connections</td><td>15-minute execution cap and a one-request-per-instance model don't fit WebSockets/streaming. You end up storing connection state elsewhere and fighting the platform.</td></tr>
+      <tr><td>your database on K8s, hand-rolled</td><td>A StatefulSet gives stable names and volumes — it does not give you failover judgment, backup discipline, or upgrade orchestration. That's a DBA team encoded in software; buy it managed (RDS, Cloud SQL, Spanner) unless you have strong reasons.</td></tr>
+      <tr><td>a service mesh at 4 services</td><td>mTLS and retries for four services is a shared HTTP client library, not a fleet of Envoy sidecars. Meshes are platform-team technology (see §4).</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 4. DISTRIBUTED SETUP ===== -->
+  <div class="card" id="distributed">
+    <h2>4 · Distributed setup — Kubernetes is a while-loop around a database</h2>
+    <p>Strip away the YAML and Kubernetes is one idea, repeated: <b>desired state lives in a database; controllers run an infinite loop making reality match it.</b> You never tell the cluster to <i>do</i> something; you tell it what should <i>exist</i>. <code>replicas: 6</code> is not a command to start six pods — it's a fact about the world, and somewhere a loop wakes up, counts five, and files the difference as work.</p>
+    <p>The anatomy follows from that. The <b>API server</b> is the only door — every component, human or robot, talks through it. Behind it sits <b>etcd</b>, a key-value store replicated with <b>Raft</b> consensus, holding the entire desired <i>and</i> observed state of the cluster (for the consensus intuition — leaders, quorums, why odd numbers — see the <a href="zookeeper.html">ZooKeeper/coordination page</a>; same family of ideas). The <b>controller manager</b> runs the loops: the Deployment controller reconciles ReplicaSets, the ReplicaSet controller reconciles pod counts, the node controller watches heartbeats. The <b>scheduler</b> is just another loop, one that watches for pods with no node assigned, filters nodes where the pod's <i>requests</i> fit (plus affinity/taint rules), scores the survivors, and writes the placement back. On every node a <b>kubelet</b> reads what it's supposed to run, makes it real through the container runtime, and reports status back up. Nobody talks to anybody directly; everyone reads and writes the shared database. It's blackboard architecture, and it's why the system is so composable.</p>
+    <p>Watch it self-heal, because this is the signature demo. A node loses power. Its kubelet stops heartbeating; after a grace period (order of ~40 s with defaults) the node controller marks it <code>NotReady</code>, and after a toleration window (~5 min by default) the pods on it are marked for eviction. The ReplicaSet controller — which knows nothing about nodes or power supplies — simply observes <i>five pods where the desired state says six</i> and creates one. The scheduler — which knows nothing about the outage — sees an unassigned pod and places it. A kubelet elsewhere starts it. <b>Nobody handled the failure.</b> There is no failure-handling code path; recovery and normal operation are the same loop. That's what "declarative" buys, and it's the honest one-line answer to "why Kubernetes over a fleet of VMs with scripts".</p>
+    <p>Two consequences are worth saying in an interview. First, the loop <b>fights you too</b>: hand-edit a pod that a ReplicaSet owns and the controller will calmly revert or replace it — which is exactly why <b>GitOps</b> works (a repo holds desired state; Argo CD is just one more reconciler, syncing cluster ← git). Second, a <b>control-plane outage is not a data-plane outage</b>: if the API server or etcd goes down, running pods keep serving traffic — what you lose is the ability to <i>change</i> anything: deploy, scale, or heal. That asymmetry is why managed control planes (EKS/GKE/AKS) are such an easy buy: the cloud runs the API server and etcd with an SLA, and you still own everything above.</p>
+    <p>Once you have dozens of services on the cluster, the next temptation is a <b>service mesh</b>: an Envoy proxy next to every pod (sidecar — or node-level in ambient designs), giving you <b>mTLS everywhere, retries/timeouts/circuit-breaking as config, percentage traffic-splits, and uniform telemetry</b> without touching application code. The costs are just as real: a fleet of proxies to version and debug, a control plane to run, and ~ms-order added latency per hop that a p99 budget will notice. The honest adoption bar: <i>many</i> services, <i>real</i> zero-trust or traffic-shaping requirements, and a platform team to own it. Below that bar, a good shared client library does 80% of it.</p>
+    <div class="note gotcha"><b>Gotchas that separate readers from operators:</b> (1) <b>etcd is the blast radius</b> — it's a config store, not a database; keep objects small and counts sane (practical ceiling ~single-digit GB), because everything watches it and it Raft-replicates every write. (2) <b>Mass rescheduling is a storm</b>: a zone outage doesn't just move pods — hundreds of them land on surviving nodes at once and all pull images simultaneously; the registry becomes your hidden single point of failure. (3) <b>One giant cluster is an anti-pattern</b>: well before the documented limits, orgs shard clusters by region/environment/team — for blast radius and because <i>upgrading</i> a cluster everyone shares is terrifying.</div>
+  </div>
+
+  <!-- ===== 5. INTERACTIVE ===== -->
+  <div class="card" id="play">
+    <h2>5 · 🎛 Play with it — the rollout safety simulator</h2>
+    <p class="small muted" style="margin-top:0">A Deployment of <b>6 pods on v1</b> serves a steady <b>120 req/s</b>. You ship v2 — which may be broken. Four strategies: <b>rolling surge</b> (add 1 new, then remove 1 old — never below 6 Ready), <b>rolling maxUnavailable=2</b> (remove first, cheaper, dips capacity), <b>blue-green</b> (build a full parallel stack, flip all traffic atomically), and <b>canary</b> (1 pod + an automated metrics gate). The <b>readiness probe</b> toggle decides whether broken pods ever receive traffic. Each ▶ Step is one reconcile-loop iteration plus one interval of live traffic — watch the error meter and the failed-request counter.</p>
+    <div class="row" style="margin-bottom:10px">
+      <label class="fld">strategy
+        <select id="stratSel">
+          <option value="surge">Rolling — maxSurge=1, maxUnavailable=0</option>
+          <option value="unavail">Rolling — maxUnavailable=2, no surge</option>
+          <option value="bluegreen">Blue-green — atomic cutover</option>
+          <option value="canary">Canary — 1 pod + metrics gate</option>
+        </select>
+      </label>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="brokenChk" checked> v2 is broken (fails requests)</label>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="probeChk" checked> readiness probe configured</label>
+      <button class="btn" id="stepBtn">▶ Step</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="stage" id="stage"><div class="nodes" id="nodes"></div></div>
+    <div class="explain" id="explain"></div>
+    <div class="cols" style="margin-top:12px">
+      <div><h3>Event log</h3><div class="log" id="log"></div></div>
+      <div><h3>What to try</h3>
+        <ol class="steps small">
+          <li>Leave the defaults (surge rolling · v2 broken · probe ON) and press <b>Step</b> repeatedly: the v2 pod never becomes Ready, so no v1 pod is ever removed. The rollout <b>stalls at 0% errors</b> — the stall <i>is</i> the safety.</li>
+          <li>Reset, uncheck <b>readiness probe</b>, same rollout: every step ships another broken pod straight into the load balancer — watch the error meter climb to 100%. Gradual ≠ safe without gates.</li>
+          <li>Try <b>maxUnavailable=2</b> with the probe ON: still 0% errors, but only 4/6 pods serving — the probe saved correctness, the strategy still cost capacity (p99 pays).</li>
+          <li><b>Blue-green</b>, probe OFF, v2 broken: the cutover step is an instant 100% outage — then one more step flips back. Total blast radius: one full interval of everything. With the probe ON, the cutover is simply refused.</li>
+          <li><b>Canary</b>, probe OFF, v2 broken: one pod takes ~14% of traffic for one interval, then the metrics gate auto-halts and rolls back. Compare the <b>failed requests</b> counter across runs 2, 4 and 5.</li>
+          <li>Uncheck "v2 is broken" and run any strategy end-to-end. Note what blue-green cost you: 12 pods live during the window.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 6. DEEP DIVES ===== -->
+  <div id="deep"></div>
+  <details class="fold">
+    <summary>🔍 Deep dive · Rollouts &amp; release safety — surge, blue-green, canary, flags <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>A rolling update has exactly two knobs. <b>maxSurge</b>: how many <i>extra</i> pods may exist during the roll (cost of the roll); <b>maxUnavailable</b>: how many pods below the desired count you tolerate (capacity risk of the roll). Kubernetes defaults both to <b>25%</b>; the conservative production shape for latency-sensitive services is <code>maxSurge: 1, maxUnavailable: 0</code> — pay for one extra pod, never dip below full strength. Progress is gated by <b>readiness</b>: a new pod that never turns Ready blocks the roll, and after <code>progressDeadlineSeconds</code> (default 600) the Deployment is marked stalled. Note what that means culturally: <b>with no readiness probe there is no gate</b> — the platform will cheerfully replace a working fleet with a broken one, one pod at a time.</p>
+        <p><b>Blue-green</b> refuses gradualism: build the complete v2 stack next to v1, verify it (smoke tests against the idle stack — a luxury rolling can't offer), then flip the router atomically. Rollback is the same flip in reverse, near-instant, because the old stack is still warm — that's what the <b>2× capacity bill</b> during the window buys. The catch people miss: the cutover is atomic per <i>request</i>, not per <i>system</i> — background jobs, queue consumers and in-flight sessions straddle the flip, so v1 and v2 still coexist in time.</p>
+        <p><b>Canary</b> is the grown-up compromise: send a small slice — one pod, or 1–5% via traffic-split — watch <i>real</i> metrics (error rate, p99, business KPIs) against the baseline, and only then promote in stages. The senior move is making the judgment <b>automated</b>: tools like <b>Argo Rollouts</b> or <b>Flagger</b> run the metric queries and halt/rollback without a human — a tired human staring at Grafana at 2am is not a gate. Canary's blind spot: a 1% canary needs meaningful traffic to produce statistically meaningful errors, so low-QPS services canary slowly or not at all.</p>
+        <p><b>Feature flags</b> complete the picture by decoupling <i>deploy</i> from <i>release</i>: ship the code dark, then turn it on per-cohort at runtime — and off again in seconds when it misbehaves, with no rollout at all. Flags are canaries at the code-path level, and the fastest rollback mechanism you will ever own. Their tax is real too: flag debt, combinatorial testing, and the day someone deletes the wrong one.</p>
+        <p>Finally, the constraint every strategy shares: <b>during any rollout, old and new run simultaneously</b> — so schema and API changes must be backward-compatible across one version. The discipline is <b>expand → migrate → contract</b>: add the new column/endpoint, ship code that works with both, backfill, then remove the old — each phase a separate, individually-rollback-able deploy. Most "the rollback made it worse" stories are a violation of exactly this.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · What a container actually is — namespaces, cgroups, overlayfs <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>You can build a crude container with two shell commands, and doing it once permanently demystifies Docker:</p>
+        <pre class="code"><span class="c"># a "container" without Docker (root shell, cgroup v2)</span>
+unshare --fork --pid --mount-proc bash   <span class="c"># new pid namespace…</span>
+ps aux                                   <span class="c"># …your shell is PID 1; the host's processes are gone</span>
+
+<span class="c"># and a resource wall: cap this shell's subtree at 256 MiB</span>
+mkdir /sys/fs/cgroup/demo
+echo $$ &gt; /sys/fs/cgroup/demo/cgroup.procs
+echo 268435456 &gt; /sys/fs/cgroup/demo/memory.max   <span class="c"># exceed it → the OOM killer visits (exit 137)</span></pre>
+        <p>That's the whole trick. <b>Namespaces</b> partition <i>visibility</i>: pid (process tree), net (interfaces, ports — why two containers can both bind :8080), mnt (filesystem tree), user (root inside ≠ root outside — the single best hardening step), uts (hostname), ipc. <b>Cgroups</b> partition <i>consumption</i>: cpu weight and quota, memory ceilings. Docker's contribution was never the isolation — the kernel had it — but the <b>packaging</b>: the image format, layer caching and registries that made environments shippable.</p>
+        <p><b>Layers, concretely:</b> each Dockerfile instruction produces a read-only filesystem diff; <b>overlayfs</b> stacks them into one apparent tree, plus a per-container writable layer on top (copy-on-write on first modification). Layers are content-addressed by digest, so hosts and registries deduplicate ruthlessly — which is why the <i>second</i> pull of a service on a node is fast, and why mass-rescheduling onto fresh nodes (nothing cached) is an image-pull storm.</p>
+        <p>Now the security honesty. Every container shares the host kernel, and the syscall interface is enormous — one exploitable kernel bug is a container escape. Defaults help (<b>seccomp</b> filters the syscall list, AppArmor/SELinux confine, capabilities are dropped), and user namespaces help more, but the industry's actual answer for hostile multi-tenancy is to <b>change the boundary</b>: <b>gVisor</b> interposes a user-space kernel between the app and the host (huge attack-surface reduction, noticeable syscall overhead), <b>Kata Containers</b> and <b>Firecracker</b> put each workload in a real (micro)VM with its own kernel. Firecracker's numbers — ~100–125 ms boot, memory overhead per microVM in the single-digit-MB order, thousands per host — are what let AWS run Lambda as one microVM <i>per concurrent request stream</i> and still make money. The ladder from §1, closed into a loop: serverless is VMs again, just very small and very fast.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Autoscaling — HPA, VPA, cluster autoscaler, and why headroom survives them all <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>There are three autoscalers and they answer different questions. <b>HPA</b> (horizontal): <i>more pods?</i> It watches a metric — CPU utilization against requests, or custom ones like QPS/queue depth — and sets the replica count to roughly <code>ceil(current × actual/target)</code> on a ~15 s control loop, with a stabilization window (~5 min by default on scale-down) so it doesn't flap. <b>VPA</b> (vertical): <i>bigger pods?</i> It observes real usage and adjusts requests — classically by restarting pods, which is why many teams run it in recommendation mode and apply the numbers by hand. <b>Cluster Autoscaler / Karpenter</b>: <i>more nodes?</i> When pods sit unschedulable because no node fits their requests, it provisions machines — and machines take <b>minutes</b>: boot, join, warm the image cache.</p>
+        <p>Stack the lags and you get the number that matters: from "traffic doubled" to "capacity doubled" is ~30–60 s if pods fit on existing nodes, and <b>3–5+ minutes</b> if nodes must be added. A flash-crowd spike is faster than that. So the uncomfortable truth: <b>autoscaling tracks daily curves; headroom absorbs spikes.</b> Serious services run at 50–70% of capacity on purpose, and/or put a <a href="queues.html">queue</a> in front so the spike becomes backlog instead of 5xx. Saying "HPA on CPU at 60% target, plus ~40% headroom because node scale-up is minutes" is a complete, senior answer.</p>
+        <p>Two refinements worth naming. <b>Scale on the right metric</b>: CPU is a proxy; queue depth or in-flight requests per pod track user pain directly — <b>KEDA</b> packages event-driven scaling (including to zero) for queue consumers. And <b>scale-to-zero is not a Kubernetes-native trick for HTTP services</b> — vanilla HPA won't go below 1 because someone must answer the next request; that's Knative's/Cloud Run's party trick: hold the request at the edge, cold-start a container, forward. The cold-start latency is the price, which returns us to serverless economics (next dive).</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Serverless under the hood — Firecracker, cold starts, and the bill <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>What actually happens on a Lambda invoke: the request hits the service, which either reuses a <b>warm execution environment</b> — a Firecracker microVM with your runtime and code already initialized — or performs a <b>cold start</b>: provision the microVM (~100 ms-order), boot the runtime, run your init code. That last part is why cold starts range from <b>~100–300 ms</b> for a lean Node/Python function to <b>seconds</b> for a JVM with a fat framework and a 100 MB bundle. Mitigations, in escalating order of cost: trim the bundle, move work out of init, <b>SnapStart</b> (snapshot the initialized VM and restore instead of re-initializing — built for the JVM case), and <b>provisioned concurrency</b> — pre-warmed environments you pay for around the clock, which quietly deletes the scale-to-zero economics you came for.</p>
+        <p>The model's sharp edges are all consequences of one fact: <b>an execution environment handles one request at a time</b>. Concurrency = number of live microVMs, so 1,000 concurrent requests = 1,000 environments — and your account has a concurrency quota (historically ~1,000 by default, raisable). Each environment opening its own database connection is how Lambda fleets famously exhaust Postgres — hence RDS Proxy and a general preference for HTTP-based data APIs (like DynamoDB's) behind functions. Add the <b>15-minute execution cap</b>, ephemeral local disk, and per-ms × memory-size billing, and the fit rule writes itself.</p>
+        <p><b>Where serverless wins:</b> spiky or low-duty-cycle work (the 40-seconds-a-day cron, the webhook burst), event glue between managed services, unpredictable scale where paying per-use beats capacity planning. <b>Where it loses:</b> steady high-utilization load (always-on containers are typically much cheaper once you'd keep them busy most of the day), strict p99 latency (cold starts), long-lived connections, heavy local state. The middle groundlings: <b>Fargate</b> — serverless <i>containers</i>: you size the task, AWS finds the machine; startup in the tens of seconds, no duration cap, no cluster to run. <b>Cloud Run</b> — request-scaled containers with scale-to-zero and, crucially, <b>many concurrent requests per instance</b> (configurable, default ~80), which fixes the connection-explosion problem while keeping the pay-per-use shape.</p>
+        <p>One more honesty checkpoint: serverless is not "no ops". It's <i>different</i> ops — quotas and concurrency limits, cold-start budgets, distributed tracing across dozens of tiny functions, IAM sprawl. You've traded patching machines for managing a constellation. Usually a good trade; never a free one.</p>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== 7. AT SCALE ===== -->
+  <div class="card scale" id="scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Ballparks and design targets, not SLAs — quote the order of magnitude, and say so.</p>
+    <table class="cmd-tbl">
+      <tr><td>K8s cluster envelope</td><td>Upstream-tested design targets: ~<b>5,000 nodes</b>, ~<b>150k pods per cluster</b>, ~<b>110 pods per node</b> default. In practice orgs run <b>many smaller clusters</b> long before hitting these — blast radius and upgrade risk bite first.</td></tr>
+      <tr><td>etcd</td><td>Happy at <b>single-digit GB</b> (default quota ~2 GiB, ~8 GiB recommended ceiling). It's a Raft-replicated config store — every write hits a quorum, everything watches it. Big blobs and high-churn objects don't belong there.</td></tr>
+      <tr><td>pod cold start</td><td>Scheduling is sub-second; <b>image pull dominates</b> — ~100 MB images pull in seconds, multi-GB images in minutes. Small images + digest pinning + pre-pulled base layers are a scale-out latency feature, not hygiene.</td></tr>
+      <tr><td>autoscaling lag</td><td>HPA reacts in ~<b>15–60 s</b> end-to-end; adding <b>nodes</b> takes ~<b>1–5 min</b> (provision, join, warm cache). Hence 30–50% headroom on anything spike-prone.</td></tr>
+      <tr><td>rollout defaults</td><td>RollingUpdate defaults <b>25% surge / 25% unavailable</b>; progress deadline <b>600 s</b>. Probes are opt-in — <b>no readiness probe, no safety gate</b>.</td></tr>
+      <tr><td>Lambda</td><td>Cold start ~<b>100–300 ms</b> (lean Node/Python) → <b>1 s+</b> (JVM/heavy bundles); <b>15 min</b> max execution; memory to <b>10 GB</b>; per-ms billing; account concurrency quota (order of ~1k default, raisable); <b>one request per environment at a time</b>.</td></tr>
+      <tr><td>density ladder</td><td>VMs: GBs each, tens per host · containers: MBs overhead, hundreds per host · Firecracker microVMs: ~MB-order overhead, <b>thousands per host</b>, ~100–125 ms boot.</td></tr>
+      <tr><td>mesh tax</td><td>Sidecar proxies add ~<b>ms-order latency per hop</b> and a fleet of Envoys to operate. Fine at p50; audible in a tight p99 budget across 5 hops.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Failure modes that only appear at scale:</b>
+      <b>OOMKill loops</b> (no/undersized memory limits → exit 137 → CrashLoopBackOff — the most common "K8s is flaky" root cause);
+      <b>probe-less deploys</b> (every release is a brief outage nobody can explain);
+      <b>autoscaler thrash</b> (scale-up/down flapping without stabilization windows — pods churn, caches stay cold);
+      <b>image-pull storms</b> (zone failure → mass reschedule → every node pulls simultaneously → registry rate-limits become the outage);
+      <b>noisy neighbors</b> (pods without requests make the scheduler fly blind — one greedy pod starves a node);
+      <b>retry amplification</b> (client + mesh + gateway each retrying 3× = 27× load on a struggling service — retries need budgets, ideally in one layer only).</div>
+  </div>
+
+  <!-- ===== 8. INTERVIEW ===== -->
+  <div class="card" id="interview">
+    <h2>8 · In the interview</h2>
+    <p><b>How it comes up:</b> almost never as "design Kubernetes" — it's the substrate under every design. Say your one sentence early ("stateless services in containers on managed infra, HPA on QPS, rolling deploys with readiness gates") and spend your minutes on data. Then expect probes: <i>how do you deploy without downtime?</i> (readiness gating + canary + auto-rollback), <i>a node dies mid-traffic — walk me through recovery</i> (the control loop, with the ~40 s / ~5 min defaults hedged as defaults), <i>how do you handle a 10× spike?</i> (headroom + queue, because node autoscaling is minutes), <i>why not Lambda?</i> (duty cycle, p99, connection model).</p>
+    <p><b>The EM-specific question</b> — "your team wants to migrate to K8s, what do you do?" — is an organizational buy-vs-build question wearing a YAML costume. The strong answer names the real cost: Kubernetes is free the way a puppy is free; running it well is a <b>platform team</b> (upgrades ~3×/year, node images, ingress/CNI/secret choices, on-call for the cluster itself). So: what problem are we solving that Cloud Run/Fargate can't? Who feeds the cluster — do we have (or budget) platform engineers? What's the migration cost and the exit criteria? Adopting K8s to run three CRUD services is a résumé-driven decision; adopting it because you run hundreds of heterogeneous workloads and already staff a platform group is an obvious one.</p>
+    <p><b>The choice script:</b> default to <b>managed containers</b> (Cloud Run / Fargate / App Runner) for product services — one sentence, zero cluster ops. Reach for <b>Kubernetes</b> when you need its ecosystem (operators, jobs, sidecars, GPU scheduling, multi-cloud portability) <i>and</i> have platform engineers to own it. Use <b>Lambda</b> for event glue and spiky, short, stateless work. Keep <b>plain VMs + autoscaling group</b> in your pocket — still a legitimate, boring answer for monoliths and special hardware. And <b>never hand-roll stateful stores on K8s</b> without a strong reason; buy the managed database and spend your innovation tokens elsewhere.</p>
+    <h3>Alternatives — one line each</h3>
+    <table class="cmd-tbl">
+      <tr><td>EKS / GKE / AKS</td><td>Managed Kubernetes: cloud runs the control plane (API server + etcd), you keep the full ecosystem — and most of the node/upgrade/add-on complexity.</td></tr>
+      <tr><td>ECS + Fargate</td><td>AWS-native orchestrator, dramatically simpler than K8s; with Fargate there are no nodes at all. Less ecosystem, less to operate — a very defensible default on AWS.</td></tr>
+      <tr><td>Cloud Run / Knative</td><td>Request-scaled containers with scale-to-zero; concurrency per instance. The "serverless shape, container packaging" sweet spot.</td></tr>
+      <tr><td>Nomad</td><td>HashiCorp's single-binary scheduler: much simpler operationally, schedules containers <i>and</i> raw binaries/VMs; smaller ecosystem and hiring pool.</td></tr>
+      <tr><td>Lambda / Cloud Functions</td><td>Functions on microVMs: per-ms billing, scale-to-zero, event integrations. The glue layer — not the place for your latency-critical monolith.</td></tr>
+      <tr><td>VMs + ASG + LB</td><td>The pre-container answer, still legitimate: golden AMIs, an autoscaling group, a load balancer. Simple, predictable, great for monoliths and licensed/pinned software.</td></tr>
+    </table>
+    <div class="note info"><b>Phrases that score:</b> "compute is deliberately the boring part of this design — the interesting state lives in the data tier" · "rolling with maxSurge 1 / maxUnavailable 0, readiness-gated, canary 5% behind an automated metrics gate" · "we keep ~40% headroom because node-level autoscaling is minutes, not seconds" · "I'd buy the control plane and the database — our differentiation isn't there" · "containers for the services, Lambda for the webhook fan-in: it's spiky, stateless and under 15 minutes" · "multi-tenant code execution goes in microVMs, not containers — shared kernels aren't a tenant boundary".</div>
+  </div>
+
+  <!-- ===== 9. CHECK YOURSELF ===== -->
+  <div class="card" id="check">
+    <h2>9 · Check yourself</h2>
+    <details class="qa">
+      <summary>What actually separates a container from a VM — and when is container isolation not enough?</summary>
+      <div class="a"><p>A VM virtualizes <b>hardware</b> and boots its own kernel; the tenant boundary is the narrow hypervisor interface. A container is a normal process on the <b>shared host kernel</b>, with namespaces limiting what it sees and cgroups limiting what it uses — start in ms, pack hundreds per host, but every tenant is one kernel exploit from its neighbors. That's fine for your own trusted code; for <i>other people's code</i> (multi-tenant SaaS runners, CI, plugin/AI-code sandboxes) you want VM-grade walls at container-grade speed — microVMs (Firecracker, what Lambda/Fargate use) or a syscall-interposition layer like gVisor.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Every deploy causes ~30 seconds of 5xx, yet the new pods "start fine". What's missing?</summary>
+      <div class="a"><p>A <b>readiness probe</b>. Without one, Kubernetes counts a pod Ready the moment its process starts, adds it to the Service endpoints, and routes traffic while the app is still warming up (or broken) — and simultaneously terminates old pods. With a readiness probe, new pods receive traffic only after passing it, and a pod that never passes <b>blocks the rollout</b> instead of blacking out users. (Check the shutdown side too: a preStop delay/graceful drain stops the reverse problem — killing pods with requests in flight.)</p></div>
+    </details>
+    <details class="qa">
+      <summary>A node powers off at 3am. Trace what Kubernetes does — who "handles" the failure?</summary>
+      <div class="a"><p>Nobody, and that's the answer's point. The kubelet's heartbeats stop → node controller marks the node NotReady (order of ~40 s with defaults) → after the eviction toleration (~5 min default) its pods are marked dead → the ReplicaSet controller merely observes <i>5 running vs 6 desired</i> and creates a pod → the scheduler places it on a healthy node → that kubelet starts it, readiness gates traffic. Recovery is not a special code path — it's the same reconcile loop that runs when nothing is wrong. That's the practical meaning of "declarative".</p></div>
+    </details>
+    <details class="qa">
+      <summary>Interviewer: "Why not run Postgres on the cluster with a StatefulSet? It gives you stable identity and volumes."</summary>
+      <div class="a"><p>It does — and that's the easy 10%. The hard 90% is what managed databases sell: <b>failover judgment</b> (when is the primary really dead? split-brain safety), <b>backups tested by restore</b>, <b>minor-version upgrades without downtime</b>, storage performance tuning, and someone on call who's seen your failure before. Operators (e.g. for Postgres) encode much of this, but you're still operating a database platform. Defensible exceptions: very large scale where managed pricing breaks, data-sovereignty/on-prem constraints, or a team whose actual job is databases. Default: buy it.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Steady 2,000 req/s API — Lambda or containers? Walk the reasoning.</summary>
+      <div class="a"><p>Containers. Steady high duty-cycle is the worst case for per-ms pricing: you'd pay serverless premium for capacity you use continuously, while a small always-on fleet stays busy and cheap. Cold starts poison strict p99, and one-request-per-environment means ~thousands of concurrent environments each wanting a DB connection (hello, connection exhaustion — RDS Proxy exists precisely for this). Lambda stays in the design for the spiky edges — webhooks, async fan-out, cron — where scale-to-zero and per-use billing actually pay. The boundary to say out loud: <b>duty cycle and latency tolerance decide, not fashion</b>.</p></div>
+    </details>
+  </div>
+
+  <p class="small muted">Sources: condensed from the Kubernetes documentation (workloads, probes, scalability thresholds), Docker &amp; OCI docs, the Firecracker paper/AWS docs, AWS Lambda developer guide, and HelloInterview's modern-infra notes. Numbers are order-of-magnitude interview figures — verify exact quotas and defaults before quoting in production.</p>
+
+</div>
+<script src="site.js"></script>
+<script>
+/* ===== Rollout safety simulator ===== */
+const RPS = 120, DESIRED = 6;
+let S = null;
+const $ = id => document.getElementById(id);
+
+function logLine(cls, msg){
+  const d = document.createElement('div');
+  d.className = 'l ' + cls;
+  d.textContent = `[step ${S.step}] ` + msg;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function explain(html){ $('explain').innerHTML = html; }
+
+function defaultState(){
+  return {
+    step: 0, id: 0,
+    strategy: $('stratSel').value,
+    broken: $('brokenChk').checked,
+    probe: $('probeChk').checked,
+    pods: [], active: 1, phase: 'start',
+    stalled: false, done: false, failed: 0, lastErr: 0,
+  };
+}
+function mkPod(ver, state){ S.id++; return {id:S.id, ver, state}; }
+function alive(){ return S.pods; }
+function ready(){ return S.pods.filter(p => p.state === 'ready'); }
+function serving(){
+  return ready().filter(p => S.strategy === 'bluegreen' ? p.ver === S.active : true);
+}
+function removeOldest(ver, n){
+  let k = 0;
+  S.pods = S.pods.filter(p => (p.ver === ver && k < n) ? (k++, false) : true);
+  return k;
+}
+
+/* starting pods pass or fail the gate */
+function lifecycle(){
+  let became = 0, refused = 0;
+  for (const p of S.pods){
+    if (p.state !== 'starting') continue;
+    if (p.ver === 2 && S.probe && S.broken){ p.state = 'notready'; refused++; }
+    else { p.state = 'ready'; became++; }
+  }
+  if (refused) logLine('warn', `${refused} v2 pod(s) started but FAILED the readiness probe → NotReady, receive no traffic`);
+  else if (became) logLine('ok', `${became} pod(s) ${S.probe ? 'passed readiness →' : 'started (no probe = assumed ready) →'} receiving traffic`);
+  return {became, refused};
+}
+
+function traffic(){
+  const sv = serving();
+  if (!sv.length){ S.lastErr = 1; S.failed += RPS; return; }
+  const bad = sv.filter(p => p.ver === 2 && S.broken).length;
+  S.lastErr = bad / sv.length;
+  S.failed += Math.round(RPS * S.lastErr);
+}
+
+function step(){
+  if (S.done){ logLine('t', 'rollout finished — press Reset to run another scenario'); return; }
+  S.step++;
+  const v2 = () => S.pods.filter(p => p.ver === 2);
+  const v1 = () => S.pods.filter(p => p.ver === 1);
+
+  lifecycle();
+
+  const strat = S.strategy;
+  if (strat === 'surge'){
+    if (v2().some(p => p.state === 'notready')){
+      S.stalled = true;
+      logLine('warn', 'maxUnavailable=0: cannot remove a v1 pod until the new v2 pod is Ready → rollout STALLED');
+      explain('<b>The stall is the safety.</b> The broken pod never joins the load balancer, no healthy pod is removed, users see <b>0% errors</b>. Fix v2, or roll back at leisure.');
+    } else {
+      const justReady = v2().filter(p => p.state === 'ready').length;
+      if (justReady > 0 && v1().length > 0 && justReady + 0 > (DESIRED - v1().length) - 1){
+        removeOldest(1, 1);
+        logLine('info', 'new v2 pod is Ready → 1 old v1 pod terminated (never below 6 Ready)');
+      }
+      if (v2().length < DESIRED && alive().length < DESIRED + 1){
+        S.pods.push(mkPod(2, 'starting'));
+        logLine('cmd', `surge: created v2 pod #${S.id} (6+1 alive during the window)`);
+      }
+      if (v2().filter(p=>p.state==='ready').length === DESIRED && v1().length === 0){
+        S.done = true; logLine(S.broken ? 'err' : 'ok', S.broken
+          ? "rollout 'completed' — every pod is broken v2, error rate 100%. Gradual ≠ safe without gates."
+          : 'rollout complete — 6/6 on v2, zero failed requests');
+      }
+    }
+  }
+
+  if (strat === 'unavail'){
+    if (v2().some(p => p.state === 'notready')){
+      S.stalled = true;
+      logLine('warn', `v2 pods NotReady → rollout stalled with only ${serving().length}/6 pods serving (capacity dip, p99 pays)`);
+      explain('<b>Probe saved correctness, strategy still cost capacity:</b> traffic is safe (0% errors) but only ' + serving().length + '/6 pods carry the full 120 req/s.');
+    } else {
+      const wave = Math.min(2, v1().length);
+      if (wave > 0 && v2().every(p => p.state === 'ready')){
+        removeOldest(1, wave);
+        for (let i = 0; i < wave; i++) S.pods.push(mkPod(2, 'starting'));
+        logLine('cmd', `maxUnavailable=2: terminated ${wave} v1 first, created ${wave} v2 (no surge — capacity dips while they start)`);
+      }
+      if (v1().length === 0 && v2().every(p => p.state === 'ready')){
+        S.done = true; logLine(S.broken ? 'err' : 'ok', 'rollout complete on v2' + (S.broken ? ' — and 100% of traffic now fails' : ''));
+      }
+    }
+  }
+
+  if (strat === 'bluegreen'){
+    if (S.phase === 'start'){
+      for (let i = 0; i < DESIRED; i++) S.pods.push(mkPod(2, 'starting'));
+      S.phase = 'built';
+      logLine('cmd', 'building the full GREEN (v2) stack in parallel — 12 pods alive, traffic still 100% on BLUE (v1)');
+    } else if (S.phase === 'built'){
+      if (v2().some(p => p.state === 'notready')){
+        S.stalled = true;
+        logLine('warn', 'green stack never became Ready → cutover REFUSED. Blast radius: zero.');
+        explain('<b>Blue-green + probe:</b> the atomic switch simply never happens — v1 keeps serving, v2 sits dark until fixed.');
+      } else {
+        S.phase = 'ready';
+        logLine('info', 'green stack Ready — next step flips 100% of traffic atomically');
+      }
+    } else if (S.phase === 'ready'){
+      S.active = 2; S.phase = 'cut';
+      logLine('cmd', 'CUTOVER: load balancer now points every request at v2');
+      if (S.broken) explain('<b>Instant 100% outage.</b> Every request this interval fails — the price of an atomic switch with no gate. Next step flips back.');
+    } else if (S.phase === 'cut'){
+      if (S.broken){
+        S.active = 1; S.done = true;
+        logLine('warn', 'rollback: traffic flipped back to BLUE. Total damage: one full interval of 100% errors (120 requests)');
+      } else {
+        removeOldest(1, DESIRED); S.done = true;
+        logLine('ok', 'v2 healthy → blue stack scaled down. Note the cost: 12 pods lived through the whole window.');
+      }
+    }
+  }
+
+  if (strat === 'canary'){
+    if (S.phase === 'start'){
+      S.pods.push(mkPod(2, 'starting'));
+      S.phase = 'canaryUp';
+      logLine('cmd', 'canary: created 1 v2 pod — it will take ~1/7 (~14%) of traffic if it becomes Ready');
+    } else if (S.phase === 'canaryUp'){
+      if (v2().some(p => p.state === 'notready')){
+        S.stalled = true;
+        logLine('warn', 'canary never became Ready → the metrics gate has no signal; rollout paused at zero blast radius');
+      } else {
+        S.phase = 'observe';
+        logLine('info', 'canary is serving — the metrics gate watches this interval’s error rate');
+      }
+    } else if (S.phase === 'observe'){
+      if (S.broken){
+        removeOldest(2, 1); S.done = true;
+        logLine('warn', 'metrics gate: canary error rate 14% ≫ 0 → AUTO-HALT, canary terminated, v1 untouched. Blast radius: ~17 requests.');
+        explain('<b>The canary died so the fleet didn’t have to.</b> Compare the failed-request counter with runs of the other strategies.');
+      } else {
+        for (let i = 0; i < DESIRED - 1; i++) S.pods.push(mkPod(2, 'starting'));
+        S.phase = 'promote';
+        logLine('ok', 'metrics gate: canary clean → promoting, scaling v2 to 6');
+      }
+    } else if (S.phase === 'promote'){
+      if (v2().every(p => p.state === 'ready')){
+        removeOldest(1, DESIRED); S.done = true;
+        logLine('ok', 'v2 fully Ready → v1 scaled down. Rollout complete with ~0% error exposure.');
+      }
+    }
+  }
+
+  traffic();
+  render();
+}
+
+function podRow(p){
+  const cls = p.state === 'notready' ? 'stale' : (p.state === 'starting' ? '' : '');
+  const mark = p.state === 'ready' ? '✓ ready' : p.state === 'starting' ? '… starting' : '✗ NotReady';
+  return `<div class="kv ${cls}"><span class="k">pod-${p.id} · v${p.ver}</span><span>${mark}</span></div>`;
+}
+
+function render(){
+  const errPct = Math.round(S.lastErr * 100);
+  const sv = serving();
+  let h = '';
+  if (S.strategy === 'bluegreen'){
+    const blue = S.pods.filter(p => p.ver === 1), green = S.pods.filter(p => p.ver === 2);
+    h += `<div class="node ${S.active===1?'primary':''}"><div class="title">🟦 Blue — v1 ${S.active===1?'<span class="badge">LIVE</span>':''}</div>${blue.map(podRow).join('') || '<div class="small muted">scaled down</div>'}</div>`;
+    h += `<div class="node ${S.active===2?'primary':''} replica"><div class="title">🟩 Green — v2 ${S.active===2?'<span class="badge">LIVE</span>':''}</div>${green.map(podRow).join('') || '<div class="small muted">not built yet</div>'}</div>`;
+  } else {
+    h += `<div class="node primary" style="min-width:220px"><div class="title">☸️ Deployment <span class="badge">${S.pods.length} pods alive</span></div>${S.pods.map(podRow).join('')}</div>`;
+  }
+  const barColor = errPct === 0 ? 'var(--ok)' : (errPct < 40 ? 'var(--warn)' : 'var(--bad)');
+  h += `<div class="node"><div class="title">🌐 Load balancer</div>
+    <div class="kv"><span class="k">traffic</span><span>${RPS} req/s</span></div>
+    <div class="kv"><span class="k">serving pods</span><span>${sv.length}${sv.length < DESIRED ? ' ⚠️' : ''}</span></div>
+    <div class="kv"><span class="k">error rate</span><span style="color:${barColor}">${errPct}%</span></div>
+    <div style="height:8px;border:1px solid var(--line);border-radius:5px;margin-top:6px;overflow:hidden"><div style="height:100%;width:${errPct}%;background:${barColor}"></div></div>
+    <div class="kv ${S.failed ? 'stale' : ''}" style="margin-top:8px"><span class="k">failed total</span><span>${S.failed} req</span></div></div>`;
+  h += `<div class="node"><div class="title">📋 Status</div>
+    <div class="kv"><span class="k">step</span><span>${S.step}</span></div>
+    <div class="kv"><span class="k">state</span><span>${S.done ? 'done' : (S.stalled ? 'STALLED' : 'rolling')}</span></div>
+    <div class="kv"><span class="k">probe</span><span>${S.probe ? 'on' : 'OFF'}</span></div>
+    <div class="kv"><span class="k">v2</span><span>${S.broken ? 'broken' : 'healthy'}</span></div></div>`;
+  $('nodes').innerHTML = h;
+}
+
+function reset(){
+  S = defaultState();
+  for (let i = 0; i < DESIRED; i++) S.pods.push(mkPod(1, 'ready'));
+  $('log').innerHTML = '';
+  logLine('t', `reset — 6 pods on v1, strategy: ${$('stratSel').selectedOptions[0].text}, v2 ${S.broken ? 'BROKEN' : 'healthy'}, probe ${S.probe ? 'ON' : 'OFF'}`);
+  explain('Press <b>▶ Step</b> to run one reconcile-loop iteration + one interval of live traffic. The error meter and failed-request counter tell you what users felt.');
+  render();
+}
+
+$('stepBtn').onclick  = step;
+$('resetBtn').onclick = reset;
+$('stratSel').onchange = reset;
+$('brokenChk').onchange = reset;
+$('probeChk').onchange = reset;
+reset();
+</script>
+</body>
+</html>

@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClickHouse &amp; OLAP — Deep Dive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap art">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>📊 ClickHouse &amp; OLAP — columns, not rows</h1>
+      <div class="sub">Why analytics engines shred tables into columns, how MergeTree turns disks into scan machines — and the price tag: batch inserts, eventual dedup, no transactions. <span class="rt">☕ ~15 min read</span></div>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">columnar</span>
+      <span class="tag">MergeTree</span>
+      <span class="tag">sparse index</span>
+      <span class="tag">vectorized / SIMD</span>
+      <span class="tag">eventual dedup</span>
+      <span class="tag">scatter-gather</span>
+    </div>
+    <p class="lead">ClickHouse answers one question brutally well: <b>aggregate a few columns over billions of rows, sub-second</b>. It wins by tearing up the row-store contract: data lands in <b>immutable sorted parts</b>, every column in its own compressed file (~10× smaller is typical), scanned in CPU-friendly blocks and skipped granule-by-granule via a <b>sparse index</b>. The price is the contract's other half: inserts want to be <b>batches</b>, UPDATE is a background rewrite, dedup is <i>eventual</i>, and transactions essentially don't exist. OLAP isn't a faster OLTP — it's a different machine.</p>
+    <div class="note info"><b>In the interview:</b> reach for ClickHouse when you hear <i>"analytics dashboard over billions of events"</i>, <i>"logs &amp; traces at scale"</i>, or <i>"slice-and-dice, sub-second"</i>. The follow-ups are predictable: <b>why columns beat rows for scans</b> (I/O math), <b>how data gets in</b> (Kafka → batched inserts → parts &amp; merges), <b>why updates are awkward</b> (immutable parts), and <b>when you'd rather say BigQuery or Pinot</b> (ops vs QPS).</div>
+  </div>
+
+  <div class="card">
+    <h3>On this page</h3>
+    <div class="toc">
+      <a href="#model">Mental model</a>
+      <a href="#api">Syntax &amp; API</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#distributed">Distributed setup</a>
+      <a href="#play">🎛 Play with it</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#scale">At scale</a>
+      <a href="#interview">In the interview</a>
+      <a href="#check">Check yourself</a>
+    </div>
+  </div>
+
+  <!-- ===== 1. MENTAL MODEL ===== -->
+  <div class="card" id="model">
+    <h2>1 · The mental model: per-field ledgers, not filing cabinets</h2>
+    <p>A row store is a filing cabinet of order forms: each folder holds one complete order — id, customer, price, country, and 96 other fields. Ask it <i>"average order value in Germany?"</i> and a clerk must pull <b>every folder</b>, flip to the price box, glance at the country box, and put it back. The disk doesn't care that you wanted two fields; it reads pages, and pages hold whole rows. A column store is what an accountant would build instead: <b>cut every field off the forms and paste them into per-field ledgers</b> — one thin ledger of nothing but prices, one of countries. The same question now reads two thin ledgers and ignores the cabinet. And because a ledger of only prices is monotonous ("4.99, 5.99, 4.99…"), it <b>compresses absurdly well</b> — same-typed neighbors are a compressor's dream. Two columns of a hundred, then ÷10 compression: the analytics query just got <b>orders of magnitude cheaper</b> before any clever code runs.</p>
+    <p>ClickHouse is this idea taken to its logical extreme, born at <b>Yandex.Metrica</b> — a web-analytics product counting on the order of tens of billions of events a day — and open-sourced in 2016. The second trick it stacks on top: <b>vectorized execution</b>. Instead of interpreting a query row by row (the classic Volcano-style executor), it processes each column in blocks of tens of thousands of values — tight loops over homogeneous arrays that compilers and CPUs turn into <b>SIMD</b>, with cache lines fully used. Columns don't just shrink I/O; they make the CPU work the way CPUs like to work.</p>
+    <p>The storage engine family is called <b>MergeTree</b>, and it's an LSM-tree's cousin: every INSERT writes a brand-new <b>immutable part</b> — a directory with the batch's rows sorted by the table's <code>ORDER BY</code> key, one compressed file per column. Background threads continuously <b>merge</b> small parts into bigger ones (hence the name). There is no B-tree with point precision anywhere; instead a <b>sparse primary index</b> keeps one entry per <b>granule</b> (~8192 rows), tiny enough to live in RAM, good enough to decide which granules to scan and which to skip. <b>Partitioning</b> (typically by month) prunes whole chunks of data and makes retention trivial — dropping a partition, or letting a <code>TTL</code> expire it, is a directory delete, not a million DELETEs.</p>
+    <p>Everything strange about ClickHouse follows from those choices. Inserts should be <b>big batches</b> — each insert is a part, and ten thousand tiny parts drown the merger. UPDATE/DELETE are <b>mutations</b> — background jobs that rewrite entire parts. Uniqueness isn't enforced — <b>ReplacingMergeTree</b> deduplicates <i>at merge time, eventually</i>. It's the mirrored trade of the OLTP world: Postgres protects every row's mutability and pays for it on scans; ClickHouse sacrifices row-level mutability and gets scan speed that looks like a typo.</p>
+    <div class="note warn"><b>Row vs column — the one-sentence test.</b> Many small reads/writes of <i>whole rows</i> (get user, update status) → row store. Few huge reads of <i>few columns</i> (aggregate 2 fields over a year) → column store. If a design needs both, it's two systems and a pipeline — HTAP databases exist, but the physics keeps pulling the two layouts apart.</div>
+  </div>
+
+  <!-- ===== 2. SYNTAX ===== -->
+  <div class="card" id="api">
+    <h2>2 · Syntax &amp; core API</h2>
+    <p>It's SQL — with a dialect that leaks the storage engine, which is exactly what makes fluency here read as hands-on experience. The engine clause and <code>ORDER BY</code> are where the design interview happens.</p>
+    <table class="cmd-tbl">
+      <tr><td>ENGINE = MergeTree</td><td>The workhorse. Inserts create immutable sorted parts; background merges consolidate them.</td></tr>
+      <tr><td>ORDER BY (a, b, …)</td><td><b>The</b> schema decision: physical sort order = what the sparse index can skip by. Put your always-filtered, lower-cardinality columns first (<code>tenant_id, toStartOfHour(ts), …</code>).</td></tr>
+      <tr><td>PARTITION BY</td><td>Coarse chunks (usually <code>toYYYYMM(ts)</code>): pruning, cheap <code>DROP PARTITION</code>, TTL unit. Don't over-partition — parts multiply per partition.</td></tr>
+      <tr><td>TTL</td><td>Row/column expiry or move-to-cold-volume, executed during merges: retention as a schema property, not a cron job.</td></tr>
+      <tr><td>ReplacingMergeTree(ver)</td><td>Dedup by sort key <b>at merge time</b> — eventually. Until a merge (or <code>FINAL</code>), duplicates are visible. There are no unique constraints, period.</td></tr>
+      <tr><td>Summing / AggregatingMergeTree</td><td>Merges <i>fold</i> rows with the same key: pre-aggregated rollups maintained by the storage engine itself.</td></tr>
+      <tr><td>MATERIALIZED VIEW</td><td>An <b>insert trigger</b>: transforms each inserted block into a target table (usually a rollup). Incremental, at ingest — not recomputed, and not retroactive.</td></tr>
+      <tr><td>ALTER TABLE … UPDATE / DELETE</td><td><b>Mutations</b>: asynchronous background rewrites of whole parts. For fixing data, not for OLTP. (Lightweight <code>DELETE</code> marks rows and cleans up at merges.)</td></tr>
+      <tr><td>SELECT … FINAL</td><td>Force merge-semantics (dedup/fold) at query time. Correct and expensive — a smell if it's on every dashboard query.</td></tr>
+      <tr><td>async_insert</td><td>Server buffers many small inserts into one part — the escape hatch when clients can't batch.</td></tr>
+      <tr><td>dictGet('dim', 'attr', id)</td><td>In-memory dictionaries for dimension lookups — the idiomatic replacement for star-schema joins.</td></tr>
+      <tr><td>uniq / quantile / topK / argMax</td><td>Approximate &amp; positional aggregates: HyperLogLog-style distincts, sketch quantiles, "value at max(ts)" for latest-row-wins queries.</td></tr>
+    </table>
+    <pre class="code"><span class="c">-- events table: the ORDER BY is the whole design review</span>
+CREATE TABLE events (
+  ts       DateTime,
+  site_id  UInt32,
+  user_id  UInt64,
+  country  LowCardinality(String),
+  price    Decimal(18,2)
+) ENGINE = MergeTree
+PARTITION BY toYYYYMM(ts)                        <span class="c">-- prune by month; TTL drops are directory deletes</span>
+ORDER BY (site_id, toStartOfHour(ts), user_id)   <span class="c">-- a tenant's dashboard reads a contiguous slice</span>
+TTL ts + INTERVAL 90 DAY;
+
+<span class="c">-- rollup maintained AT INSERT TIME (target: AggregatingMergeTree, read with -Merge)</span>
+CREATE MATERIALIZED VIEW events_hourly_mv TO events_hourly AS
+SELECT site_id, toStartOfHour(ts) AS h,
+       count() AS views, uniqState(user_id) AS users
+FROM events GROUP BY site_id, h;
+
+<span class="c">-- typical interactive query: 3 columns, billions of rows, sub-second</span>
+SELECT toStartOfHour(ts) AS h, uniq(user_id), quantile(0.95)(price)
+FROM events
+WHERE site_id = 42 AND ts &gt;= now() - INTERVAL 7 DAY
+GROUP BY h ORDER BY h;</pre>
+  </div>
+
+  <!-- ===== 3. USE CASES ===== -->
+  <div class="card" id="usecases">
+    <h2>3 · Use cases — when ClickHouse is the answer</h2>
+
+    <div class="recipe">
+      <div class="rh">📈 Product &amp; click analytics</div>
+      One wide <code>events</code> table — page views, clicks, feature usage — and questions like funnels, retention, "DAU by country by hour". Billions of rows, queries touching 3–5 columns, dashboards that must feel instant to the analysts hammering them.
+      <div class="why">Why ClickHouse: this is literally the workload it was built for at Yandex.Metrica; wide-table + sub-second aggregation is home turf.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🪵 Logs &amp; traces (observability)</div>
+      Structured logs at millions of rows/s. Compression makes retention affordable, columns make "error rate by service by minute over 30 days" a scan, not an archaeology dig. Cloudflare and Uber both run huge log pipelines on ClickHouse — and half the new observability vendors are ClickHouse wearing a UI.
+      <div class="why">Why ClickHouse: aggregation-heavy log analytics beats inverted-index engines (Elasticsearch) on cost/compression by a wide margin; you trade away relevance-ranked text search.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">📊 Real-time dashboards &amp; ad-tech reporting</div>
+      Advertisers slicing impressions by campaign × geo × hour, minutes-old data, seconds-old freshness. Materialized views fold events into per-hour rollups at ingest; dashboards hit the rollup, ad-hoc questions hit the raw table.
+      <div class="why">Why ClickHouse: ingest-time pre-aggregation (Summing/AggregatingMergeTree) gives dashboard latency without giving up raw-data flexibility.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🚰 The classic pipeline: Kafka → ClickHouse</div>
+      Services emit events to Kafka; a consumer (or ClickHouse's own Kafka engine table + materialized view) writes <b>batched</b> inserts — tens of thousands of rows per INSERT. Kafka absorbs spikes and decouples producers; ClickHouse gets the fat batches MergeTree wants.
+      <div class="why">Why this shape: it solves ClickHouse's one ingestion demand (batching) with a component the design already has, and replays are possible when a table needs rebuilding.</div>
+    </div>
+
+    <h3>When ClickHouse is the WRONG answer</h3>
+    <table class="cmd-tbl">
+      <tr><td>OLTP / point updates</td><td>"Set order #123 to shipped" — mutations rewrite parts asynchronously; there are no real transactions. State of record lives in Postgres/MySQL; ship <i>events</i> to ClickHouse.</td></tr>
+      <tr><td>high-QPS point reads</td><td>"Get user profile by id" at 20k QPS — the sparse index finds granules, not rows; every lookup decompresses ~8k-row granules per column. Use a row store / KV.</td></tr>
+      <tr><td>frequent tiny inserts</td><td>One row per request = one part per request = merge death ("too many parts"). Batch upstream, or async_insert — and if you can't, reconsider the store.</td></tr>
+      <tr><td>strict integrity</td><td>Payments, balances, inventory: no unique constraints, no foreign keys, no multi-statement transactions. Wrong tool, full stop.</td></tr>
+      <tr><td>relevance text search</td><td>Log filtering is fine (token/ngram skip indexes), but ranked full-text search with scoring is Elasticsearch/OpenSearch territory.</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 4. DISTRIBUTED SETUP ===== -->
+  <div class="card" id="distributed">
+    <h2>4 · Distributed setup — replicas that swap files, shards that scatter-gather</h2>
+    <p><b>Replication</b> is per-table: <code>ReplicatedMergeTree</code>. Coordination runs through <b>ClickHouse Keeper</b> (a built-in Raft implementation, protocol-compatible with ZooKeeper, which it replaces). The mechanics are refreshingly physical: any replica can accept an INSERT (<b>multi-writer</b>); the new part is registered in the replication log in Keeper; the other replicas see the entry and <b>fetch the part file</b> from a peer. Replication ships parts, not statements — and it's <b>asynchronous by default</b>, so replicas converge rather than march in lockstep (an <code>insert_quorum</code> setting exists when you need an ack from several replicas). Merges are coordinated too, so replicas don't diverge on layout decisions.</p>
+    <p><b>Sharding</b> is honest and manual: a <code>Distributed</code> table holds no data — it's a router. Queries fan out to every shard, each shard aggregates its slice, and the initiator merges partial states (scatter-gather; aggregation pushes down, so what travels is compact). Inserts route by a <b>sharding key</b> you choose. What you do <i>not</i> get: automatic rebalancing when you add shards (resharding OSS ClickHouse is a data-copying project), cross-shard transactions (none), or global secondary indexes. ClickHouse Cloud sidesteps much of this with <b>SharedMergeTree</b> — parts live in object storage, compute nodes are stateless-ish and scale independently — the same storage/compute separation idea BigQuery and Snowflake bet on.</p>
+    <div class="note gotcha"><b>Distributed gotchas interviewers fish for:</b> a <b>hot shard</b> from a skewed sharding key (one giant tenant lands on one shard — hash by something with cardinality); <b>JOINs across shards</b> (a naive distributed join broadcasts or reshuffles — <code>GLOBAL JOIN</code> ships the right table to every shard; keep dimension data in dictionaries instead); and <b>Keeper pressure</b> — every table × partition × replica adds coordination metadata, so thousands of small tables/partitions grind the control plane. Design fat tables, few partitions, big parts.</div>
+  </div>
+
+  <!-- ===== 5. INTERACTIVE ===== -->
+  <div class="card" id="play">
+    <h2>5 · 🎛 Play with it — the row-vs-column scan race</h2>
+    <p class="small muted" style="margin-top:0">One table, <b>100 columns</b>. The analytics query <code>SELECT avg(price) … WHERE country='DE'</code> touches <b>2</b> of them. The row store must read whole pages — every column of every row; the column store reads two column files, compressed. Then flip the workload: a <b>point lookup by id</b> needs <i>all</i> columns of <i>one</i> row — and the race inverts. Bars are time-compressed to the loser's tape.</p>
+    <div class="row" style="margin-bottom:10px">
+      <label class="fld" style="min-width:190px">table size <span id="rowsLbl" class="small">1 B rows × 100 cols</span>
+        <input type="range" id="rowsRange" min="6" max="9" step="1" value="9"></label>
+      <label class="fld" style="min-width:190px">columnar compression <span id="compLbl" class="small">10×</span>
+        <input type="range" id="compRange" min="1" max="20" step="1" value="10"></label>
+      <button class="btn" id="scanBtn">▶ Run analytics query</button>
+      <button class="btn sec" id="pointBtn">🔎 Point lookup by id</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="stage" id="stage">
+      <div class="small" id="queryLine" style="font-family:ui-monospace,Menlo,monospace;color:var(--accent);margin-bottom:10px"></div>
+      <div class="nodes" id="nodes"></div>
+    </div>
+    <div class="explain" id="explain">Press <b>▶ Run analytics query</b> and watch the bytes counters diverge.</div>
+    <p class="small muted" style="margin-top:8px">Schematic model: 8-byte values, ~2 GB/s effective scan+decode, ~0.1 ms per random read; the row store gets 1× compression here (real row pages manage ~2×, columnar ~10×+); granule = 8192 rows.</p>
+    <div class="cols" style="margin-top:12px">
+      <div><h3>Event log</h3><div class="log" id="log"></div></div>
+      <div><h3>What to try</h3>
+        <ol class="steps small">
+          <li>1 B rows, 10× → <b>Run analytics</b>: ~800 GB vs ~1.6 GB read — the whole columnar story in one race.</li>
+          <li>Slide compression 1× → 20× and re-run: the column bar keeps shrinking; rows don't benefit — mixed-type pages barely compress.</li>
+          <li>Drop to 1 M rows: both finish instantly. Under a few GB, Postgres is fine — columnar pays off when data ≫ RAM.</li>
+          <li>🔎 <b>Point lookup</b>: inverted — the row lives in one page (~4 reads) vs ~100 granule reads across column files. This is why OLTP serving stays row-based.</li>
+          <li>Re-run the point lookup at 20× compression: barely moves — seeks and decompression dominate, not bytes.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 6. DEEP DIVES ===== -->
+  <div id="deep"></div>
+  <details class="fold">
+    <summary>🔍 Deep dive · Inside MergeTree — parts, granules, marks, and merge debt <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>A <b>part</b> is a directory: for each column, a compressed <code>.bin</code> file; a <code>primary.idx</code> holding the sparse index; mark files (<code>.mrk</code>) mapping index entries to byte offsets. The rows inside are sorted by the <code>ORDER BY</code> key, and the sparse index stores the key of <b>every 8192nd row</b> (one <b>granule</b>). Query planning is then beautifully dumb: binary-search the in-RAM index to find candidate granule ranges → read only those granules' byte ranges from only the referenced columns → decompress → vectorized scan. For columns outside the sort key, <b>skip indexes</b> (min-max, set, Bloom-filter) hang per-granule summaries on the data so whole granules can still be skipped without being read.</p>
+        <p>Every INSERT creates a new part, so a table is a forest of sorted runs, and background <b>merges</b> continuously k-way-merge them into fewer, larger parts — this is where ReplacingMergeTree dedups, Summing folds, and TTLs expire. The health metric of a ClickHouse cluster is therefore <b>parts per partition</b> and merge backlog: if inserts outpace merges, reads touch ever more parts and slow down, and past a threshold (classically delays around ~150 active parts per partition and rejects around ~300 — thresholds tunable and raised in newer releases) inserts start failing with the famous <b>"Too many parts"</b>. It is not an error so much as the engine enforcing its contract: <i>feed me batches</i>.</p>
+        <p>That contract shapes the ingestion tier of every design: batch tens of thousands of rows per INSERT, let Kafka accumulate, or turn on <code>async_insert</code> so the server does the batching. And keep <code>PARTITION BY</code> coarse — partitioning by day × tenant multiplies the part count by tenant cardinality, and the merge scheduler drowns in confetti.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Where did my UPDATE go — mutations, ReplacingMergeTree, FINAL <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Parts are immutable, so <code>ALTER TABLE … UPDATE/DELETE</code> can't touch rows in place — a <b>mutation</b> schedules a background rewrite of every affected part. It's asynchronous (the statement returns before the data changes), heavy (a one-row update can rewrite gigabytes), and queued behind merges. Lightweight <code>DELETE</code> improves the ergonomics — rows get masked and physically removed at merge time — but the honest rule stands: <b>ClickHouse data should be modeled as immutable events</b>, with correction as new data, not surgery on old data.</p>
+        <p>When you genuinely need "latest state per key" — say each order's current status — the idiom is <b>ReplacingMergeTree(version)</b>: insert a full new row per change; merges keep the highest version per sort key. The catch every interviewer probes: dedup happens <b>only when a merge happens</b>, and merges are eventual and never guaranteed to have merged everything. Until then, queries see duplicates. Your options, worst to best: <code>SELECT … FINAL</code> (forces merge semantics at query time — correct, but you pay merge cost per query); <code>argMax(col, version)</code> with <code>GROUP BY key</code> (aggregation-time dedup, usually the right call); or making ingestion idempotent upstream so duplicates never enter. There's also <b>CollapsingMergeTree</b>, which cancels rows via +1/−1 sign pairs — powerful for keeping running aggregates correct, fiddly to feed.</p>
+        <p>Notice what this really is: the same LSM logic as Cassandra's tombstones or Kafka's compacted topics — <b>correctness is defined at compaction time, observed lazily</b>. Say the phrase "dedup is eventual; we design ingestion to be idempotent and read with argMax" and the follow-up questions dry up.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Materialized views — aggregation moved to insert time <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>A ClickHouse materialized view is not a cached query — it's an <b>insert trigger</b>. When a block of rows lands in the source table, the MV's SELECT runs <i>on that block only</i> and the result is inserted into a target table. Chain that with an <b>AggregatingMergeTree</b> target and partial-aggregate states (<code>uniqState</code>, <code>sumState</code> … read back with <code>uniqMerge</code> / <code>sumMerge</code>), and you get rollups that are <b>incrementally maintained at ingest</b> — the per-hour table your dashboards hit is always a few seconds behind the raw events, and querying it costs thousandths of the raw scan.</p>
+        <p>The architecture pattern: <b>raw wide table</b> (source of truth, 90-day TTL) → MVs fanning out to <b>a handful of rollups</b> shaped exactly like your dashboards (per hour × campaign, per minute × service…), each with longer retention and tiny size. Ad-hoc questions hit raw; products hit rollups. This is how ClickHouse serves "real-time dashboard" latencies without a separate serving layer.</p>
+        <p>Sharp edges to name: an MV sees <b>only blocks inserted after it was created</b> — backfilling means inserting old data through it or careful <code>POPULATE</code>-style rebuilds (racy against live inserts); MV logic runs inside the insert path, so a broken MV can fail or slow the source insert; and chains of MVs multiply that fragility. Keep MVs few, simple, and monitored.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · The OLAP landscape — warehouses, real-time engines, embedded, lakehouse <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>"Analytics" hides four different products, and interviews reward knowing which one the requirements are pointing at. <b>Cloud warehouses</b> — BigQuery, Snowflake — separate storage from compute completely: data in object storage, stateless compute rented per query (slots/credits, or per-TB-scanned). Elastic to petabytes, zero ops, superb for internal analysts and ELT — with latencies in the seconds and a cost model that punishes high-frequency querying. <b>Interactive OLAP engines</b> — ClickHouse, Apache Druid, Apache Pinot — keep data hot and indexed for sub-second answers: ClickHouse is the general-purpose scan monster; Druid and Pinot (LinkedIn's "who viewed your profile") specialize in <b>user-facing</b> analytics — pre-aggregated, thousands of concurrent queries, more moving parts to operate.</p>
+        <p><b>Embedded OLAP</b> — DuckDB — is a columnar engine inside your process, the "SQLite of analytics": perfect for single-node data science, Parquet crunching in a lambda, or an app feature; it simply isn't a shared server. And the <b>lakehouse</b> — Parquet/Iceberg files on S3 queried by Trino/Spark — is the cheapest possible storage with federation across sources, at the price of interactive latency (also the natural cold tier <i>behind</i> ClickHouse; CH reads Parquet/S3 directly).</p>
+        <p>The positioning sentence worth memorizing: <b>ClickHouse sits between warehouses and serving engines</b> — warehouse-scale scans at interactive latency, high-rate querying at fixed hardware cost — and you pay with cluster operations (or buy ClickHouse Cloud) and with OLTP-shaped features it deliberately lacks.</p>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== 7. AT SCALE ===== -->
+  <div class="card scale" id="scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Ballparks for capacity talk — quote orders of magnitude, not digits.</p>
+    <table class="cmd-tbl">
+      <tr><td>scan speed</td><td>Simple filter + aggregation: <b>hundreds of millions to billions of rows/s per node</b> (order of ~10⁸/core). This single number is why "just scan it" replaces most indexing conversations.</td></tr>
+      <tr><td>compression</td><td>~<b>10×</b> typical on event/log data (LZ4 default; ZSTD tighter); specialized codecs (Delta, DoubleDelta, Gorilla) do far better on timestamps/gauges. Quote "order of 10×".</td></tr>
+      <tr><td>index anatomy</td><td>Granule = <b>8192 rows</b>; one sparse-index mark per granule; the primary index lives in RAM. Point reads decompress whole granules — that's the OLTP tax.</td></tr>
+      <tr><td>ingestion rules</td><td>Batch <b>10k–100k+ rows per INSERT</b>; keep insert <i>frequency</i> per table low (classic guidance: ~1/s) or use <code>async_insert</code>. Single nodes ingest hundreds of thousands of rows/s; clusters, millions.</td></tr>
+      <tr><td>parts health</td><td>Active parts per partition is <b>the</b> ops metric: delays kick in around ~150, rejects around ~300 (classic defaults; tunable, raised in newer versions). Watch merge backlog like you watch queue depth.</td></tr>
+      <tr><td>memory</td><td>GROUP BY / hash JOIN build in RAM — default per-query cap ~<b>10 GB</b>; big right-side joins OOM. Denormalize, use dictionaries, aggregate before joining. Spill-to-disk exists; it's a consolation prize.</td></tr>
+      <tr><td>concurrency</td><td>Defaults allow ~<b>100 concurrent queries</b>; the engine wants <i>few heavy</i> queries, not thousands of tiny ones. User-facing 1000+ QPS → rollups + cache, or Pinot/Druid.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Failure modes that only appear at scale:</b>
+      <b>too-many-parts insert storm</b> (trickle inserts or confetti partitioning → merge debt → rejected inserts);
+      <b>join OOM</b> (hash-joining two fat tables at query time — the schema was supposed to be denormalized);
+      <b>mutation pileup</b> (regular UPDATE/DELETE traffic queues rewrites behind merges until disks thrash);
+      <b>Keeper strain</b> (thousands of tables × partitions × replicas of coordination metadata — consolidate tables);
+      <b>hot shard</b> (sharding key = one whale tenant's id);
+      <b>FINAL everywhere</b> (correctness crutch that silently multiplies every dashboard query's cost).</div>
+  </div>
+
+  <!-- ===== 8. INTERVIEW ===== -->
+  <div class="card" id="interview">
+    <h2>8 · In the interview</h2>
+    <p><b>How it comes up:</b> as the analytics half of almost any design — "design YouTube's view-count dashboards", "ad-click analytics", "log search for a platform", "metrics for 10k tenants". The senior shape is always the same split: <b>OLTP store for product state; events to Kafka; OLAP store for questions</b> — never analytics queries against the production Postgres. Then the follow-ups: how data gets in (batched, via Kafka; MVs building rollups at ingest), what the ORDER BY is (tenant first, time second — a tenant's dashboard reads one contiguous slice), and what happens at 10× (parts, merges, add shards — and name the resharding pain honestly).</p>
+    <p><b>The choice script:</b> internal analysts, ad-hoc SQL, minimal ops → <b>BigQuery/Snowflake</b> and move on. Interactive product analytics / observability at high ingest with sub-second dashboards → <b>ClickHouse</b> (self-run or Cloud). Customer-facing analytics at thousands of QPS → <b>Pinot/Druid</b>. Tiny/embedded → <b>DuckDB</b>. Saying <i>why the boundary is where it is</i> — cost model, latency class, concurrency architecture — is the L6 signal.</p>
+    <h3>Alternatives — one line each</h3>
+    <table class="cmd-tbl">
+      <tr><td>BigQuery</td><td>Serverless warehouse, storage/compute fully separated, pay per scan (or slots); seconds-latency, infinite elasticity, zero ops. Internal analytics default on GCP.</td></tr>
+      <tr><td>Snowflake</td><td>Same category, multi-cloud, virtual warehouses (credits); superb concurrency/ELT ecosystem story, same seconds-and-dollars physics.</td></tr>
+      <tr><td>Redshift</td><td>The classic provisioned MPP warehouse on AWS (serverless option exists); strong in AWS estates, less elastic by heritage.</td></tr>
+      <tr><td>Druid / Pinot</td><td>Real-time, <b>user-facing</b> analytics: pre-aggregation, ms latency at extreme query concurrency (Pinot: LinkedIn's profile views). More components to run; narrower SQL.</td></tr>
+      <tr><td>DuckDB</td><td>Embedded single-node columnar ("SQLite of OLAP") — notebooks, lambdas, in-app analytics. Not a shared server.</td></tr>
+      <tr><td>Trino + Parquet/Iceberg</td><td>Lakehouse: cheapest storage, federated SQL over everything, minutes-to-seconds latency. The cold tier behind a hot engine.</td></tr>
+      <tr><td>Elasticsearch</td><td>Inverted-index search engine that got dragged into analytics: wins ranked text search; loses to columnar on aggregation cost/compression at scale.</td></tr>
+    </table>
+    <div class="note info"><b>Phrases that score:</b> "we denormalize into one wide event table at ingest — no query-time joins" · "ORDER BY (tenant_id, ts): a tenant's dashboard is one contiguous scan" · "materialized views fold events into per-hour rollups at insert time; dashboards hit the rollup" · "dedup is eventual — ReplacingMergeTree — so ingestion is idempotent and reads use argMax" · "we batch inserts through Kafka; a part per row melts the merge scheduler" · "if product managers ever put this in front of end users at 5k QPS, that's the Pinot conversation".</div>
+  </div>
+
+  <!-- ===== 9. CHECK YOURSELF ===== -->
+  <div class="card" id="check">
+    <h2>9 · Check yourself</h2>
+    <details class="qa">
+      <summary>Why is <code>SELECT avg(price) WHERE country='DE'</code> orders of magnitude cheaper on a column store — three distinct reasons?</summary>
+      <div class="a"><p>(1) <b>I/O selectivity:</b> it reads 2 column files of 100 instead of every page of every row — ~2% of the bytes before anything else happens. (2) <b>Compression:</b> same-typed adjacent values compress ~10× (order), so those bytes shrink again. (3) <b>Vectorized execution:</b> the survivors are processed as blocks of homogeneous values in SIMD-friendly loops rather than row-at-a-time interpretation. Multiply the three and 800 GB of logical data becomes ~a-second scan.</p></div>
+    </details>
+    <details class="qa">
+      <summary>A service inserts one row per request, 5,000 times a second, straight into MergeTree. What breaks and how do you fix it?</summary>
+      <div class="a"><p>Every INSERT creates an immutable <b>part</b>; 5k parts/s outruns merges → reads slow (each query touches thousands of parts), merge debt grows, and inserts start being delayed and then rejected ("Too many parts"). Fixes, best first: <b>batch upstream</b> (Kafka + consumer inserting 10k–100k rows), enable <b>async_insert</b> so the server buffers, and check the partition key isn't multiplying parts. The rule: ClickHouse eats batches, not rows.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Product wants "current status per order" in ClickHouse, with status changes streaming in. Options and their catches?</summary>
+      <div class="a"><p>Insert a row per change into <b>ReplacingMergeTree(version)</b> — but dedup happens <i>at merge time, eventually</i>: plain queries see duplicates. Read with <code>argMax(status, version) GROUP BY order_id</code> (idiomatic), or <code>FINAL</code> (correct, expensive per query). <code>ALTER … UPDATE</code> is a background part-rewrite — fine for corrections, wrong for streams. And if this is really OLTP state used by the product, it belongs in Postgres, with ClickHouse holding the history.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Your analytics dashboard becomes a customer-facing feature at ~2,000 QPS of small queries. What's the problem, and the two escape routes?</summary>
+      <div class="a"><p>ClickHouse is architected for <i>few heavy</i> queries (defaults near ~100 concurrent); thousands of small concurrent queries contend on scans that were never meant to be per-end-user. Route 1: stay on ClickHouse but serve from <b>MV-maintained rollups</b> shaped exactly like the widget, plus a cache — queries become tiny key-range reads. Route 2: move the serving workload to <b>Pinot/Druid</b>, which are built for user-facing concurrency. Naming the concurrency boundary is the senior signal.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Interviewer: "Why not just BigQuery for all of this?"</summary>
+      <div class="a"><p>Match the tool to query economics and latency class. BigQuery: zero ops, elastic to petabytes, priced per scan/slots, latency in seconds — perfect for internal analysts and ELT. ClickHouse: sub-second interactive queries at high frequency on fixed hardware cost — perfect when dashboards are hammered continuously or are product features, and when ingest is a firehose you control. Many real designs use both: ClickHouse hot path, warehouse/lakehouse for everything-else analytics.</p></div>
+    </details>
+  </div>
+
+  <p class="small muted">Sources: this page condenses the ClickHouse documentation (MergeTree, replication, Keeper, materialized views), the Yandex.Metrica origin story, and engineering write-ups from Cloudflare, Uber and Altinity. Numbers are order-of-magnitude interview figures — verify current defaults before quoting in production.</p>
+</div>
+
+<script src="site.js"></script>
+<script>
+/* ===== Row vs column scan race ===== */
+const COLS = 100, VB = 8, QCOLS = 2;
+const RATE = 2e9;        // bytes/s effective sequential scan+decode
+const SEEK = 0.0001;     // s per random read
+const GRANULE = 8192;
+const DECODE = 1e9;      // bytes/s decompression for the point-lookup granules
+const TAPE = 3.5;        // wall-seconds the loser's bar takes
+
+let S = null, timer = null;
+const $ = id => document.getElementById(id);
+
+const rowsN = () => Math.pow(10, +$('rowsRange').value);
+const compX = () => +$('compRange').value;
+
+function fmtBytes(b){
+  if (b >= 1e12) return (b / 1e12).toFixed(1) + ' TB';
+  if (b >= 1e9)  return (b / 1e9).toFixed(1) + ' GB';
+  if (b >= 1e6)  return (b / 1e6).toFixed(1) + ' MB';
+  if (b >= 1e3)  return (b / 1e3).toFixed(1) + ' KB';
+  return Math.round(b) + ' B';
+}
+function fmtTime(s){
+  if (s < 0.001) return (s * 1e6).toFixed(0) + ' µs';
+  if (s < 1)     return (s * 1e3).toFixed(1) + ' ms';
+  if (s < 120)   return s.toFixed(1) + ' s';
+  return (s / 60).toFixed(1) + ' min';
+}
+const fmtN = n => n >= 1e9 ? (n / 1e9) + ' B' : (n / 1e6) + ' M';
+const fmtX = x => x >= 10 ? Math.round(x) + '×' : x.toFixed(1) + '×';
+
+function scenario(mode){
+  const N = rowsN(), c = compX();
+  if (mode === 'scan'){
+    const rb = N * COLS * VB;
+    const cbU = N * QCOLS * VB, cb = cbU / c;
+    return {
+      mode, N, c, query: `SELECT avg(price) FROM orders WHERE country = 'DE'   -- ${fmtN(N)} rows × 100 cols, needs 2 cols`,
+      row: { bytes: rb, time: rb / RATE, lit: 100,
+             info: [['columns read', '100 / 100 — whole pages'], ['bytes to read', fmtBytes(rb)]],
+             tag: 'heap pages' },
+      col: { bytes: cb, time: cb / RATE + 0.005, lit: 2,
+             info: [['columns read', '2 / 100 (price, country)'], ['bytes to read', fmtBytes(cbU) + ' ÷ ' + c + '× = ' + fmtBytes(cb)]],
+             tag: 'MergeTree parts' },
+    };
+  }
+  const rb = 4 * 8192;
+  const cbU = COLS * GRANULE * VB, cb = cbU / c;
+  return {
+    mode, N, c, query: `SELECT * FROM orders WHERE id = 4242   -- ONE row, needs ALL 100 cols`,
+    row: { bytes: rb, time: 4 * SEEK + rb / RATE, lit: 4,
+           info: [['random reads', '~4 pages (B-tree root→leaf)'], ['bytes to read', fmtBytes(rb) + ' — the row is in ONE page']],
+           tag: 'B-tree' },
+    col: { bytes: cb, time: COLS * SEEK + cb / RATE + cbU / DECODE, lit: 100,
+           info: [['random reads', '~100 — one granule per column file'], ['bytes to read', fmtBytes(cb) + ' (+ decompress ' + fmtBytes(cbU) + ')']],
+           tag: 'sparse index' },
+  };
+}
+
+function logLine(cls, msg){
+  const d = document.createElement('div');
+  d.className = 'l ' + cls;
+  d.textContent = msg;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function explain(html){ $('explain').innerHTML = html; }
+
+function litSet(n){
+  if (n >= 100) return null;                    // null = all lit
+  if (n === 2) return new Set([22, 47]);
+  return new Set([8, 33, 58, 83]);              // n === 4
+}
+
+function laneCard(title, icon, l, p, winner, otherDone){
+  const done = p >= 1;
+  const litColor = winner ? 'rgba(46,204,113,.85)' : 'rgba(255,92,92,.8)';
+  const lits = litSet(l.lit);
+  let cells = '';
+  for (let i = 0; i < 100; i++){
+    const on = lits === null || lits.has(i);
+    cells += `<div style="width:8px;height:8px;border-radius:2px;background:${on ? litColor : 'var(--bg)'};border:1px solid var(--line)"></div>`;
+  }
+  const status = !S.running && !done && S.wall === 0 ? '<span class="muted">ready</span>'
+    : done ? (winner ? '<span style="color:var(--ok)">🏆 done — est. ' + fmtTime(l.time) + '</span>'
+                     : '<span style="color:var(--bad)">done — est. ' + fmtTime(l.time) + '</span>')
+    : '<span style="color:var(--warn)">⏳ reading…</span>';
+  let h = `<div class="node ${done && winner ? 'flash-ok' : ''}" style="min-width:260px;flex:1;max-width:420px">
+    <div class="title">${icon} ${title} <span class="badge">${l.tag}</span></div>
+    <div style="display:grid;grid-template-columns:repeat(20,8px);gap:2px;margin:8px 0">${cells}</div>`;
+  for (const [k, v] of l.info) h += `<div class="kv"><span class="k">${k}</span><span>${v}</span></div>`;
+  h += `<div class="kv"><span class="k">read so far</span><span>${fmtBytes(l.bytes * Math.min(1, p))}</span></div>
+    <div style="height:10px;background:var(--bg);border:1px solid var(--line);border-radius:6px;overflow:hidden;margin:8px 0 6px">
+      <div style="height:100%;width:${Math.min(100, p * 100)}%;background:${winner ? 'var(--ok)' : 'var(--bad)'}"></div></div>
+    <div class="small">${status}</div></div>`;
+  return h;
+}
+
+function render(){
+  const sc = S.sc;
+  $('queryLine').textContent = sc.query;
+  const rowWins = sc.row.time <= sc.col.time;
+  $('nodes').innerHTML =
+    laneCard('Row store (Postgres-style)', '🗄', sc.row, S.pRow, rowWins) +
+    laneCard('Column store (ClickHouse)', '📊', sc.col, S.pCol, !rowWins);
+}
+
+function freshState(mode){
+  return { mode, sc: scenario(mode), wall: 0, pRow: 0, pCol: 0, running: false, logged: { row: false, col: false } };
+}
+
+function tick(){
+  S.wall += 0.04;
+  const loser = Math.max(S.sc.row.time, S.sc.col.time);
+  const wdRow = Math.max(0.35, TAPE * S.sc.row.time / loser);
+  const wdCol = Math.max(0.35, TAPE * S.sc.col.time / loser);
+  S.pRow = Math.min(1, S.wall / wdRow);
+  S.pCol = Math.min(1, S.wall / wdCol);
+  if (S.pRow >= 1 && !S.logged.row){ S.logged.row = true; logLine(S.sc.row.time <= S.sc.col.time ? 'ok' : 'err', `row store    done — ${fmtBytes(S.sc.row.bytes)} read, est. ${fmtTime(S.sc.row.time)}`); }
+  if (S.pCol >= 1 && !S.logged.col){ S.logged.col = true; logLine(S.sc.col.time <= S.sc.row.time ? 'ok' : 'err', `column store done — ${fmtBytes(S.sc.col.bytes)} read, est. ${fmtTime(S.sc.col.time)}`); }
+  if (S.pRow >= 1 && S.pCol >= 1){
+    clearInterval(timer); timer = null; S.running = false;
+    $('scanBtn').disabled = $('pointBtn').disabled = false;
+    verdict();
+  }
+  render();
+}
+
+function verdict(){
+  const r = S.sc.row, c = S.sc.col, cx = S.sc.c;
+  if (S.mode === 'scan'){
+    const bx = r.bytes / c.bytes, tx = r.time / c.time;
+    logLine('info', `verdict: column store read ${fmtX(bx)} fewer bytes → ~${fmtX(tx)} faster at the same disk`);
+    explain(`<b>${fmtX(bx)} less I/O.</b> The row store read ${fmtBytes(r.bytes)} to answer a 2-column question — 98% of those bytes were columns the query never asked about. The column store read 2 files (${fmtBytes(S.sc.N * QCOLS * VB)} raw) and compression (÷${cx}) shrank them to ${fmtBytes(c.bytes)}. Est. ${fmtTime(r.time)} vs ${fmtTime(c.time)} — and vectorized execution then chews the survivors with SIMD. That is the entire OLAP story.`);
+  } else {
+    const tx = c.time / r.time;
+    logLine('info', `verdict: row store ~${fmtX(tx)} faster — one row lives in ONE page there, in 100 files here`);
+    explain(`<b>Inverted.</b> The row store walked a B-tree: ~4 page reads, ${fmtBytes(r.bytes)}, est. ${fmtTime(r.time)}. The column store had to visit <b>every one of 100 column files</b>, read a whole ${GRANULE}-row granule from each and decompress ${fmtBytes(COLS * GRANULE * VB)} — to rebuild a single row. Est. ${fmtTime(c.time)}, ~${fmtX(tx)} slower — and sliding compression barely helps, because seeks + decode dominate. This is why user profiles stay in Postgres and events go to ClickHouse.`);
+  }
+}
+
+function run(mode){
+  if (S && S.running) return;
+  S = freshState(mode);
+  S.running = true;
+  $('scanBtn').disabled = $('pointBtn').disabled = true;
+  if ($('log').childNodes.length) logLine('t', '────────────────────────────');
+  logLine('cmd', S.sc.query.trim());
+  if (mode === 'scan'){
+    logLine('info', `row store: must read whole rows — ${fmtN(S.sc.N)} × 100 cols × 8 B = ${fmtBytes(S.sc.row.bytes)}`);
+    logLine('info', `column store: price + country only — ${fmtBytes(S.sc.N * QCOLS * VB)} ÷ ${S.sc.c}× compression = ${fmtBytes(S.sc.col.bytes)}`);
+  } else {
+    logLine('info', `row store: B-tree walk, ~4 random page reads (${fmtBytes(S.sc.row.bytes)})`);
+    logLine('info', `column store: sparse index → granule ${GRANULE} rows → read it from EVERY column file (~100 random reads)`);
+  }
+  explain('Racing… bars are time-compressed to the loser\'s tape; the byte counters are the honest part.');
+  timer = setInterval(tick, 40);
+  render();
+}
+
+function reset(){
+  if (timer){ clearInterval(timer); timer = null; }
+  S = freshState('scan');
+  $('log').innerHTML = '';
+  $('scanBtn').disabled = $('pointBtn').disabled = false;
+  logLine('t', 'reset — set table size & compression, then run a query');
+  explain('Press <b>▶ Run analytics query</b> and watch the bytes counters diverge.');
+  render();
+}
+
+$('rowsRange').oninput = () => {
+  $('rowsLbl').textContent = fmtN(rowsN()) + ' rows × 100 cols';
+  if (S && !S.running){ S = freshState(S.mode); render(); }
+};
+$('compRange').oninput = () => {
+  $('compLbl').textContent = compX() + '×';
+  if (S && !S.running){ S = freshState(S.mode); render(); }
+};
+$('scanBtn').onclick  = () => run('scan');
+$('pointBtn').onclick = () => run('point');
+$('resetBtn').onclick = reset;
+
+reset();
+</script>
+</body>
+</html>

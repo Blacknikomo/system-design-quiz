@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Graph Databases — Deep Dive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap art">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🧭 Graph Databases — when JOINs become hops</h1>
+      <div class="sub">Index-free adjacency, Cypher, supernodes, why graphs shard badly — and why Facebook famously does <i>not</i> run its social graph on one. <span class="rt">☕ ~15 min read</span></div>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">index-free adjacency</span>
+      <span class="tag">property graph</span>
+      <span class="tag">Cypher / GQL</span>
+      <span class="tag">single-leader writes</span>
+      <span class="tag">supernodes</span>
+    </div>
+    <p class="lead">A graph database stores relationships as <b>first-class data</b>: every node physically points at its neighbors, so "friend of a friend of a friend" is three pointer-chases — not three JOINs that each get slower as the table grows. That one storage decision buys spectacular deep-traversal speed, and it costs you horizontal write scaling, because a web of pointers is exactly the thing that refuses to be sharded.</p>
+    <div class="note info"><b>In the interview:</b> graph DBs come up in fraud detection, recommendations, and permission systems. The interviewer expects you to know <b>when NOT to use one</b> (fixed 1–2 hops = a JOIN problem), to name the honest weakness (<b>writes don't scale out</b>; sharding a graph is a min-cut problem), and — for senior candidates — to know that Facebook's TAO and Google's Zanzibar serve graph-shaped data <i>without</i> a graph database.</div>
+  </div>
+
+  <div class="card">
+    <h3>On this page</h3>
+    <div class="toc">
+      <a href="#model">Mental model</a>
+      <a href="#api">Syntax &amp; API</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#distributed">Distributed setup</a>
+      <a href="#play">🎛 Play with it</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#scale">At scale</a>
+      <a href="#interview">In the interview</a>
+      <a href="#check">Check yourself</a>
+    </div>
+  </div>
+
+  <!-- ===== 1. MENTAL MODEL ===== -->
+  <div class="card" id="model">
+    <h2>1 · The mental model: hyperlinks for your data</h2>
+    <p>Think about the difference between a paper library and the web. To follow a citation in a book, you walk back to the central catalog, look up the referenced title, find the shelf number, and walk there — and the bigger the library, the longer the lookup. To follow a hyperlink, you just click: the link <i>itself</i> stores where it goes, and it doesn't matter whether the web has a million pages or a trillion. Relational databases are the library catalog. Graph databases are the hyperlink.</p>
+    <p>The data model is the <b>property graph</b>: <b>nodes</b> carry labels and properties (<code>(:User {id: 42, name: 'Ava'})</code>), and <b>relationships</b> are typed, directed, and carry properties of their own (<code>-[:FOLLOWS {since: 2021}]-&gt;</code>). The crucial word is <i>stored</i>. In a relational schema, "Ava follows Ben" is a row in a join table, and the connection is <b>reconstructed at query time</b> by matching values through an index. In a graph database the connection was <b>materialized at write time</b> as a physical reference — the relationship is a record that both nodes can reach by direct offset.</p>
+    <p>That property has a name worth saying out loud: <b>index-free adjacency</b>. Once you're standing on a node, enumerating its neighbors is pointer arithmetic — roughly O(1) per relationship, <i>regardless of how many nodes exist in total</i>. Compare the relational version of one hop: an index seek costing ~O(log N) into a table whose N is the <b>whole</b> edge set. One hop, fine. But "friends up to 3 hops out" becomes a recursive self-JOIN whose work multiplies by the frontier at every level and pays the log-of-table-size tax on every row it touches. The graph engine's cost is proportional to <b>the data you actually traverse</b>; the relational cost carries a factor of <b>the data you own</b>.</p>
+    <p>Now the honest half, because interviewers probe for it. For a <b>fixed, shallow</b> query — "get this user's orders", "who follows Ava" — a JOIN with a proper index is excellent, cached, boring, and comes with the world's best tooling. A useful rule: <b>most graph problems at ≤2 hops are join problems</b>. Graph databases start earning their keep when depth is <b>variable or ≥3</b>, when the query is a <i>pattern</i> (cycles, diamonds) rather than a lookup, or when "how deep" is itself the question (shortest path). And one myth to preempt: index-free adjacency doesn't mean index-free <i>database</i> — you still use an ordinary index once, to find the <b>starting</b> node. It's every hop after that which skips the index.</p>
+    <div class="note warn"><b>The one-sentence test.</b> If you can write the query with a known, small number of JOINs, use your relational database. If the query's natural language contains "…of a…" repeated an unknown number of times — <i>friends of friends of friends, parts of parts, owner of the company that owns the company</i> — that's a traversal, and traversals are what graph databases are for.</div>
+  </div>
+
+  <!-- ===== 2. SYNTAX ===== -->
+  <div class="card" id="api">
+    <h2>2 · Syntax &amp; core API — Cypher (and its rivals)</h2>
+    <p><b>Cypher</b> is Neo4j's declarative language, and its party trick is that queries look like the whiteboard drawing: nodes are <code>()</code>, relationships are arrows. You state the <i>pattern</i>; the planner picks the traversal order.</p>
+    <table class="cmd-tbl">
+      <tr><td>(a:User {id: 42})</td><td>Node pattern: variable <code>a</code>, label <code>User</code>, property filter. This is the part that uses a regular index — to find your <b>entry point</b>.</td></tr>
+      <tr><td>-[:FOLLOWS]-&gt;</td><td>Typed, directed relationship. Reverse it (<code>&lt;-</code>) or drop the arrow entirely to traverse both directions.</td></tr>
+      <tr><td>-[:FOLLOWS*1..3]-&gt;</td><td><b>Variable-length path</b> — the thing SQL can't say in one breath. "One to three FOLLOWS hops." Unbounded <code>*</code> is legal and dangerous (see deep dive 4).</td></tr>
+      <tr><td>MATCH … WHERE … RETURN</td><td>The read pipeline. <code>DISTINCT</code> and <code>LIMIT</code> matter more than in SQL — path patterns multiply rows fast.</td></tr>
+      <tr><td>MERGE</td><td>Match-or-create for a whole pattern — the graph UPSERT. The idiom for "ensure this device node exists, then link it".</td></tr>
+      <tr><td>shortestPath(…)</td><td>Built-in bidirectional shortest-path search between two bound nodes; <code>allShortestPaths</code> for ties.</td></tr>
+      <tr><td>CREATE INDEX / CONSTRAINT</td><td>Indexes exist — for node lookups by property, not for hops. A unique constraint on <code>User.id</code> is table stakes.</td></tr>
+      <tr><td>PROFILE / EXPLAIN</td><td>Shows the plan and <b>db hits</b> per operator — the graph world's "rows examined". Your supernode problems show up here first.</td></tr>
+    </table>
+    <pre class="code"><span class="c">// "people Ava reaches in ≤3 hops but doesn't already follow" — the widget below runs this</span>
+MATCH (a:User {id: 42})-[:FOLLOWS*1..3]-&gt;(b:User)
+WHERE NOT (a)-[:FOLLOWS]-&gt;(b) AND b &lt;&gt; a
+RETURN DISTINCT b.name LIMIT 20
+
+<span class="c">// fraud: ensure the shared device exists and link this signup to it (MERGE = match-or-create)</span>
+MERGE (d:Device {fp: 'fp_9f3a'})
+MERGE (u:User {id: 42})-[:USED]-&gt;(d)
+
+<span class="c">// link analysis: how are these two accounts connected, within 6 hops?</span>
+MATCH p = shortestPath( (a:Account {id: 1})-[:TXN*..6]-(b:Account {id: 99}) )
+RETURN length(p), [n IN nodes(p) | n.id]</pre>
+    <p>The rest of the language landscape in three lines. <b>Gremlin</b> (Apache TinkerPop) is the imperative cousin — you script the walk itself: <code>g.V().has('id',42).repeat(out('FOLLOWS')).emit().times(3).dedup().limit(20)</code>; powerful, composable, harder to read in a review. <b>SPARQL</b> queries RDF triple stores (subject–predicate–object; the semantic-web/knowledge-graph lineage) — you'll meet it in Neptune and enterprise ontologies. And in 2024 the ISO published <b>GQL</b> — the first new ISO database language since SQL — essentially standardizing Cypher-style property-graph patterns, so the vendor dialects are finally converging.</p>
+    <pre class="code"><span class="c">-- the same "≤3 hops" in SQL, for contrast: a recursive CTE — one more self-JOIN per level</span>
+WITH RECURSIVE reach(id, depth) AS (
+  SELECT friend_id, 1 FROM follows WHERE user_id = 42
+  UNION
+  SELECT f.friend_id, r.depth + 1
+  FROM reach r JOIN follows f ON f.user_id = r.id   <span class="c">-- index seek per row, log(table) each</span>
+  WHERE r.depth &lt; 3
+)
+SELECT DISTINCT id FROM reach;</pre>
+  </div>
+
+  <!-- ===== 3. USE CASES ===== -->
+  <div class="card" id="usecases">
+    <h2>3 · Use cases — when the graph is the answer</h2>
+
+    <div class="recipe">
+      <div class="rh">🕵️ Fraud rings — pattern matching in real time</div>
+      Fraudsters reuse infrastructure: the same device, drop address, or card shows up behind "unrelated" accounts. Model users, devices, addresses, cards as nodes; sharing as relationships. A new signup that closes a <b>cycle</b> — two accounts, one device, one payout address — is a ring, and the check is a bounded pattern match at insert time, in milliseconds. In SQL this is a pile of self-joins that grows with every new attribute type; in a graph it's one query shaped like the crime.
+      <div class="why">Why a graph: the signal <i>is</i> the topology (cycles, shared hubs), depth varies, and it must run synchronously on the write path.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🤝 Recommendations — collaborative traversal</div>
+      "Users who bought X also bought…" is a 2–3 hop walk: from the product, to its buyers, to what else they bought, weighted by how often each item recurs. Depth 2 works in SQL; the graph version stays fast when you enrich it — through brands, categories, or social edges — because each enrichment is another hop, not another JOIN in an already-groaning query.
+      <div class="why">Why a graph: the query grows by composition (add hop types), and latency stays tied to the local neighborhood you touch.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🧠 Knowledge graphs — entities and their web</div>
+      Companies, people, papers, drugs, ownership chains: heterogeneous entities with many relationship types, queried by shape ("the owner of the company that owns this subsidiary"). This is also the natural backing store for <b>GraphRAG</b>-style retrieval, where an LLM's context is assembled by walking typed relations rather than by similarity search alone.
+      <div class="why">Why a graph: schema flexibility (new edge types are cheap) plus variable-depth "chain of ownership" queries.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🔐 Authorization / ReBAC — "can U see D?" as reachability</div>
+      Relationship-based access control: <i>user → member-of → group → editor-of → folder → contains → doc</i>. A permission check is "does a path exist from U to D through allowed edge types?" — graph reachability with a depth bound. This is exactly the model Google's Zanzibar formalized as relation tuples (see deep dive 3 for why Google then <i>didn't</i> use a graph database for it).
+      <div class="why">Why a graph: policies nest (groups in groups), so depth is unknown at design time.</div>
+    </div>
+
+    <h3>When a graph DB is the WRONG answer</h3>
+    <table class="cmd-tbl">
+      <tr><td>fixed ≤2 hops</td><td>"User and their orders", "post and its comments" — JOINs with indexes are perfect, and you keep SQL's ecosystem, optimizer maturity, and your team's fluency.</td></tr>
+      <tr><td>whole-graph analytics</td><td>PageRank, community detection, connected components touch <b>every</b> node repeatedly — that's a batch scan workload, not pointer-chasing. Run it offline in Spark/Pregel-style engines and cache the result.</td></tr>
+      <tr><td>simple many-to-many</td><td>A tags table is not a "graph use case". If you never traverse <i>through</i> the relationship to a third entity, a join table is simpler and faster.</td></tr>
+      <tr><td>write-heavy firehose</td><td>Event ingestion at 10⁵+ writes/s: the single-leader write path becomes the wall (see §4). Land events in Kafka/OLTP first; project a graph view if you need one.</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 4. DISTRIBUTED SETUP ===== -->
+  <div class="card" id="distributed">
+    <h2>4 · Distributed setup — one strong box, many readers</h2>
+    <p>Neo4j — the reference implementation of this category — is <b>fully ACID</b>: real transactions, WAL, constraint enforcement. Clustering (the <i>causal cluster</i>) is a set of <b>core/primary servers running Raft</b> plus any number of <b>read replicas</b>. For a given database there is <b>one leader accepting writes</b>; a commit replicates to a majority of primaries, and replicas apply the log asynchronously. Reads scale out nicely — clients pass a <b>bookmark</b> so a replica can wait until it's caught up to your own writes (that's the "causal" part). Writes, however, funnel through one machine: <b>adding servers does not add write throughput</b>. You scale writes vertically, or you partition by hand (Neo4j's Fabric federates multiple databases — which is honest manual sharding, and cross-database traversal gives up the magic).</p>
+    <p>Why not just shard automatically, like every other database on this site? Because a graph is the pathological case for sharding. Rows shard cleanly when they're independent; graph edges exist precisely to make data <i>dependent</i>. Systems that do distribute the graph — <b>JanusGraph</b> over Cassandra/HBase, <b>Neptune</b>, TigerGraph — store adjacency in a partitioned backend, and pay for it: any hop that crosses a partition is a <b>network round trip</b>, and deep traversals become chains of RPCs. The pointer-chase that cost ~100 ns in one process costs ~0.5–1 ms across machines — four orders of magnitude, per hop.</p>
+    <div class="note gotcha"><b>The gotcha to volunteer before they ask:</b> "a graph database is the <i>opposite</i> of Cassandra: reads that ricochet unpredictably across the dataset, writes through a single leader. I'd size it as one beefy, RAM-rich box with read replicas — and if the requirements say horizontal write scaling on graph-shaped data, that's my cue to talk about TAO/Zanzibar-style designs instead of a bigger Neo4j."</div>
+  </div>
+
+  <!-- ===== 5. INTERACTIVE ===== -->
+  <div class="card" id="play">
+    <h2>5 · 🎛 Play with it — the hops-vs-JOINs race</h2>
+    <p class="small muted" style="margin-top:0">A 24-person social graph with one <b>⭐ celebrity (Cee)</b> connected to half of it. Pick a start node and a depth, then run the friends-of-friends query. The BFS frontier lights up hop by hop, and two cost meters race: the <b>graph engine</b> counts adjacency entries scanned (pointer chases); the <b>relational engine</b> counts index page-touches for the same query written as JOINs. Traversal mechanics (BFS itself) live in <a href="ds-graphs.html">the graphs data-structure page</a> — here we're racing storage engines.</p>
+    <div class="row" style="margin-bottom:10px">
+      <label class="fld">start node
+        <select id="startSel">
+          <option value="0">Ava — 3 friends, celeb 2 hops away</option>
+          <option value="23">Zoe — periphery, 1 friend</option>
+          <option value="11">Leo — friends with ⭐ Cee</option>
+        </select>
+      </label>
+      <label class="fld">depth — <span id="depthVal">2</span> hop(s)
+        <input type="range" id="depthSel" min="1" max="3" value="2" style="width:140px">
+      </label>
+      <button class="btn" id="runBtn">🔍 Find friends-of-friends</button>
+      <button class="btn ghost" id="gResetBtn">↺ Reset</button>
+    </div>
+    <div class="stage" style="padding:10px" id="gStage"><div id="gSvg"></div>
+      <div class="row small muted" style="gap:14px;margin-top:6px;justify-content:center">
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--accent2)"></span> start</span>
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--accent)"></span> hop 1</span>
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--ok)"></span> hop 2</span>
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--warn)"></span> hop 3</span>
+        <span>⭐ = supernode (degree 12 — half the graph)</span>
+      </div>
+    </div>
+    <div class="row" id="gCounters" style="margin-top:12px"></div>
+    <div class="explain" id="gExplain">Pick <b>Ava</b>, depth 1, and run it. Then walk the steps on the right — the lesson is in comparing runs.</div>
+    <div class="cols" style="margin-top:12px">
+      <div><h3>Event log</h3><div class="log" id="gLog"></div></div>
+      <div><h3>What to try</h3>
+        <ol class="steps small">
+          <li>Ava · depth 1 → 3 pointer hops vs ~19 page-touches. At toy size it's a tie — read the footnote before trusting either number.</li>
+          <li>Ava · depth 2 → ⭐ Cee gets <b>found</b> (she's 2 hops out) but not yet expanded. Costs stay modest.</li>
+          <li>Ava · depth 3 → the frontier now <b>expands</b> Cee: all 12 of her entries scanned at once. On a real graph this is the 50-million-edge celebrity.</li>
+          <li>Zoe · depth 3 → life on the periphery: tiny numbers. Hop cost tracks <b>local degree</b>, never total graph size — that's index-free adjacency in one run.</li>
+          <li>Leo · depth 2 → celebrity at hop 1; watch hop 2 dwarf every other same-depth run.</li>
+          <li>Now re-run any of these pretending the edge table has 10<sup>10</sup> rows: the GRAPH numbers would not change; the SQL multiplier becomes log₂ ≈ 33 per row instead of ~6.5. That asymmetry is the whole argument.</li>
+        </ol>
+      </div>
+    </div>
+    <p class="small muted" style="margin-top:10px"><b>The cost model, honestly:</b> the graph meter counts adjacency entries scanned — genuinely what index-free adjacency does. The SQL meter models each hop as a nested-loop index join: every matched row costs one B-tree descent ≈ log₂(90 edge-rows) ≈ 6.5 page-touches. Real planners batch better (hash/merge joins), and 90 rows fit in one page — at this size SQL is effectively identical, which is the fair-play point. What the model does capture is the <i>shape</i>: the relational term multiplies by log(table size) and re-plans per level, while the graph term only ever sees local degree.</p>
+  </div>
+
+  <!-- ===== 6. DEEP DIVES ===== -->
+  <div id="deep"></div>
+  <details class="fold">
+    <summary>🔍 Deep dive · Inside Neo4j — fixed-size records and linked-list relationships <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>How do you make "follow a pointer" a database primitive? Neo4j's classic store answers with a trick borrowed from arrays: <b>every record has a fixed size</b>, so record #N lives at byte offset N × size — no index needed to find it, just multiplication. In the classic format a node record is ~15 bytes and a relationship record ~34 bytes (small enough that hundreds of millions of them sit comfortably in the OS page cache). A node record holds a pointer to its <i>first</i> relationship; each relationship record holds prev/next pointers for <b>both</b> of its endpoints — so all relationships of a node form a <b>doubly-linked list threaded through the relationship store</b>, and one relationship record participates in two lists at once.</p>
+        <p>Traversal, then, is literally: multiply, read, chase, repeat. Enumerating Ava's followers never consults a B-tree; it walks her chain. This is also why the numbers on this page keep saying "proportional to local degree" — walking a chain of 40 relationships costs 40 reads whether the database holds a thousand relationships or ten billion.</p>
+        <p>The fine print worth knowing: chains mean <b>random access</b>. When the hot part of the graph fits in RAM, hops are ~100 ns pointer-chases and traversal throughput on the order of millions of hops/s per machine is realistic. When it doesn't fit, each hop is a potential page fault — random 8 KB reads, no sequential prefetch to save you — and performance falls off a <b>cliff</b> rather than a slope. Graph databases are the most RAM-hungry systems per byte of useful data on this site; capacity planning is "keep the working set cached", not "keep the disks big enough".</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Why graphs shard badly — min-cut, supernodes, and the network tax <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Sharding a table is easy because rows don't reference each other; hash the key and go. Sharding a graph means drawing a boundary through a web of edges, and every edge the boundary crosses turns a ~100 ns pointer-chase into a ~0.5–1 ms network hop. So the goal is to cut as few edges as possible while keeping shards balanced — and <b>balanced minimum-cut graph partitioning is NP-hard</b>. Production systems use heuristics (METIS-style offline partitioning, hash-by-vertex and hope), and real social graphs are small-world networks: well-connected everywhere, with no clean seams to cut along.</p>
+        <p>Then there's the <b>supernode</b>. Degree in real graphs is power-law distributed: most users have 200 edges; a celebrity has 50 million. A supernode wrecks everything at once — it won't fit in one partition's neighborhood, every second traversal passes through it, its adjacency list is a multi-megabyte read, and in the widget above you watched one 12-edge "celebrity" dominate a 24-node graph. Mitigations are all partial: cap degrees in the model, split the node by relationship type or time bucket (<code>FOLLOWS_2024_Q1</code>), keep <b>vertex-centric indexes</b> (JanusGraph's term: an index <i>within</i> one node's edge list, so "Cee's followers since March" doesn't scan 50 M entries), or precompute around it offline.</p>
+        <p>Distributed graph engines — JanusGraph on Cassandra, Neptune, TigerGraph — are real and useful, but be precise about what they buy: <b>capacity</b> (graphs bigger than one machine) and availability, not fast deep traversal. A 5-hop query whose hops each cross the network is a 5-RPC chain with fan-out; the latency math rarely beats a single big-RAM box until the graph simply can't fit. This is the honest engineering reason the biggest players changed the question instead — next fold.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · TAO &amp; Zanzibar — how FAANG serves graphs without graph databases <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>The strongest senior-signal fact on this page: <b>Facebook's social graph does not run on a graph database.</b> <b>TAO</b> (USENIX ATC '13) is a write-through, graph-<i>shaped</i> cache API over <b>sharded MySQL</b>. The API is deliberately tiny — <i>objects</i> (nodes) and <i>associations</i> (typed edges), with point reads and time-ordered one-hop range queries like "latest 50 likes of this post". No Cypher, no pattern matching — TAO doesn't even offer a two-hop query; friends-of-friends is composed by application code fanning out parallel one-hop calls. In exchange it serves on the order of <b>a billion reads per second</b> (against millions of writes/s), eventually consistent, across regions. The insight: at that scale the workload isn't "traverse arbitrarily", it's "render a feed" — overwhelmingly hot, shallow, cacheable one-hop reads. So they built a system for the <i>access pattern</i>, not for graphs in general.</p>
+        <p><b>Google Zanzibar</b> (ATC '19) tells the same story for permissions. Every ACL is a <b>relation tuple</b> — <code>doc:readme#viewer@user:ava</code> or "…@group:eng#member" — stored in <b>Spanner</b>, sharded like any other table. A permission check is graph reachability (can I get from the doc to the user through allowed relations?), answered by recursive tuple expansion with aggressive caching, plus a dedicated flattening index (<i>Leopard</i>) for deeply nested group-of-group membership. Order of 10 million checks/s with tail latencies in the low tens of ms — and consistency handled via <b>zookies</b> (opaque timestamps that prevent the "new enemy" problem: applying old ACLs to new content). Again: graph-shaped question, specialized sharded system, no graph database.</p>
+        <p>The lesson to say verbatim in an interview: <b>graph access patterns survive extreme scale; general graph traversal engines don't.</b> At planetary scale you constrain the query shape (1-hop reads, permission checks) and build on boring sharded storage. Graph databases win in the broad middle — datasets up to a few billion relationships, genuinely deep or pattern-shaped queries, and teams that want the query language to do the work.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Query traps — unbounded expansion and other self-inflicted wounds <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>The signature graph-DB outage is not a crash — it's <b>one query</b>. <code>MATCH (a)-[*]-&gt;(b)</code> with no depth bound asks for every path from <code>a</code>, and paths (unlike nodes) multiply combinatorially: a graph with average degree 40 has ~40³ three-hop paths and ~40⁶ six-hop paths from a single start. The engine dutifully materializes them until memory or your timeout gives out. House rules that prevent it: <b>always bound</b> variable-length patterns (<code>*1..4</code>), prefer <code>shortestPath</code> when you mean "are they connected", <code>LIMIT</code> aggressively, and run <code>PROFILE</code> looking at db-hits before anything ships. Neo4j lets you set transaction timeouts and memory limits per query — production clusters should.</p>
+        <p>Second trap: <b>DISTINCT-late</b>. A friends-of-friends pattern reaches the same person along many paths; if you aggregate at the end, you paid to walk every duplicate path. Filtering and deduplicating per level (or using node-visited semantics where the language allows) keeps the frontier a <i>set</i> — which is exactly what the widget above simulates, and why its numbers stay sane until the supernode shows up.</p>
+        <p>Third: <b>hot-path writes to a supernode</b>. Every "Cee gained a follower" write touches the same node's relationship chain; at celebrity fan-out rates that's a write hotspot on top of a read hazard. Feeds and counters belong in purpose-built systems (fan-out queues, counter stores); the graph keeps the relationship of record, not the firehose.</p>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== 7. AT SCALE ===== -->
+  <div class="card scale" id="scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Ballparks for capacity talk — quote orders of magnitude, not digits.</p>
+    <table class="cmd-tbl">
+      <tr><td>single instance</td><td>Neo4j comfortably holds <b>billions of nodes/relationships</b> on one RAM-rich machine; store-format limits stopped being the practical ceiling long ago — <b>page-cache hit rate</b> is. Plan RAM ≈ hot subgraph + indexes.</td></tr>
+      <tr><td>traversal speed</td><td>In-memory: on the order of <b>millions of hops/s per machine</b>; each hop ~100s of ns when cached. Falling out of RAM costs a random read per hop — <b>orders of magnitude</b> slower, and it arrives as a cliff, not a slope.</td></tr>
+      <tr><td>writes</td><td>Single Raft leader per database: cluster write throughput = <b>one machine's</b> — order of tens of thousands of small transactions/s on strong hardware. More core servers add durability and failover, <b>not</b> write capacity.</td></tr>
+      <tr><td>reads</td><td>Read replicas scale horizontally; async replication with <b>causal bookmarks</b> ("read your own writes") — cheap to add, the one dimension that scales linearly.</td></tr>
+      <tr><td>distributed hop tax</td><td>Cross-partition hop (JanusGraph/Neptune-style) ≈ <b>0.5–1 ms</b> vs ~100 ns in-process — roughly <b>10³–10⁴×</b> per hop. Deep traversals over partitions are latency chains, budget accordingly.</td></tr>
+      <tr><td>supernode math</td><td>Degree is power-law: median user ~10²–10³ edges, celebrity ~10⁷–10⁸. One supernode in a frontier multiplies that hop's cost by its degree — same effect you saw in the widget, times a million.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Failure modes to name:</b>
+      <b>unbounded pattern</b> (<code>[*]</code> with no cap materializes exponential paths — memory/timeout blowup from one bad query);
+      <b>supernode on the hot path</b> (reads scan its chain, writes contend on it);
+      <b>cache-miss cliff</b> (working set outgrows RAM → every hop faults → p99 detonates);
+      <b>write ceiling</b> (traffic growth meets the single leader; no config flag fixes it — it's the architecture);
+      <b>cross-shard chatter</b> (a "distributed graph" whose queries cross partitions turns O(hops) into O(hops) RPCs with fan-out).</div>
+  </div>
+
+  <!-- ===== 8. INTERVIEW ===== -->
+  <div class="card" id="interview">
+    <h2>8 · In the interview</h2>
+    <p><b>How it comes up:</b> rarely "design a graph database" — usually a domain that smells of edges: fraud detection, "people you may know", permissions with nested groups, knowledge graphs. The trap is jumping to Neo4j because the domain <i>sounds</i> graphy. Start relational, then earn the graph: <i>"if our deepest query is two fixed hops, this is a JOIN problem; the moment we need variable-depth traversal — fraud rings, nested groups — recursive SQL's cost grows with table size and depth, and I'd introduce a graph store for that path."</i></p>
+    <p><b>The choice script:</b> name the workload's <b>depth</b> and <b>variability</b> first. Fixed ≤2 hops → relational. Deep/variable/pattern-shaped, data up to a few billion edges → graph DB (one strong writer + read replicas; call out the write ceiling yourself). Whole-graph analytics → offline (Spark/Pregel), never the OLTP graph. Planet-scale but constrained shape → TAO/Zanzibar story: sharded storage + graph-shaped API, "access patterns survive, traversal engines don't." Saying the boundaries is the senior signal; any of the four answers without its boundary is a junior one.</p>
+    <h3>Alternatives — one line each</h3>
+    <table class="cmd-tbl">
+      <tr><td>Neo4j</td><td>The default property-graph DB: Cypher, ACID, causal cluster (Raft writers + read replicas). Weakness: single-leader write ceiling, RAM appetite.</td></tr>
+      <tr><td>AWS Neptune</td><td>Managed, multi-model (Gremlin + openCypher + SPARQL), storage-replicated across AZs. The "we're on AWS and want zero ops" pick.</td></tr>
+      <tr><td>JanusGraph</td><td>Open-source layer over Cassandra/HBase — graphs bigger than one box, at the price of per-hop network latency and serious ops.</td></tr>
+      <tr><td>TigerGraph</td><td>Distributed MPP graph aimed at deep-link <i>analytics</i> (10-hop queries over big graphs); GSQL; heavier, commercial.</td></tr>
+      <tr><td>Memgraph</td><td>In-memory, Cypher-compatible, aimed at real-time/streaming graph workloads on datasets that fit in RAM.</td></tr>
+      <tr><td>ArangoDB</td><td>Multi-model document+graph with one query language (AQL) — pragmatic when the graph is one facet of the data, not the center.</td></tr>
+      <tr><td>Postgres + RECURSIVE</td><td>The honest baseline: recursive CTEs handle bounded traversals on mid-size data with zero new infrastructure. Always mention it — often it wins.</td></tr>
+      <tr><td>Spark GraphX / Pregel</td><td>Offline whole-graph computation (PageRank, communities, embeddings). Batch, not a serving store — pair it with whatever serves online.</td></tr>
+    </table>
+    <div class="note info"><b>Phrases that score:</b> "at ≤2 fixed hops this is a join problem — I'd stay in Postgres" · "index-free adjacency: hop cost is local degree, not table size" · "writes don't scale out — one Raft leader; I'd size one strong box plus read replicas" · "sharding a graph is min-cut; every cut edge becomes a network hop" · "at Facebook scale this becomes TAO: sharded MySQL behind a one-hop graph API" · "I'd bound every variable-length pattern and PROFILE for db-hits before shipping".</div>
+  </div>
+
+  <!-- ===== 9. CHECK YOURSELF ===== -->
+  <div class="card" id="check">
+    <h2>9 · Check yourself</h2>
+    <details class="qa">
+      <summary>Why is "friends of friends of friends" expensive in SQL but cheap in a graph database?</summary>
+      <div class="a"><p>SQL reconstructs each relationship at query time: every hop is a self-JOIN whose index lookups cost ~log(edge-table size) per row, the frontier multiplies per level, and variable depth forces a recursive CTE the optimizer handles poorly. A graph DB materialized the relationships at write time — <b>index-free adjacency</b> — so each hop is pointer-chasing proportional to <b>local degree only</b>. The graph's cost tracks data touched; SQL's carries a factor of data owned. (Fair-play caveat: at 1–2 fixed hops with good indexes, SQL is entirely fine.)</p></div>
+    </details>
+    <details class="qa">
+      <summary>Interviewer: "Our graph is huge — we'll just shard Neo4j by user ID." What goes wrong?</summary>
+      <div class="a"><p>Edges don't respect hash boundaries: with random sharding, most edges cross shards, and each cross-shard hop becomes an RPC (~ms) instead of a pointer-chase (~100 ns). Doing better means minimizing cut edges under balance constraints — <b>NP-hard</b>, and heuristics still lose to power-law supernodes whose neighborhoods span every shard. That's why Neo4j scales writes vertically (single Raft leader), why JanusGraph/Neptune accept per-hop network cost for capacity, and why FAANG-scale systems constrain the query shape instead (TAO's one-hop API).</p></div>
+    </details>
+    <details class="qa">
+      <summary>Why does Facebook — the graph company — not run the social graph on a graph database?</summary>
+      <div class="a"><p>Because the workload at that scale is not general traversal — it's billions of hot, shallow, cacheable reads: "latest 50 likes", "does Ava follow Ben". <b>TAO</b> serves exactly that: objects + associations over sharded MySQL with a massive cache tier, one-hop queries only, eventual consistency; multi-hop is composed in application code. The interview lesson: at extreme scale you keep the graph <i>access pattern</i> and drop the general traversal engine. Graph DBs shine at mid-scale with genuinely deep, variable queries.</p></div>
+    </details>
+    <details class="qa">
+      <summary>When is Postgres the right "graph database"?</summary>
+      <div class="a"><p>When traversals are bounded and moderate: <code>WITH RECURSIVE</code> handles org charts, category trees, 2–3-hop recommendations on millions of rows perfectly well — with zero new infrastructure, real transactions joining graph and non-graph data, and your team's existing fluency. Reach for a real graph DB when depth is variable/deep, queries are pattern-shaped (cycles), latency is tight, or the traversal is the product. Offering the Postgres baseline first is a credibility move, not a concession.</p></div>
+    </details>
+    <details class="qa">
+      <summary>A celebrity node has 50 M edges. What breaks, and what do you do about it?</summary>
+      <div class="a"><p>Any traversal whose frontier touches the celebrity scans a 50 M-entry adjacency chain — one node multiplies a hop's cost by ~10⁵× the median; writes contend on the same chain. Mitigations: bound and filter patterns so supernodes aren't expanded (traverse <i>to</i> them, not <i>through</i> them); split the node by edge type/time bucket; vertex-centric indexes (JanusGraph) to range-scan within an edge list; precompute celebrity-adjacent results offline; and keep firehose workloads (feed fan-out, counters) out of the graph entirely.</p></div>
+    </details>
+  </div>
+
+  <p class="small muted">Sources: this page condenses the Neo4j documentation and the O'Reilly <i>Graph Databases</i> book (storage internals), "TAO: Facebook's Distributed Data Store for the Social Graph" (USENIX ATC '13), "Zanzibar: Google's Consistent, Global Authorization System" (USENIX ATC '19), and ISO GQL (2024). Performance figures are order-of-magnitude interview ballparks — measure before quoting in production.</p>
+</div>
+
+<script src="site.js"></script>
+<script>
+/* ===== Hops-vs-JOINs race: BFS over a fixed 24-node social graph ===== */
+const NODES = [ // [name, x, y] — index = id
+  ['Ava',140,95],['Ben',75,170],['Cara',205,165],['Dan',105,255],['Eli',200,315],
+  ['Fay',275,75],['Gus',300,235],['Hana',295,330],['Ivy',500,55],['Jay',590,95],
+  ['Kim',675,55],['Leo',487,148],['Mia',655,150],['Ned',568,205],['Ola',675,240],
+  ['Pia',480,295],['Quin',563,330],['Rex',652,305],['Sam',595,375],['Tia',495,372],
+  ['Uma',678,368],['Cee',395,185],['Yui',60,330],['Zoe',45,75]
+];
+const EDGES = [
+  [0,1],[0,2],[0,5],[1,2],[1,3],[1,23],[2,4],[2,6],[3,4],[3,22],[4,7],[4,22],[5,6],[6,7],
+  [8,9],[8,11],[9,10],[9,13],[10,12],[11,13],[12,13],[12,14],[13,14],
+  [15,16],[15,19],[16,17],[16,18],[17,20],[18,19],[18,20],
+  [5,8],[7,15],[14,17],
+  [21,2],[21,3],[21,5],[21,6],[21,7],[21,8],[21,9],[21,11],[21,13],[21,15],[21,16],[21,19]
+];
+const CELEB = 21;
+const ROWS  = EDGES.length * 2;            // friendship stored as 2 directed rows
+const LOG2E = Math.log2(ROWS);             // ≈ 6.5 — B-tree descent cost per row
+const ADJ = NODES.map(() => []);
+const EIDX = {};
+EDGES.forEach((e, i) => {
+  ADJ[e[0]].push(e[1]); ADJ[e[1]].push(e[0]);
+  EIDX[Math.min(e[0],e[1]) + '-' + Math.max(e[0],e[1])] = i;
+});
+const LV_COL = ['var(--accent2)','var(--accent)','var(--ok)','var(--warn)'];
+
+let G = null, gTimers = [];
+const g$ = id => document.getElementById(id);
+
+function gState(){ return { levels:{}, lit:{}, g:0, r:0, found:0, hops:0, running:false }; }
+
+function gLogLine(cls, msg){
+  const d = document.createElement('div');
+  d.className = 'l ' + cls; d.textContent = msg;
+  g$('gLog').appendChild(d); g$('gLog').scrollTop = g$('gLog').scrollHeight;
+}
+function gExplain(html){ g$('gExplain').innerHTML = html; }
+
+function renderG(){
+  let s = '<svg viewBox="0 0 720 400" xmlns="http://www.w3.org/2000/svg" style="width:100%;display:block">';
+  EDGES.forEach((e, i) => {
+    const a = NODES[e[0]], b = NODES[e[1]], on = G.lit[i];
+    s += '<line x1="'+a[1]+'" y1="'+a[2]+'" x2="'+b[1]+'" y2="'+b[2]+'" style="stroke:'
+       + (on ? 'var(--accent)' : 'var(--line)') + ';stroke-width:' + (on ? 2.2 : 1.1) + '"/>';
+  });
+  NODES.forEach((n, i) => {
+    const lv = G.levels[i], vis = lv !== undefined;
+    const r = i === CELEB ? 14 : 9.5;
+    const fill = vis ? LV_COL[Math.min(lv, 3)] : 'var(--panel)';
+    s += '<circle cx="'+n[1]+'" cy="'+n[2]+'" r="'+r+'" style="fill:'+fill+';stroke:'
+       + (vis ? fill : 'var(--line)') + ';stroke-width:1.5"/>';
+    if (vis) s += '<text x="'+n[1]+'" y="'+(n[2]+3.5)+'" text-anchor="middle" style="font:700 9px sans-serif;fill:#fff">'
+       + (lv === 0 ? 'S' : lv) + '</text>';
+    const ly = n[2] > 350 ? n[2] - (r + 6) : n[2] + r + 12;
+    s += '<text x="'+n[1]+'" y="'+ly+'" text-anchor="middle" style="font:600 10px sans-serif;fill:'
+       + (vis ? 'var(--txt)' : 'var(--muted)') + '">' + (i === CELEB ? '⭐' : '') + n[0] + '</text>';
+  });
+  s += '</svg>';
+  g$('gSvg').innerHTML = s;
+
+  g$('gCounters').innerHTML =
+    '<div class="node" style="min-width:200px"><div class="title">🧭 Graph engine</div>'
+    + '<div class="kv"><span class="k">adjacency entries scanned</span><span>' + G.g + '</span></div>'
+    + '<div class="small muted">cost ∝ edges actually touched</div></div>'
+    + '<div class="node" style="min-width:200px"><div class="title">🗄 Relational JOINs</div>'
+    + '<div class="kv ' + (G.r > 150 ? 'stale' : '') + '"><span class="k">index page-touches</span><span>' + Math.round(G.r) + '</span></div>'
+    + '<div class="small muted">≈ rows × log₂(' + ROWS + ' rows) ≈ ×' + LOG2E.toFixed(1) + '</div></div>'
+    + '<div class="node"><div class="title">🎯 Result</div>'
+    + '<div class="kv"><span class="k">people found</span><span>' + G.found + '</span></div>'
+    + '<div class="kv"><span class="k">hops done</span><span>' + G.hops + '</span></div></div>';
+
+  g$('runBtn').disabled = G.running;
+}
+
+function applyHop(st){
+  st.lit.forEach(i => { G.lit[i] = 1; });
+  st.next.forEach(n => { G.levels[n] = st.h; });
+  G.g += st.scanned; G.r += st.scanned * LOG2E; G.found += st.next.length; G.hops = st.h;
+  if (st.celeb) gLogLine('warn', 'hop ' + st.h + ': frontier expands ⭐Cee — all ' + ADJ[CELEB].length
+    + ' of her adjacency entries get scanned. Now imagine 50,000,000.');
+  gLogLine('info', 'hop ' + st.h + ': expand ' + st.fs + ' node(s) → scan ' + st.scanned
+    + ' adjacency entries → ' + st.next.length + ' new people');
+  gLogLine('t', '   SQL: JOIN #' + st.h + ' ≈ ' + st.scanned + ' matched rows × log₂(' + ROWS + ')≈'
+    + LOG2E.toFixed(1) + ' → +' + Math.round(st.scanned * LOG2E) + ' page-touches');
+  renderG();
+}
+
+function finishRun(start, depth){
+  G.running = false;
+  const ratio = G.g ? (G.r / G.g).toFixed(1) : '—';
+  gLogLine('ok', 'done: graph ' + G.g + ' vs SQL ≈' + Math.round(G.r) + ' (×' + ratio + ') — and that ×' + ratio
+    + ' is with a ' + ROWS + '-row table; at 10¹⁰ rows the multiplier is log₂ ≈ 33');
+  gExplain('<b>' + NODES[start][0] + ', depth ' + depth + ':</b> ' + G.found + ' people reached. Graph cost <b>' + G.g
+    + '</b> never depends on table size — only on the edges touched. The SQL estimate <b>' + Math.round(G.r)
+    + '</b> multiplies every row by log₂(table); grow the table, grow the bill. '
+    + (G.levels[CELEB] !== undefined && G.levels[CELEB] < depth
+        ? 'And this run <b>expanded the supernode</b> — one node dominated the whole cost.'
+        : 'Try a run that expands ⭐Cee to watch one node dominate the cost.'));
+  renderG();
+}
+
+function runG(){
+  if (G && G.running) return;
+  gTimers.forEach(clearTimeout); gTimers = [];
+  G = gState(); G.running = true;
+  const start = +g$('startSel').value, depth = +g$('depthSel').value;
+  G.levels[start] = 0;
+  gLogLine('cmd', 'MATCH (a {name:"' + NODES[start][0] + '"})-[:FRIEND*1..' + depth + ']-(b) RETURN DISTINCT b');
+  // precompute BFS levels (deterministic), then reveal hop by hop
+  const steps = [];
+  let frontier = [start];
+  const seen = {}; seen[start] = 1;
+  for (let h = 1; h <= depth; h++){
+    let scanned = 0, celeb = false; const lit = [], next = [];
+    for (const f of frontier){
+      if (f === CELEB) celeb = true;
+      scanned += ADJ[f].length;
+      for (const nb of ADJ[f]){
+        lit.push(EIDX[Math.min(f, nb) + '-' + Math.max(f, nb)]);
+        if (!seen[nb]){ seen[nb] = 1; next.push(nb); }
+      }
+    }
+    steps.push({ h, scanned, lit, next, fs: frontier.length, celeb });
+    frontier = next;
+    if (!next.length) break;
+  }
+  steps.forEach((st, i) => { gTimers.push(setTimeout(() => applyHop(st), 650 + i * 1100)); });
+  gTimers.push(setTimeout(() => finishRun(start, depth), 650 + steps.length * 1100));
+  renderG();
+}
+
+function resetG(){
+  gTimers.forEach(clearTimeout); gTimers = [];
+  G = gState();
+  g$('gLog').innerHTML = '';
+  gLogLine('t', 'reset — ' + NODES.length + ' users, ' + EDGES.length + ' friendships ('
+    + ROWS + ' edge-rows relational-side, log₂ ≈ ' + LOG2E.toFixed(1) + '). ⭐Cee has degree ' + ADJ[CELEB].length + '.');
+  gExplain('Pick <b>Ava</b>, depth 1, and run it. Then walk the steps on the right — the lesson is in comparing runs.');
+  renderG();
+}
+
+g$('runBtn').onclick = runG;
+g$('gResetBtn').onclick = resetG;
+g$('depthSel').oninput = () => { g$('depthVal').textContent = g$('depthSel').value; };
+
+resetG();
+</script>
+</body>
+</html>

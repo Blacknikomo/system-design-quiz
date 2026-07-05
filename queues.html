@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Message Queues (RabbitMQ &amp; SQS) — Deep Dive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap art">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>📬 Message Queues — RabbitMQ &amp; SQS</h1>
+      <div class="sub">The classic work queue: competing consumers, acks, visibility timeouts, dead letters — and why it is <i>not</i> a Kafka replacement (nor the other way around). <span class="rt">☕ ~15 min read</span></div>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">at-least-once</span>
+      <span class="tag">destructive read</span>
+      <span class="tag">competing consumers</span>
+      <span class="tag">visibility timeout</span>
+      <span class="tag">DLQ</span>
+    </div>
+    <p class="lead">A message queue is a <b>to-do list shared by workers</b>. Producers drop tasks in; each task is handed to <b>exactly one</b> worker; when the worker confirms it's done, the task is gone forever. That single design decision — <i>consumed means deleted</i> — is what separates queues (RabbitMQ, SQS) from logs (Kafka), and it drives every property on this page.</p>
+    <div class="note info"><b>In the interview:</b> reach for a queue whenever you say the words <i>"process this asynchronously"</i> — sending emails, resizing images, running payments, crawling URLs. The interviewer then expects you to handle, unprompted: <b>duplicate deliveries</b> (at-least-once), <b>poison messages</b> (DLQ), <b>backpressure</b> (queue depth), and <b>ordering</b> (or the lack of it).</div>
+  </div>
+
+  <div class="card">
+    <h3>On this page</h3>
+    <div class="toc">
+      <a href="#model">Mental model</a>
+      <a href="#api">Syntax &amp; API</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#distributed">Distributed setup</a>
+      <a href="#play">🎛 Play with it</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#scale">At scale</a>
+      <a href="#interview">In the interview</a>
+      <a href="#check">Check yourself</a>
+    </div>
+  </div>
+
+  <!-- ===== 1. MENTAL MODEL ===== -->
+  <div class="card" id="model">
+    <h2>1 · The mental model: a shared to-do list</h2>
+    <p>Imagine a busy kitchen. Orders come in from waiters (producers) faster than any single cook can handle. So the orders go onto a spike — a queue — and each of five cooks (consumers) grabs the next ticket when free. Two things make this work: the ticket <b>leaves the spike</b> when grabbed (no two cooks fry the same steak), and if a cook faints mid-dish, the ticket must somehow <b>get back on the spike</b> (no order is silently lost).</p>
+    <p>Every queue system is an implementation of those two guarantees, and the second one is where all the interesting engineering lives. The broker can't see inside your worker. All it knows is: <i>"I handed message #42 to consumer B, and B never confirmed."</i> Did B crash before doing the work? After doing the work but before confirming? The broker <b>cannot distinguish these cases</b> — so it redelivers, and your system must tolerate a task being executed twice. That is the famous <b>at-least-once delivery</b>, and it isn't a bug or a cut corner: it is a mathematical consequence of unreliable networks (the Two Generals problem wearing a work apron).</p>
+    <p>The two systems worth naming in an interview sit at opposite ends of the ops spectrum:</p>
+    <p><b>RabbitMQ</b> — a self-hosted, feature-rich broker (Erlang, speaks AMQP). Its superpower is <b>routing</b>: producers publish to an <i>exchange</i>, and the exchange copies the message into queues based on binding rules — direct match, wildcard topics, or broadcast. The broker <i>pushes</i> messages to connected consumers and tracks per-message acknowledgements.</p>
+    <p><b>Amazon SQS</b> — a fully managed queue behind a plain HTTPS API. No servers, no partitions to size, effectively no throughput ceiling on standard queues. Consumers <i>poll</i> for messages; each received message becomes invisible for a <b>visibility timeout</b>, and is deleted only when the consumer explicitly says so. If the delete never comes — the message reappears. That one mechanism replaces acks, redelivery and crash-detection in one move.</p>
+    <div class="note warn"><b>Queue vs log — the one-sentence test.</b> If every consumer <i>competes</i> to grab the next unit of work → queue (RabbitMQ/SQS). If several independent readers each need the <i>whole stream</i>, possibly re-read from the past → log (Kafka). A queue forgets a message the moment it's processed; a log remembers it for the retention window regardless of who read it.</div>
+  </div>
+
+  <!-- ===== 2. SYNTAX ===== -->
+  <div class="card" id="api">
+    <h2>2 · Syntax &amp; core API</h2>
+    <p>You won't write code in a system-design round, but fluently naming the operations signals hands-on experience. The vocabulary differs; the concepts map 1:1.</p>
+
+    <h3>RabbitMQ (AMQP model)</h3>
+    <table class="cmd-tbl">
+      <tr><td>exchange</td><td>Where producers publish. Types: <b>direct</b> (exact routing-key match), <b>topic</b> (wildcard match, <code>order.*.eu</code>), <b>fanout</b> (copy to every bound queue), <b>headers</b> (rare).</td></tr>
+      <tr><td>queue ← binding</td><td>A queue subscribes to an exchange with a binding key. One message can be copied into many queues (that's the fan-out) but <b>within</b> one queue it goes to exactly one consumer.</td></tr>
+      <tr><td>basic.publish</td><td>Send to an exchange with a routing key. <code>persistent: true</code> to survive broker restart (with a durable queue).</td></tr>
+      <tr><td>basic.consume / basic.ack</td><td>Broker pushes messages; consumer explicitly acks each one. Unacked + dropped connection ⇒ redelivery to someone else.</td></tr>
+      <tr><td>basic.nack / reject</td><td>Refuse a message: <code>requeue=true</code> (try again) or <code>false</code> (drop / dead-letter it).</td></tr>
+      <tr><td>basic.qos (prefetch)</td><td>"Give me at most N unacked messages at a time." <b>The</b> backpressure knob — prevents one consumer from hoarding the queue.</td></tr>
+      <tr><td>x-dead-letter-exchange</td><td>Queue argument: rejected/expired messages get republished to this exchange → your DLQ.</td></tr>
+      <tr><td>publisher confirms</td><td>Broker-side ack <i>to the producer</i> that the message is safely enqueued — the publish-side half of at-least-once.</td></tr>
+    </table>
+    <pre class="code"><span class="c"># declare topology (idempotent), then consume — amqplib-style pseudocode</span>
+ch.assertExchange('orders', 'topic')
+ch.assertQueue('email-worker', { durable: true, arguments: { 'x-queue-type': 'quorum' } })
+ch.bindQueue('email-worker', 'orders', 'order.created.*')
+ch.prefetch(10)                              <span class="c">// ≤10 unacked in flight</span>
+ch.consume('email-worker', msg =&gt; {
+  sendEmail(msg)                             <span class="c">// do the work FIRST…</span>
+  ch.ack(msg)                                <span class="c">// …confirm LAST</span>
+})
+ch.publish('orders', 'order.created.eu', body, { persistent: true })</pre>
+
+    <h3>SQS (HTTP API)</h3>
+    <table class="cmd-tbl">
+      <tr><td>SendMessage</td><td>Enqueue (batch up to 10). <code>DelaySeconds</code> ≤ 15 min for scheduled-ish delivery.</td></tr>
+      <tr><td>ReceiveMessage</td><td>Poll up to 10 messages. <code>WaitTimeSeconds: 20</code> = long polling — do this always; short polling burns money and misses messages on sparse queues.</td></tr>
+      <tr><td>(visibility timeout)</td><td>Received message is hidden, <b>not deleted</b> — default 30 s, max 12 h. Nobody else sees it while you work.</td></tr>
+      <tr><td>DeleteMessage</td><td>The "ack": pass the <code>ReceiptHandle</code> from this receive. No delete before timeout ⇒ message reappears.</td></tr>
+      <tr><td>ChangeMessageVisibility</td><td>Heartbeat for long jobs: extend the timeout while still working.</td></tr>
+      <tr><td>RedrivePolicy</td><td><code>maxReceiveCount</code> per queue: after N failed receives the message moves to the configured DLQ automatically.</td></tr>
+    </table>
+    <pre class="code"><span class="c"># the whole consumer lifecycle in three calls</span>
+aws sqs receive-message --queue-url $Q --wait-time-seconds 20 --max-number-of-messages 10
+<span class="c"># …process each message; then, per message:</span>
+aws sqs delete-message --queue-url $Q --receipt-handle $H
+<span class="c"># job takes longer than expected? extend the lock:</span>
+aws sqs change-message-visibility --queue-url $Q --receipt-handle $H --visibility-timeout 600</pre>
+  </div>
+
+  <!-- ===== 3. USE CASES ===== -->
+  <div class="card" id="usecases">
+    <h2>3 · Use cases — when a queue is the answer</h2>
+
+    <div class="recipe">
+      <div class="rh">🖼 Offload slow work from the request path</div>
+      The canonical use. User uploads a video → API stores the blob, enqueues <code>{videoId}</code>, returns 202 in 50 ms. A fleet of transcoder workers chews through the queue at its own pace. The user-facing latency no longer depends on the heaviest job in the system.
+      <div class="why">Why a queue: retries, crash-safety and worker autoscaling come for free; the API tier stays stateless.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🌊 Buffer spiky writes (load leveling)</div>
+      Flash sale: 50k orders/min for 10 minutes, but payment provider handles 5k/min. The queue absorbs the spike; workers drain it at the sustainable rate. Queue depth becomes your honest, real-time overload signal.
+      <div class="why">Why a queue: it converts "we fall over at peak" into "p99 completion time grows at peak" — a much better failure mode.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">💀 Retry + dead-letter pipeline</div>
+      Payment webhook processing fails on 0.1% of messages (malformed payloads, downstream 500s). With <code>maxReceiveCount: 3</code> + DLQ, poison messages quarantine themselves instead of blocking the queue, and an alarm on DLQ depth pages a human.
+      <div class="why">Why a queue: the retry loop is broker-side — your worker code stays a straight line.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">📣 Fan-out to many independent workers — SNS + SQS</div>
+      One <code>order.created</code> event must trigger email, analytics, and inventory — three services with different speeds and failure modes. SQS alone can't fan out (one queue = one delivery); the AWS idiom is <b>SNS topic → one SQS queue per subscriber</b>. In RabbitMQ, a <b>fanout/topic exchange bound to several queues</b> does the same in-broker.
+      <div class="why">Why this shape: each subscriber gets its own retry/DLQ/backlog, so a slow consumer never starves a fast one.</div>
+    </div>
+
+    <h3>When a queue is the WRONG answer</h3>
+    <table class="cmd-tbl">
+      <tr><td>replay / audit</td><td>"Re-run yesterday's events through the new fraud model" — impossible; consumed messages are <b>gone</b>. You want Kafka's retained log.</td></tr>
+      <tr><td>many readers of one stream</td><td>Five teams each want every event. A queue delivers each message once <i>total</i>; you'd need SNS fan-out duct tape. Kafka consumer groups solve exactly this.</td></tr>
+      <tr><td>strict global ordering</td><td>Queues + retries + parallel consumers reorder freely. FIFO modes exist but cap throughput (see deep dive). Per-key ordering at scale → Kafka partitions.</td></tr>
+      <tr><td>request/response</td><td>If the caller waits for the result, that's RPC (gRPC/HTTP) — putting a queue in the middle just adds latency and failure modes.</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 4. DISTRIBUTED SETUP ===== -->
+  <div class="card" id="distributed">
+    <h2>4 · Distributed setup — what "running it for real" means</h2>
+    <p><b>RabbitMQ:</b> you run a <b>cluster of 3 or 5 nodes</b> (odd, because modern replicated queues use <b>Raft</b>). Exchange/binding metadata lives on every node. The queues themselves are the interesting part: a <b>quorum queue</b> is replicated across nodes with a Raft leader — a write is confirmed once a <b>majority</b> has it, so losing a minority of nodes loses nothing and failover is automatic. The older <i>classic mirrored queues</i> had ugly split-brain semantics and are deprecated/removed in RabbitMQ 4.x — mentioning "quorum queues, because mirrored queues were unsafe on partition" is a nice senior-level flex. For WAN links you don't stretch a cluster; you use <b>federation/shovel</b> to relay between clusters.</p>
+    <p><b>SQS:</b> there is no cluster to design — that's the point. Messages are stored redundantly across <b>multiple AZs</b>, and the service shards internally to give standard queues <b>practically unlimited throughput</b>. The costs of that elasticity are the two properties people forget: standard queues are <b>best-effort ordering</b> (messages can arrive out of order) and <b>at-least-once</b> (occasionally a duplicate <i>even without</i> a consumer crash — the redundant storage layer itself may double-deliver on an internal failover).</p>
+    <div class="note gotcha"><b>The universal gotcha — at-least-once is contagious.</b> Whatever the broker promises, your <i>system</i> is at-least-once end-to-end: producers retry on ambiguous timeouts (duplicate enqueue), brokers redeliver on missing acks (duplicate delivery). So the consumer must be <b>idempotent</b> — dedupe on a business key (<code>orderId</code>), use conditional writes, or make the operation naturally idempotent ("set status=paid" not "increment balance"). Say this before the interviewer asks.</div>
+  </div>
+
+  <!-- ===== 5. INTERACTIVE ===== -->
+  <div class="card" id="play">
+    <h2>5 · 🎛 Play with it — visibility timeout, redelivery &amp; DLQ</h2>
+    <p class="small muted" style="margin-top:0">An SQS-style queue with two workers. Messages are <b>hidden, not deleted</b>, while a worker holds them (⏳ = remaining visibility timeout, 3 ticks). Work takes 2 ticks, then the worker deletes the message. Crash a worker mid-job and watch the broker redeliver. A poison message fails forever — until <code>maxReceiveCount: 3</code> exiles it to the DLQ. Toggle FIFO to see head-of-line blocking.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn" id="sendBtn">➕ Send 3 messages</button>
+      <button class="btn sec" id="poisonBtn">☠️ Send poison message</button>
+      <button class="btn" id="tickBtn">⏭ Tick (advance time)</button>
+      <button class="btn warn" id="crashBtn">💥 Crash worker-2 mid-job</button>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="fifoChk"> FIFO mode (one group)</label>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="stage" id="stage"><div class="nodes" id="nodes"></div></div>
+    <div class="explain" id="explain">Send some messages, then press <b>Tick</b> a few times. Idle workers pull work automatically on each tick.</div>
+    <div class="cols" style="margin-top:12px">
+      <div><h3>Event log</h3><div class="log" id="log"></div></div>
+      <div><h3>What to try</h3>
+        <ol class="steps small">
+          <li>Send 3 → Tick → both workers grab one; the messages turn <span style="color:var(--warn)">⏳ in-flight</span>, not deleted.</li>
+          <li>Tick twice more → work done → <b>DeleteMessage</b> → gone for good.</li>
+          <li>Send 3 → Tick → 💥 Crash worker-2 → keep ticking: its message's timeout expires and it is <b>redelivered</b> (receive count grows).</li>
+          <li>☠️ Poison → it fails, redelivers, fails… third receive sends it to the <span style="color:var(--bad)">DLQ</span>.</li>
+          <li>FIFO on → send 3 + poison first: nothing behind the poison moves until it dead-letters — <b>head-of-line blocking</b>.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 6. DEEP DIVES ===== -->
+  <div id="deep"></div>
+  <details class="fold">
+    <summary>🔍 Deep dive · At-least-once, duplicates, and the idempotency tax <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Why can't the broker just deliver exactly once? Trace one crash: the worker receives message #42, charges the customer, and dies <i>one instruction before</i> the ack. The broker sees only "no ack". Redeliver → double charge. Don't redeliver → maybe the crash was <i>before</i> the charge, and the order is silently lost. With acknowledgement-based delivery over a lossy network, <b>you must choose</b>: at-least-once (redeliver) or at-most-once (don't). Queues choose at-least-once, because losing work is usually worse than repeating it.</p>
+        <p>"Exactly-once" in marketing copy means <b>exactly-once processing</b>, built from at-least-once delivery + deduplication. SQS FIFO dedupes on <code>MessageDeduplicationId</code> — but only within a <b>5-minute window</b>, and only against duplicate <i>sends</i>. A consumer crash after processing still causes a reprocess. The honest stack is: broker gives at-least-once; <b>your consumer supplies idempotency</b> — a dedup table keyed by business ID (insert-if-absent in the same transaction as the work), conditional writes, or naturally idempotent operations.</p>
+        <p>One more trap: <b>visibility timeout shorter than processing time</b>. Job takes 90 s, timeout is 30 s → at t+30 the broker assumes death and redelivers → two workers now run the same job <i>concurrently</i>, both eventually "succeed", and you've built a duplicate generator. Fix: timeout ≈ several × p99 processing time, plus a <code>ChangeMessageVisibility</code> heartbeat for long jobs.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Ordering — why FIFO costs you your throughput <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>A standard queue with parallel consumers <b>cannot</b> preserve order, and it's not sloppiness: worker A gets msg 1, worker B gets msg 2, B finishes first — order inverted. Add a redelivery (msg 1 crashes and returns 30 s later) and messages time-travel. Any system with retries + parallelism reorders; the only question is whether you care.</p>
+        <p>When you do care, you serialize — and serialization is the enemy of throughput. <b>SQS FIFO</b> queues make the trade explicit with <code>MessageGroupId</code>: strict order <i>within</i> a group, parallelism only <i>across</i> groups. One group = one worker at a time = one stuck message stalls everything behind it (<b>head-of-line blocking</b> — try it in the simulator). The design skill is choosing a group key with high cardinality but meaningful order: <code>userId</code>, <code>orderId</code>, <code>chatRoomId</code> — "per-user order" is almost always what the product actually needs, not global order.</p>
+        <p>RabbitMQ gives FIFO within a queue only for the happy path — one consumer, no requeues. A <code>nack(requeue=true)</code> puts the message back at the head-ish, redeliveries interleave, and with prefetch &gt; 1 across consumers, ordering is gone. Kafka's answer (order per partition via key hashing) is the same idea as message groups, scaled up — which is why "I need per-key ordering at 100k msg/s" is usually the moment to switch technologies.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · RabbitMQ internals — queues are processes, Raft replaced mirrors <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>RabbitMQ is an Erlang system, and it shows: <b>every queue is a single Erlang process</b> — an actor with a mailbox. That's the source of both its elegance and its scaling ceiling: one queue executes on roughly one CPU core, so a single queue tops out in the low tens of thousands of msg/s no matter how big the machine is. The idiomatic scale-out is <b>more queues</b> (per tenant, per shard, per priority), not a bigger queue — RabbitMQ happily runs hundreds of thousands of queues.</p>
+        <p><b>Replication history is an interview story in itself.</b> Classic <i>mirrored queues</i> replicated by shipping operations to mirrors, and on a network partition could lose acked messages or split-brain; the workarounds (<code>pause_minority</code>) traded availability to duck the problem. <b>Quorum queues</b> (3.8+) rebuilt replication on <b>Raft</b>: a publish is confirmed only after a majority of replicas persist it, leader failover is safe by construction, and the cost is honest — higher latency per message and memory/disk for the log. Mirrored queues are gone in 4.x; if you say "RabbitMQ replication" in 2026, you mean quorum queues.</p>
+        <p>Two more mechanisms worth naming: <b>credit-based flow control</b> — a fast publisher is throttled (its connection literally blocks) when queues or memory fall behind, which surprises teams expecting "fire and forget"; and <b>memory alarms</b> — past a watermark the broker blocks <i>all</i> publishers until consumers drain the backlog. Both are RabbitMQ choosing to slow producers rather than die — but it means a huge backlog degrades the whole broker, not just one queue. Deep backlogs are Kafka's home turf, not RabbitMQ's.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Backpressure, DLQ hygiene &amp; retry design <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p><b>Queue depth is the most honest metric in your system.</b> Latency dashboards lie under load; the integral of (arrival rate − service rate) doesn't. Alert on depth <i>and</i> on <b>oldest-message age</b> (SQS: <code>ApproximateAgeOfOldestMessage</code>) — depth alone misses a stuck FIFO group, age catches it. Autoscale workers on depth-per-worker; scale <i>in</i> slowly to avoid flapping.</p>
+        <p><b>Retries need a budget and spacing.</b> Immediate requeue on failure = a hot loop hammering the same broken dependency. The pattern: retry with <b>exponential backoff</b> by routing failures through delay — SQS: per-message <code>DelaySeconds</code> on re-send, or tiered retry queues (retry-1m, retry-10m); RabbitMQ: a TTL'd retry queue whose DLX points back at the work queue (messages "cook" in the retry queue, then reappear). After N attempts → <b>DLQ</b>.</p>
+        <p><b>A DLQ without a process is a landfill.</b> The senior answer covers: an alarm on DLQ &gt; 0; a triage runbook (is it a poison payload, a bug, or a downed dependency?); a <b>redrive</b> path to send fixed messages back to the source queue (SQS has one-click redrive); and retention long enough to survive a long weekend (14 days, not 4). Interviewers reward "and DLQ depth pages us, with a redrive runbook" far more than the mere word "DLQ".</p>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== 7. AT SCALE ===== -->
+  <div class="card scale" id="scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Figures to quote in capacity talk. Round aggressively — order of magnitude is the point.</p>
+    <table class="cmd-tbl">
+      <tr><td>SQS standard</td><td><b>Effectively unlimited throughput</b> (horizontally sharded by AWS); at-least-once; best-effort ordering. Payload ≤ <b>256 KB</b> (bigger → pointer to S3). Batch ≤ 10 msgs/call.</td></tr>
+      <tr><td>SQS FIFO</td><td><b>300 msg/s</b> bare, <b>~3,000 msg/s with batching</b>; high-throughput mode raises it to <b>tens of thousands msg/s</b> (region-dependent — quote the order, not the digit). Order per <code>MessageGroupId</code>; dedup window 5 min.</td></tr>
+      <tr><td>SQS timers</td><td>Visibility timeout: default <b>30 s</b>, max <b>12 h</b>. Retention: default 4 days, max <b>14 days</b>. Long poll ≤ 20 s. DelaySeconds ≤ 15 min.</td></tr>
+      <tr><td>RabbitMQ / queue</td><td>One queue ≈ one Erlang process ≈ <b>one core</b>: plan <b>~10–40k msg/s per quorum queue</b> (small persistent messages). Scale = more queues, not bigger ones. A cluster of 3–5 nodes with many queues reaches hundreds of thousands msg/s.</td></tr>
+      <tr><td>RabbitMQ limits</td><td>Message size: keep ≤ <b>1 MB</b> (default hard cap 16 MiB in modern versions) — blobs go to object storage, queue carries the pointer. Quorum queues: odd replica count (3 or 5), majority must be up to accept publishes.</td></tr>
+      <tr><td>latency</td><td>RabbitMQ in-DC: ~<b>1–5 ms</b> publish→deliver (quorum confirm adds fsync+majority). SQS: ~<b>10–100 ms</b> per API call — it's an HTTPS service; batch and long-poll or pay per-call latency and per-request pricing.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Failure modes that only appear at scale:</b>
+      <b>backlog cliff</b> (RabbitMQ past its memory watermark blocks ALL publishers — a deep backlog degrades the broker, not just one queue);
+      <b>redelivery storm</b> (mass worker crash/deploy → thousands of visibility timeouts expire together → thundering-herd reprocessing);
+      <b>FIFO group starvation</b> (one hot <code>MessageGroupId</code> serializes; one poison message halts its whole group);
+      <b>visibility timeout &lt; p99 processing time</b> (silent duplicate factory);
+      <b>empty-receive bill</b> (short polling a sparse queue = paying for millions of empty responses — always long-poll).</div>
+  </div>
+
+  <!-- ===== 8. INTERVIEW ===== -->
+  <div class="card" id="interview">
+    <h2>8 · In the interview</h2>
+    <p><b>How it comes up:</b> almost never as "design a queue" — always as a component you introduce yourself: "uploads are processed async through a queue". The follow-ups are predictable: <i>what if the worker dies?</i> (visibility timeout / redelivery), <i>what if it dies repeatedly?</i> (DLQ + alarm), <i>can work happen twice?</i> (yes — idempotent consumer), <i>is order preserved?</i> (no — and here's why that's fine / here's the FIFO trade).</p>
+    <p><b>The choice script:</b> default to <b>SQS</b> in an AWS-flavored design ("managed, infinite scale, nothing to operate"). Name <b>RabbitMQ</b> when you need its routing (topic exchanges, per-tenant queues), on-prem/self-hosted constraints, or sub-5 ms broker latency. Switch to <b>Kafka</b> the moment the requirements say replay, multiple independent readers, event sourcing, or per-key ordering at high throughput. Saying the <i>boundary</i> out loud is the senior signal — the technologies are easy, the cutover criteria are the skill.</p>
+    <h3>Alternatives — one line each</h3>
+    <table class="cmd-tbl">
+      <tr><td>Kafka</td><td>Not a queue — a retained, partitioned log. Replay, many reader groups, per-key order. Worse at: per-message ack/DLQ ergonomics, work-stealing across consumers.</td></tr>
+      <tr><td>Pulsar</td><td>Kafka-class log + queue-style per-message acks in one system; tiered storage (offload to S3). Ops-heavy (BookKeeper + brokers); pick when you truly need both semantics.</td></tr>
+      <tr><td>Google Pub/Sub</td><td>SQS+SNS in one: managed, global, push or pull, per-key ordering opt-in. The GCP default answer.</td></tr>
+      <tr><td>NATS JetStream</td><td>Featherweight cloud-native messaging; ms-latency, simple ops. Great inside a platform; fewer enterprise features.</td></tr>
+      <tr><td>Azure Service Bus</td><td>The enterprise broker on Azure: sessions (≈ FIFO groups), transactions, dedup. Azure-flavored designs.</td></tr>
+      <tr><td>Redis Streams</td><td>Poor-man's log/queue if Redis is already in the stack: consumer groups, PEL acks. RAM-bound retention; fine for modest volumes, wrong as a system of record.</td></tr>
+      <tr><td>ActiveMQ (Artemis)</td><td>JMS-standard broker; you'll meet it in Java estates. Rarely the greenfield pick in 2026.</td></tr>
+    </table>
+    <div class="note info"><b>Phrases that score:</b> "consumers are idempotent, keyed on orderId, so at-least-once is safe" · "visibility timeout is 3× p99 processing time, with heartbeat extension" · "DLQ after 3 receives, alarmed, with a redrive runbook" · "standard queue — we don't need ordering, so we keep unlimited throughput" · "if we later need replay, this boundary is where Kafka replaces SQS".</div>
+  </div>
+
+  <!-- ===== 9. CHECK YOURSELF ===== -->
+  <div class="card" id="check">
+    <h2>9 · Check yourself</h2>
+    <details class="qa">
+      <summary>A worker crashes <i>after</i> charging the customer but <i>before</i> deleting the message. What happens, and whose job is it to fix?</summary>
+      <div class="a"><p>The visibility timeout expires and the message is <b>redelivered</b> — the broker cannot know the work was done. A second worker charges again unless the consumer is <b>idempotent</b>: e.g. insert into a processed-payments table keyed by <code>orderId</code> in the same transaction as the charge, and skip if present. Fixing this is always the consumer's job — no broker setting eliminates it.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Why can't SQS standard queues guarantee ordering, and what's the real cost of switching to FIFO?</summary>
+      <div class="a"><p>Standard queues are sharded across many storage hosts and serve parallel consumers with retries — reordering is inherent. FIFO restores order <b>per MessageGroupId</b> by serializing each group: throughput per group collapses to one-in-flight-at-a-time, and a poison message causes head-of-line blocking for its whole group. Cross-group parallelism is the only scaling dimension, so group-key cardinality becomes a design decision.</p></div>
+    </details>
+    <details class="qa">
+      <summary>When would you pick RabbitMQ over SQS, concretely?</summary>
+      <div class="a"><p>(1) Routing logic in the broker — topic exchanges fanning one event into per-team/per-tenant queues; (2) self-hosted / non-AWS / on-prem constraints; (3) latency — single-digit ms broker vs tens of ms per HTTPS call; (4) protocol needs (AMQP/MQTT/STOMP). Otherwise SQS wins on ops: nothing to patch, no capacity planning, per-request pricing.</p></div>
+    </details>
+    <details class="qa">
+      <summary>What breaks first when a RabbitMQ backlog grows into the tens of millions of messages?</summary>
+      <div class="a"><p>Memory. The broker hits its <b>memory watermark</b> and blocks <i>all</i> publishers (flow control), effectively an outage for producers; paging messages to disk saves memory but slows the queue further. Deep, long-lived backlogs are the signature workload of a <b>log</b> (Kafka: sequential disk, backlog size irrelevant to broker health) — quote this as the migration trigger.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Interviewer: "So we get exactly-once with SQS FIFO, right?"</summary>
+      <div class="a"><p>No — FIFO gives <b>exactly-once enqueue within a 5-minute dedup window</b> (dedupes retried sends) plus ordered delivery. A consumer crash after processing but before delete still reprocesses. End-to-end exactly-once = at-least-once delivery + idempotent processing; there is no configuration that replaces the dedup table.</p></div>
+    </details>
+  </div>
+
+  <p class="small muted">Sources: this page condenses the RabbitMQ docs (quorum queues, flow control), AWS SQS Developer Guide (visibility timeout, FIFO, quotas), and HelloInterview's queue/Kafka comparisons. Numbers are order-of-magnitude interview figures — verify exact quotas before quoting in production.</p>
+</div>
+
+<script src="site.js"></script>
+<script>
+/* ===== SQS-style visibility-timeout simulator ===== */
+const VIS_TIMEOUT = 3;      // ticks a received message stays invisible
+const WORK_TICKS  = 2;      // ticks a worker needs to finish a job
+const MAX_RECEIVE = 3;      // receives before DLQ
+
+let S = null;
+
+function defaultState(){
+  return {
+    seq: 0, t: 0,
+    msgs: [],                 // {id, body, state:'ready'|'inflight'|'done'|'dlq', recv, visLeft, poison}
+    workers: [
+      {id:1, msg:null, left:0, alive:true, crashNext:false},
+      {id:2, msg:null, left:0, alive:true, crashNext:false},
+    ],
+    fifo: false,
+    dupes: 0, done: 0,
+  };
+}
+
+const $ = id => document.getElementById(id);
+function logLine(cls, msg){
+  const d = document.createElement('div');
+  d.className = 'l ' + cls;
+  d.textContent = `[t=${S.t}] ` + msg;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function explain(html){ $('explain').innerHTML = html; }
+
+function msgLabel(m){
+  return (m.poison ? '☠️ ' : '') + 'msg-' + m.id + (m.recv > 1 ? ` (recv ×${m.recv})` : '');
+}
+
+function render(){
+  const ready   = S.msgs.filter(m => m.state === 'ready');
+  const inflight= S.msgs.filter(m => m.state === 'inflight');
+  const dlq     = S.msgs.filter(m => m.state === 'dlq');
+
+  let h = '';
+  h += `<div class="node"><div class="title">🏭 Producer</div>
+        <div class="small muted">sends work</div>
+        <div class="kv"><span class="k">sent</span><span>${S.seq}</span></div></div>`;
+
+  h += `<div class="node primary" style="min-width:200px"><div class="title">📬 Queue ${S.fifo ? '<span class="badge">FIFO · 1 group</span>' : '<span class="badge">standard</span>'}</div>`;
+  h += `<div class="small muted">visible (ready)</div>`;
+  h += ready.length ? ready.map(m => `<div class="kv ${m.poison?'stale':''}"><span class="k">${msgLabel(m)}</span><span>ready</span></div>`).join('') : `<div class="kv"><span class="muted">— empty —</span></div>`;
+  h += `<div class="small muted" style="margin-top:8px">in-flight (invisible)</div>`;
+  h += inflight.length ? inflight.map(m => `<div class="kv stale"><span class="k">${msgLabel(m)}</span><span>⏳${m.visLeft}</span></div>`).join('') : `<div class="kv"><span class="muted">— none —</span></div>`;
+  h += `<div class="small muted" style="margin-top:8px">☠️ DLQ</div>`;
+  h += dlq.length ? dlq.map(m => `<div class="kv" style="border-color:var(--bad);color:var(--bad)"><span class="k">${msgLabel(m)}</span><span>dead</span></div>`).join('') : `<div class="kv"><span class="muted">— empty —</span></div>`;
+  h += `</div>`;
+
+  for (const w of S.workers){
+    const cls = w.alive ? (w.msg ? 'replica' : '') : 'dead';
+    h += `<div class="node ${cls}"><div class="title">🧑‍🍳 Worker-${w.id} ${w.alive ? (w.msg ? '<span class="badge">busy</span>' : '<span class="badge">idle</span>') : '<span class="badge">dead</span>'}</div>`;
+    if (w.msg){
+      h += `<div class="kv"><span class="k">${msgLabel(w.msg)}</span><span>${w.left} tick${w.left===1?'':'s'} left</span></div>`;
+    } else {
+      h += `<div class="small muted">${w.alive ? 'polling…' : 'crashed (revives next tick)'}</div>`;
+    }
+    h += `</div>`;
+  }
+
+  h += `<div class="node"><div class="title">📊 Stats</div>
+        <div class="kv"><span class="k">processed</span><span>${S.done}</span></div>
+        <div class="kv ${S.dupes?'stale':''}"><span class="k">duplicate work</span><span>${S.dupes}</span></div>
+        <div class="kv"><span class="k">clock</span><span>t=${S.t}</span></div></div>`;
+
+  $('nodes').innerHTML = h;
+}
+
+function send(n, poison){
+  for (let i = 0; i < n; i++){
+    S.seq++;
+    S.msgs.push({id:S.seq, state:'ready', recv:0, visLeft:0, poison:!!poison, workedOn:0});
+  }
+  logLine('cmd', poison ? `SendMessage ☠️ msg-${S.seq} (will always fail processing)` : `SendMessage ×${n} → msg-${S.seq-n+1}…msg-${S.seq}`);
+  explain(poison
+    ? `A <b>poison message</b> is in the queue — its processing will fail every time. Watch <code>maxReceiveCount: ${MAX_RECEIVE}</code> save the day.`
+    : `Messages are durably stored in the queue. They stay <b>visible</b> until a worker receives them.`);
+  render();
+}
+
+function tick(){
+  S.t++;
+
+  // 1. visibility timeouts count down on in-flight messages
+  for (const m of S.msgs){
+    if (m.state === 'inflight'){
+      m.visLeft--;
+      if (m.visLeft <= 0){
+        m.state = 'ready';
+        const orphan = !S.workers.some(w => w.msg === m);
+        logLine('warn', `msg-${m.id}: visibility timeout expired → back to visible (redelivery${orphan ? '' : ' — but a worker is STILL processing it!'})`);
+        if (m.workedOn > 0 && orphan) {} // crashed mid-work; redelivery is correct
+      }
+    }
+  }
+
+  // 2. workers progress / finish / revive
+  for (const w of S.workers){
+    if (!w.alive){ w.alive = true; logLine('info', `worker-${w.id} restarted (fresh process, no memory of past work)`); continue; }
+    if (w.msg){
+      if (w.msg.state === 'dlq'){ w.msg = null; w.left = 0; continue; }
+      w.left--;
+      if (w.left <= 0){
+        const m = w.msg;
+        if (m.poison){
+          logLine('err', `worker-${w.id}: processing msg-${m.id} FAILED (poison) — no DeleteMessage sent`);
+          // message stays in-flight until timeout expires, then redelivers
+          w.msg = null;
+        } else {
+          if (m.state === 'done'){ /* already deleted by another worker */ }
+          if (m.workedOn > 1 || m.state === 'done'){ S.dupes++; logLine('err', `worker-${w.id}: finished msg-${m.id}… which was ALREADY processed elsewhere → duplicate work! (idempotency needed)`); }
+          else { S.done++; logLine('ok', `worker-${w.id}: msg-${m.id} done → DeleteMessage (ack) → gone forever`); }
+          m.state = 'done';
+          w.msg = null;
+        }
+        render();
+      }
+    }
+  }
+
+  // 3. idle workers poll (ReceiveMessage)
+  for (const w of S.workers){
+    if (!w.alive || w.msg) continue;
+    const ready = S.msgs.filter(m => m.state === 'ready');
+    if (!ready.length) continue;
+    // FIFO: only the HEAD of the (single) group may be in flight
+    if (S.fifo){
+      const anyInflight = S.msgs.some(m => m.state === 'inflight');
+      if (anyInflight) { continue; }           // one in-flight per group
+      ready.sort((a,b) => a.id - b.id);
+    }
+    const m = ready[0];
+    m.recv++;
+    if (m.recv > MAX_RECEIVE){
+      m.state = 'dlq';
+      logLine('err', `msg-${m.id}: receive #${m.recv} exceeds maxReceiveCount=${MAX_RECEIVE} → moved to DLQ (alarm should fire!)`);
+      explain(`<b>Dead-letter queue:</b> after ${MAX_RECEIVE} failed receives the broker quarantines the message. The queue flows again${S.fifo ? ' — head-of-line unblocked' : ''}; a human triages the DLQ.`);
+      continue;
+    }
+    m.state = 'inflight';
+    m.visLeft = VIS_TIMEOUT;
+    m.workedOn++;
+    w.msg = m; w.left = WORK_TICKS;
+    logLine('info', `worker-${w.id}: ReceiveMessage → msg-${m.id} (receive #${m.recv}) — invisible for ${VIS_TIMEOUT} ticks`);
+    if (w.crashNext){ /* armed crash happens below */ }
+  }
+
+  // 4. armed crash fires mid-job
+  for (const w of S.workers){
+    if (w.crashNext && w.msg){
+      w.crashNext = false; w.alive = false;
+      logLine('err', `💥 worker-${w.id} CRASHED holding msg-${w.msg.id} — no ack was sent; the broker only sees silence`);
+      explain(`Worker-${w.id} died mid-job. The message is <b>still invisible</b> — the broker waits out the visibility timeout (⏳), then makes it visible again for redelivery. Nothing is lost; it may be <i>repeated</i>.`);
+      w.msg = null; w.left = 0;
+    }
+  }
+
+  if (!$('explain').innerHTML || Math.random() < 0) {}
+  render();
+}
+
+function crash(){
+  const w = S.workers[1];
+  if (w.msg){ w.crashNext = true; tick(); }
+  else { w.crashNext = true; logLine('warn', 'worker-2 will crash as soon as it picks up a message'); }
+  render();
+}
+
+function reset(){
+  S = defaultState();
+  S.fifo = $('fifoChk').checked;
+  $('log').innerHTML = '';
+  logLine('t', `reset — visibility timeout = ${VIS_TIMEOUT} ticks, work = ${WORK_TICKS} ticks, maxReceiveCount = ${MAX_RECEIVE}`);
+  explain('Send some messages, then press <b>Tick</b> a few times. Idle workers pull work automatically on each tick.');
+  render();
+}
+
+$('sendBtn').onclick   = () => send(3, false);
+$('poisonBtn').onclick = () => send(1, true);
+$('tickBtn').onclick   = tick;
+$('crashBtn').onclick  = crash;
+$('resetBtn').onclick  = reset;
+$('fifoChk').onchange  = () => { S.fifo = $('fifoChk').checked; logLine('info', 'FIFO mode ' + (S.fifo ? 'ON — single message group, one in-flight at a time' : 'OFF — standard queue, parallel delivery')); render(); };
+
+reset();
+</script>
+</body>
+</html>

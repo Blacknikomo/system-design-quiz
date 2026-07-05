@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memcached — Deep Dive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap art">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🧊 Memcached — the cache that does one thing</h1>
+      <div class="sub">A multithreaded hash table in RAM — and the client-side engineering (ketama, leases, gutter pools) that turned it into planetary infrastructure at Facebook. <span class="rt">☕ ~15 min read</span></div>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">look-aside cache</span>
+      <span class="tag">client-side sharding</span>
+      <span class="tag">slab allocator</span>
+      <span class="tag">leases</span>
+      <span class="tag">≤1 MB values · 250 B keys</span>
+    </div>
+    <p class="lead">Memcached is an in-memory hash table with LRU eviction behind a TCP port — <b>get, set, delete, and deliberately nothing else</b>. No persistence, no replication, no data structures, no cluster protocol: every hard problem is pushed to the client. That refusal to do more is the feature — a node stays predictable at sub-millisecond latency, scales with cores, and never surprises you — and it's why Meta still runs oceans of it while the rest of the world defaulted to Redis.</p>
+    <div class="note info"><b>In the interview:</b> Memcached appears the moment you say "add a cache in front of the database". The interviewer then expects, unprompted: the <b>cache-aside</b> pattern, invalidation by <b>delete (not set)</b>, the <b>thundering-herd</b> problem and its fix (<b>leases</b> / single-flight), what a dead node means (<b>a miss storm, not data loss</b>), and a crisp <b>Memcached-vs-Redis</b> call.</div>
+  </div>
+
+  <div class="card">
+    <h3>On this page</h3>
+    <div class="toc">
+      <a href="#model">Mental model</a>
+      <a href="#api">Syntax &amp; API</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#distributed">Distributed setup</a>
+      <a href="#play">🎛 Play with it</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#scale">At scale</a>
+      <a href="#interview">In the interview</a>
+      <a href="#check">Check yourself</a>
+    </div>
+  </div>
+
+  <!-- ===== 1. MENTAL MODEL ===== -->
+  <div class="card" id="model">
+    <h2>1 · The mental model: a coat check, not a vault</h2>
+    <p>Picture a coat check at a theater. You hand over a coat, get a number, and retrieval is instant. But the contract is thin: the attendant may quietly discard the <i>least recently used</i> coats when the racks fill, and if the theater loses power overnight, the racks are simply empty in the morning. Nobody is upset — everyone's real coat (the database row) still exists at home. A cache that loses everything and inconveniences no one: that is Memcached's entire ambition.</p>
+    <p>It was born in 2003 at LiveJournal (Brad Fitzpatrick), and its design philosophy has not moved since: <b>the server is dumb; the client is smart</b>. A Memcached server knows about its own RAM and its own connections — full stop. It doesn't know other servers exist, doesn't replicate, doesn't persist, doesn't fail over. Sharding? The client does it. Redundancy? The client (or your architecture) does it. This is the exact opposite of Redis, which packs data structures, persistence, replication and scripting into the server — the Swiss-army knife versus the scalpel.</p>
+    <p>What the server <i>does</i> do, it does exceptionally well. It's <b>multithreaded</b> — one process saturates a modern multi-core box, where a single Redis instance is fundamentally one command-processing thread. Memory is managed by a <b>slab allocator</b> that never fragments itself to death under churn (deep dive 1). And the operational surface is so small that fleets of thousands of nodes are boring to run — which, at Meta's scale, is the killer feature.</p>
+    <p>One consequence to internalize: because eviction, restarts, and node deaths are all "normal", <b>every get may miss</b>. Correct Memcached code treats the cache as an optimization layered over a source of truth, never as the source itself. The moment you catch yourself wanting the data back after a restart, you have left Memcached's use case.</p>
+    <div class="note warn"><b>The one-sentence test.</b> If you would be sad that the data vanished — sessions you can't recreate, a leaderboard, a queue — it does not belong in Memcached. If a vanished entry merely costs you one database read, you've found its habitat.</div>
+  </div>
+
+  <!-- ===== 2. SYNTAX ===== -->
+  <div class="card" id="api">
+    <h2>2 · Syntax &amp; core API</h2>
+    <p>The whole protocol fits in your head, and the text version can literally be typed over <code>telnet</code> — worth doing once in your life. The vocabulary below is what you name in an interview.</p>
+    <table class="cmd-tbl">
+      <tr><td>get k / get k1 k2 k3</td><td>Fetch one key — or many in one round trip (<b>multiget</b>). Batching is not a nicety: a page render can need hundreds of keys, and round trips are the cost that matters (deep dive 4).</td></tr>
+      <tr><td>set k flags ttl bytes</td><td>Unconditional store. TTL in seconds — with the classic footgun: a value ≤ 30 days is relative, <b>anything larger is parsed as an absolute unix timestamp</b>. <code>0</code> = no expiry (but still evictable — this is a cache).</td></tr>
+      <tr><td>add / replace</td><td>Store only-if-absent / only-if-present. <code>add</code> doubles as a crude best-effort mutex (<code>add lock:job42</code>) — fine for dedup hints, <b>not</b> for real locks (no fencing, node = SPOF).</td></tr>
+      <tr><td>delete k</td><td>The invalidation primitive. After a DB write, you <b>delete</b> the key rather than set it — see deep dive 3 for the race that rule prevents.</td></tr>
+      <tr><td>incr / decr</td><td>Atomic unsigned-64 arithmetic on an existing numeric value. Missing key → <code>NOT_FOUND</code>, not zero — seed with <code>add</code> first.</td></tr>
+      <tr><td>gets → cas</td><td>Optimistic concurrency: <code>gets</code> returns a <b>CAS token</b>; <code>cas</code> writes only if nobody changed the value since. The building block for read-modify-write without a lock.</td></tr>
+      <tr><td>touch k ttl</td><td>Refresh a TTL without resending the value.</td></tr>
+      <tr><td>stats / stats slabs</td><td>Hit rate, evictions, and per-slab-class occupancy — where you diagnose calcification (deep dive 1).</td></tr>
+      <tr><td>limits</td><td>Value ≤ <b>1 MB</b> by default (<code>-I</code> raises it; think twice), key ≤ <b>250 bytes</b>. Item metadata overhead is on the order of ~50 B — tiny values are overhead-dominated.</td></tr>
+    </table>
+    <pre class="code"><span class="c"># a whole session, by hand — text protocol over telnet</span>
+set user:42 0 300 27          <span class="c"># key · flags · ttl(s) · byte count</span>
+{"name":"Ava","plan":"pro"}
+STORED
+get user:42
+VALUE user:42 0 27
+{"name":"Ava","plan":"pro"}
+END
+incr views:9001 1             <span class="c"># atomic; returns the new value</span>
+gets user:42                  <span class="c"># … VALUE + a CAS token</span>
+cas user:42 0 300 29 &lt;token&gt;
+EXISTS                        <span class="c"># someone changed it since your gets — retry</span>
+get user:1 user:2 user:3      <span class="c"># multiget: N keys, one round trip</span></pre>
+    <p class="small muted">Modern servers also speak a compact <b>meta protocol</b> (<code>mg</code>/<code>ms</code>) whose flags bake in cache-idioms — including a "you won the refill" flag that gives you lease-like stampede control natively. Name it lightly; the classic commands above are the shared vocabulary.</p>
+  </div>
+
+  <!-- ===== 3. USE CASES ===== -->
+  <div class="card" id="usecases">
+    <h2>3 · Use cases — when Memcached is the answer</h2>
+
+    <div class="recipe">
+      <div class="rh">🗄 Database query-result cache</div>
+      The canonical deployment: <code>get user:42</code> → miss → <code>SELECT</code> → <code>set</code> with a TTL. Hot rows, expensive aggregates, rendered JSON responses. A ~95%+ hit rate turns a drowning database into a bored one — the cache absorbs the read multiple, the DB keeps the truth.
+      <div class="why">Why Memcached: values are opaque blobs, loss is harmless, and raw ops/node × operational simplicity is the whole requirement.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🧩 Rendered-fragment cache</div>
+      The original LiveJournal use: cache computed HTML fragments or serialized view models keyed by <code>fragment:profile:42:v3</code>. Skips not just the DB but the templating/serialization CPU. Version the key (<code>:v3</code>) and "invalidation" on deploy becomes letting the old keys age out.
+      <div class="why">Why Memcached: big-ish opaque strings, high churn, zero need for structure — and key versioning sidesteps invalidation entirely.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🎫 Ephemeral session-ish data</div>
+      Login sessions, CSRF tokens, per-user flags — <i>if</i> a lost entry only means a re-login. State the caveat in the interview: a node death logs out ~1/N of users at once. If that's unacceptable (paid checkout flows), sessions belong in Redis with replication, or in the DB with a cache in front.
+      <div class="why">Why Memcached (sometimes): sessions are small, hot, and TTL-friendly; the loss-tolerance question is the design decision.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🚦 Best-effort rate-limit counters</div>
+      <code>incr ratelimit:ip:1.2.3.4</code> with a 60 s TTL is a serviceable fixed-window limiter at the edge. Caveats you must say: counters vanish on restart (fail-open), windows are fixed not sliding, and the counter lives on <i>one</i> node — fine for abuse damping, wrong for billing-grade quotas.
+      <div class="why">Why Memcached: incr is atomic per node and costs microseconds; "approximately enforced" is often exactly the requirement.</div>
+    </div>
+
+    <h3>When Memcached is the WRONG answer</h3>
+    <table class="cmd-tbl">
+      <tr><td>data you must get back</td><td>Anything that must survive a restart — carts, queues, counters of record. No persistence, no replication. Use Redis (AOF/replicas) or a database.</td></tr>
+      <tr><td>pub/sub, queues</td><td>There is no push, no blocking pop, no streams. Redis/Kafka/SQS territory.</td></tr>
+      <tr><td>sorted sets / leaderboards</td><td>Values are opaque bytes; there are no data structures to update server-side. This is the single most common "actually, Redis" trigger.</td></tr>
+      <tr><td>distributed locks</td><td><code>add</code> has no fencing tokens, no consensus, and the node is a SPOF. Locks want ZooKeeper/etcd (or Redis with eyes open).</td></tr>
+      <tr><td>big blobs</td><td>&gt;1 MB values need config surgery and wreck slab efficiency; put blobs in S3/object storage and cache the pointer.</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 4. DISTRIBUTED SETUP ===== -->
+  <div class="card" id="distributed">
+    <h2>4 · Distributed setup — the cluster that lives in the client</h2>
+    <p>Here is Memcached's signature move: <b>distribution is 100% client-side</b>. A "Memcached cluster" is just N independent servers that have never heard of each other, plus a client library holding the server list. The client <b>consistent-hashes</b> each key onto the ring (the classic implementation is <b>ketama</b>) and talks straight to the owning node. Add or remove a server and only <b>~1/N of keys remap</b> — the mechanics are exactly the consistent-hashing story on <a href="scaling.html">the scaling page</a>, running inside your application process.</p>
+    <p>What you give up is failover — deliberately. A dead node isn't "promoted around"; its share of keys simply starts missing, and the misses fall through to the database. <b>A dead cache node is a miss storm, not data loss.</b> Whether that's a shrug or an outage depends on whether your DB can absorb 1/N of cache traffic — which is why Facebook built the <i>gutter</i> (deep dive 2, and the widget below). At fleet scale the "smart client" often migrates into a sidecar/proxy — Meta's <b>mcrouter</b> — which centralizes routing, pooling, replication of hot keys, and shadow traffic without touching application code.</p>
+    <div class="note gotcha"><b>The config-drift gotcha:</b> the server list <i>is</i> the cluster, so two app tiers with different lists silently split your cache into two half-warm caches with mixed staleness — no error is ever raised. Pool config must come from one source of truth (service discovery, config service), and rolling it out is a real deployment event: every ring change cools ~1/N of your cache.</div>
+  </div>
+
+  <!-- ===== 5. INTERACTIVE ===== -->
+  <div class="card" id="play">
+    <h2>5 · 🎛 Play with it — dogpile, leases &amp; the gutter</h2>
+    <p class="small muted" style="margin-top:0">One hot key (<code>user:42</code>), a pool of two cache nodes, a 500 ms database, and 8 concurrent clients. Expire the key and stampede it — first without leases (watch the DB take 8 identical queries), then with. Then kill mc-1 and compare plain re-hashing against a <b>gutter pool</b>. Counters track every DB query you cause — and every one the cache design saves.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn" id="waveBtn">🌊 8 clients request</button>
+      <button class="btn sec" id="expireBtn">⏰ Expire key now</button>
+      <button class="btn warn" id="killBtn">💀 Kill mc-1</button>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="leaseChk"> 🎫 Leases</label>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="gutterChk"> 🛟 Gutter pool</label>
+      <button class="btn ghost" id="mResetBtn">↺ Reset</button>
+    </div>
+    <div class="stage" id="mStage"><div class="nodes" id="mNodes"></div></div>
+    <div class="explain" id="mExplain">Cold cache. Send a wave and watch what 8 concurrent readers do to a 500 ms database.</div>
+    <div class="cols" style="margin-top:12px">
+      <div><h3>Event log</h3><div class="log" id="mLog"></div></div>
+      <div><h3>What to try</h3>
+        <ol class="steps small">
+          <li>🌊 on a cold cache → 8 misses → <b>8 identical SELECTs</b>. The dogpile needs no failure — a cold key is enough.</li>
+          <li>🌊 again → warm: 8 hits, DB 0. That gap (8 → 0) is the entire business case for caching.</li>
+          <li>⏰ Expire → 🌊 → the dogpile returns on schedule. Note the <b>racing set()s</b> in the log — that's the stale-set window.</li>
+          <li>Toggle 🎫 Leases → ⏰ Expire → 🌊 → <b>one</b> lease-holder refills (1 DB query); 7 saved. Watch client-1's purple badge.</li>
+          <li>💀 Kill mc-1 (gutter off) → 🌊 twice → the ring re-hashes to mc-2: one cold wave, then warm — but imagine every hot key on the dead box doing this simultaneously.</li>
+          <li>↺ Reset → 💀 Kill → toggle 🛟 Gutter → 🌊 twice → the gutter absorbs the dead node's traffic with short TTLs; mc-2 never inherits the load (no cascading hot spot).</li>
+        </ol>
+      </div>
+    </div>
+    <p class="small muted" style="margin-top:10px"><b>Model honesty:</b> 8 clients stand in for tens of thousands — in production the difference between 1 and N cache-fill queries is the difference between a blip and an outage. Real leases are issued per key at a limited rate (on the order of once per ~10 s), and waiting clients typically retry within tens–hundreds of ms or are served slightly-stale data; the gutter is a small spare pool (single-digit % of the fleet), not a full replica.</p>
+  </div>
+
+  <!-- ===== 6. DEEP DIVES ===== -->
+  <div id="deep"></div>
+  <details class="fold">
+    <summary>🔍 Deep dive · The slab allocator — no fragmentation, but calcification <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>A cache that mallocs and frees millions of variably-sized values per second would shred its heap into unusable confetti. Memcached refuses to play: at startup it divides memory into <b>slab classes</b>, each serving one fixed chunk size, with sizes growing geometrically (default factor 1.25 — roughly 96 B, 120 B, 152 B, … up to the 1 MB page size). Memory is claimed in 1 MB <b>pages</b>, each page assigned to a class and carved into its chunks. An incoming item is stored in the smallest chunk that fits. Freed chunks return to their class's free list — same size, instantly reusable, <b>fragmentation structurally impossible</b>. The rent: internal waste (a 130 B item occupies a 152 B chunk), bounded by the growth factor.</p>
+        <p>The famous failure mode is <b>slab calcification</b>. Pages get assigned to classes on demand — and once the memory is fully claimed, the assignment is sticky. Ship a redesign that grows your objects from ~150 B to ~600 B, and the fleet's memory sits pinned in the 152 B class while the 616 B class thrashes with evictions at 40% total occupancy. Modern versions run an automover that <b>rebalances pages between classes</b> in the background, which largely defuses it — but "our hit rate cratered after a deploy that changed object sizes" is still a real incident pattern, diagnosed with <code>stats slabs</code>, and naming it is a senior tell.</p>
+        <p>Eviction is <b>LRU per slab class</b>, not global — each class evicts its own tail, so one hot size class can be evicting furiously while another sits idle (calcification's visible symptom). Modern Memcached upgraded the plain list to a <b>segmented LRU</b> — hot / warm / cold queues with a background crawler reaping expired items — so one mass scan can't flush the genuinely hot set. Phrase it lightly: "LRU per slab class, segmented in modern versions."</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Scaling Memcache at Facebook (NSDI '13) — how a cache becomes a planetary system <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>The must-know paper for this page. Facebook ran (and Meta still runs) Memcached as a <b>look-aside</b> cache for sharded MySQL, at a scale the paper describes as billions of requests per second over trillions of items — and every mechanism they added lives <i>around</i> the unmodified-in-spirit dumb server. Four ideas earn interview points:</p>
+        <p><b>Leases</b> — one mechanism, two bugs killed. On a miss, the server hands the client a short-lived <b>lease token</b>; only the token-holder may fill the key, and token issuance is rate-limited per key (on the order of once per 10 s). Everyone else briefly waits (or takes slightly-stale data). That kills the <b>thundering herd</b> — one miss = one DB query, not thousands. And because a <code>delete</code> invalidates outstanding tokens, a stale <code>set</code> from a reader who fetched <i>before</i> a concurrent DB write gets rejected — killing the <b>stale-set race</b> that plain cache-aside can't close (deep dive 3).</p>
+        <p><b>The gutter</b> — a small spare pool (order of 1% of the fleet) that absorbs traffic for dead servers. Clients failing to reach a node retry against the gutter with short TTLs, so a node death costs a brief warm-up instead of hammering MySQL with the dead node's entire read load. Notably, they chose the gutter <b>over re-hashing to surviving nodes</b>: re-hashing migrates hot keys onto already-busy servers and risks a cascade — the widget above lets you feel that choice.</p>
+        <p><b>mcsqueal</b> — invalidation as a pipeline, not a convention. Daemons tail the MySQL commit logs on the master region and fan out <b>deletes</b> (batched through mcrouter) to every frontend cluster. Invalidation driven by the authoritative write log can't be forgotten by an app codepath and gives an upper bound on staleness. Cross-region, writes from a replica region set a <b>remote marker</b> that detours reads to the master region until replication catches up — eventual consistency with the sharp edge filed down. Plus <b>cold-cluster warmup</b>: a freshly-built cluster serves its misses from a <i>warm</i> cluster's cache instead of the DB until its hit rate recovers.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Cache-aside correctly — delete-not-set, the stale-set race, TTL jitter <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>The pattern everyone writes: read = <code>get</code> → on miss <code>SELECT</code> → <code>set</code>. The half everyone gets wrong is the write path. After updating the DB, <b>delete the key — don't set the new value</b>. Two writers who both compute-then-set can interleave so the older value lands last and is now cached <i>as if fresh</i>, wrong until TTL. Delete is safe under any interleaving: worst case you forced an extra read. Say "invalidate by delete, repopulate on read" and you've passed this checkpoint.</p>
+        <p>But delete alone still leaves a narrow hole — the <b>stale-set race</b>: reader misses and SELECTs (old value) → writer updates DB and deletes the key → reader's belated <code>set</code> writes the old value back, now unexpiring-ly stale. This is precisely what Facebook's leases close: the delete invalidates the reader's lease token, so the poisonous late set is refused. Without leases, the mitigations are short TTLs (bound the damage), CAS-based fills, or a single-flight layer in your client. The general rule worth quoting: <b>a TTL is not a consistency mechanism — it's a staleness upper bound</b>; explicit invalidation plus TTL-as-backstop is the grown-up combination.</p>
+        <p>Three smaller patterns that mark production experience: <b>TTL jitter</b> — a deploy that sets a million keys with <code>ttl=3600</code> schedules a synchronized miss-storm for one hour later; add ±10% randomness. <b>Negative caching</b> — cache "this doesn't exist" (short TTL) or nonexistent IDs become a hole punched straight through to the DB, queryable by any attacker in a loop. <b>Probabilistic early refresh</b> — have some readers treat a nearly-expired entry as a miss (probability rising as expiry nears), so hot keys refresh <i>before</i> the cliff instead of stampeding at it.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Multigets, hot keys &amp; incast — the network is the failure domain <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Loading one page of a social product fans out to <b>hundreds of cache keys</b> (the Facebook paper reports a median in the ~500-key range for popular pages). The client groups keys by owning server and issues one multiget per server — turning ~500 round trips into ~N<sub>servers</sub>. This is why multiget exists, and why the sharding function being <i>in the client</i> is a performance feature: the batching happens where the key→server map lives.</p>
+        <p>Fan-out has a physics bill: <b>incast congestion</b>. Blast requests at 100 servers and their responses converge on your one NIC within microseconds of each other, overflowing shallow switch buffers → drops → TCP retransmits → a latency spike caused by your own burst. The classic fix (straight from the paper) is a <b>sliding window</b> of outstanding requests per client — small enough to avoid incast, large enough to avoid serializing; the same congestion-control idea TCP uses, one layer up.</p>
+        <p>Then there's the <b>hot key</b>: a celebrity profile or a global config blob that every request touches. Consistent hashing puts each key on exactly one node — so one key's traffic cannot be sharded, and a single node melts while nineteen idle. Fixes, in escalating order: a tiny in-process L1 (even a 1-second local TTL absorbs enormous read multiples), <b>client-side key replication</b> (write <code>cfg#0…cfg#9</code>, read a deterministic-per-client replica — trading N× invalidation cost for N× read capacity), or mcrouter-style proxy replication of designated hot pools. The interview phrase: "you can't shard a single key — you replicate it."</p>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== 7. AT SCALE ===== -->
+  <div class="card scale" id="scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Ballparks for capacity talk — order of magnitude is the point.</p>
+    <table class="cmd-tbl">
+      <tr><td>per-node throughput</td><td>Multithreaded: a big box reaches the order of <b>10⁵–10⁶ ops/s</b> on small values — commonly the NIC or packet rate saturates before the CPU. This raw ceiling per node is Memcached's classic edge over single-threaded designs.</td></tr>
+      <tr><td>latency</td><td>Server work is tens of µs; in-DC RTT dominates → <b>~0.1–0.5 ms</b> typical gets. Budget the round trip, not the hash lookup.</td></tr>
+      <tr><td>item limits</td><td>Value ≤ <b>1 MB</b> default (<code>-I</code> raises it; slab waste grows), key ≤ <b>250 B</b>, per-item overhead ~50 B — a fleet of 100 B values is mostly overhead; batch tiny things into one value.</td></tr>
+      <tr><td>TTL semantics</td><td>≤ 30 days = relative seconds; <b>&gt; 30 days = absolute unix timestamp</b> (the classic "why did every key expire instantly" incident). <code>0</code> = no expiry, still evictable.</td></tr>
+      <tr><td>pool arithmetic</td><td>Ring change (add/remove/replace a node) cools <b>~1/N</b> of the cache. Know your DB's headroom for a 1/N miss storm — or size a gutter (small, single-digit % of fleet).</td></tr>
+      <tr><td>reference scale</td><td>Facebook's memcache tier (NSDI '13): ~<b>billions of reads/s</b>, <b>trillions of items</b>, look-aside over sharded MySQL — the existence proof that the dumb-server model scales arbitrarily if the client layer is smart.</td></tr>
+      <tr><td>modern extensions</td><td><b>extstore</b> spills values to NVMe/SSD keeping keys+metadata in RAM (10× capacity per node for warm data); recent versions can survive a <b>clean</b> restart with cache intact (not a crash). Persistence is still explicitly a non-goal.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Failure modes to name:</b>
+      <b>node death → miss storm</b> (1/N of reads suddenly hit the DB; the DB's spare capacity — or a gutter — decides if it's a blip or an outage);
+      <b>thundering herd on a hot key</b> (one expiry → thousands of concurrent refills — leases/single-flight);
+      <b>slab calcification</b> (object-size shift strands memory in old classes; hit rate craters post-deploy);
+      <b>synchronized TTL expiry</b> (mass warmup with equal TTLs = scheduled stampede — jitter);
+      <b>hot key</b> (unshardable by definition — replicate client-side or L1-cache);
+      <b>multiget incast</b> (huge fan-out bursts overflow switch buffers — cap the request window).</div>
+  </div>
+
+  <!-- ===== 8. INTERVIEW ===== -->
+  <div class="card" id="interview">
+    <h2>8 · In the interview</h2>
+    <p><b>How it comes up:</b> you introduce it yourself — "reads are heavy, I'll cache-aside in front of Postgres" — and the follow-ups write themselves: <i>how do you invalidate?</i> (delete on write, TTL as backstop), <i>what if a hot key expires under load?</i> (leases/single-flight — walk them through the widget scenario), <i>what if a cache node dies?</i> (miss storm, not data loss; gutter or DB headroom), <i>why Memcached and not Redis?</i> (next paragraph, verbatim).</p>
+    <p><b>The choice script:</b> "If the workload is <b>pure look-aside blob caching</b> and I want maximum throughput per node with the simplest possible operations — Memcached: multithreaded, scales with cores, nothing to operate. The moment I need <b>data structures</b> (sorted sets, counters with windows), <b>persistence or replication</b>, <b>pub/sub</b>, or atomic <b>Lua</b>, I take Redis — or its open-source continuation Valkey — and accept a bit more operational surface. The modern default skews Redis; Memcached persists where fleets are huge and the job is exactly one thing — Meta being the standing example." Then the senior close: at scale the interesting engineering is client-side either way — consistent hashing, leases, hot-key replication — and that logic is portable between the two.</p>
+    <h3>Alternatives — one line each</h3>
+    <table class="cmd-tbl">
+      <tr><td>Redis / Valkey</td><td>The default competitor: data structures, persistence, replication/failover, pub/sub, Lua — a server that participates in your logic. Single-threaded core; shard to scale writes.</td></tr>
+      <tr><td>Hazelcast / Ignite</td><td>JVM data grids: partitioned, replicated in-memory storage with compute colocated — heavier, for when the cache <i>is</i> the application platform.</td></tr>
+      <tr><td>CDN / edge caches</td><td>For HTTP-shaped, shareable responses, cache at the edge before caching in the datacenter — different layer, often the bigger win.</td></tr>
+      <tr><td>Caffeine / Guava</td><td>In-process L1 in front of Memcached's L2: zero network hop, absorbs hot keys; costs per-instance memory and per-instance staleness.</td></tr>
+      <tr><td>DAX</td><td>DynamoDB's managed read-through/write-through cache — the "add a cache without writing cache code" move for Dynamo-backed designs.</td></tr>
+    </table>
+    <div class="note info"><b>Phrases that score:</b> "cache-aside; on writes I <b>delete</b> the key, not set it" · "TTL is a staleness bound, not consistency — explicit invalidation plus TTL backstop" · "one lease per miss: refills are single-flight, so an expiry costs one DB query" · "a dead node is a miss storm, not data loss — the gutter absorbs it" · "TTL jitter so a deploy doesn't schedule a stampede" · "hot keys can't be sharded — replicate them client-side".</div>
+  </div>
+
+  <!-- ===== 9. CHECK YOURSELF ===== -->
+  <div class="card" id="check">
+    <h2>9 · Check yourself</h2>
+    <details class="qa">
+      <summary>After updating a row, why DELETE the cache key instead of SETting the fresh value?</summary>
+      <div class="a"><p>Two concurrent writers can compute-then-set out of order: the older value lands last and is now cached as fresh — wrong until TTL. Delete is safe under any interleaving; the next reader repopulates from the DB, costing at most one extra read. The remaining hole is the <b>stale-set race</b> (a reader's in-flight fill from before the write lands after the delete) — closed by leases/CAS, since the delete invalidates the outstanding token.</p></div>
+    </details>
+    <details class="qa">
+      <summary>A hot key expires and 5,000 requests hit it in the same 100 ms. Walk me through it.</summary>
+      <div class="a"><p>Without protection: 5,000 misses → 5,000 identical DB queries — a thundering herd that can take the DB down, which then takes <i>everything</i> down (the cache can't refill from a dead DB). Fixes: <b>leases/single-flight</b> (one request refills; the rest wait briefly or serve stale), <b>probabilistic early refresh</b> (hot keys renew before the cliff), and <b>TTL jitter</b> so many keys can't reach the cliff together. The one-liner: "an expiry should cost one DB query, not one per waiting client."</p></div>
+    </details>
+    <details class="qa">
+      <summary>A node dies in your 20-node pool. What actually happens, and is any data lost?</summary>
+      <div class="a"><p>No data is lost — it's a cache; the truth lives in the DB. What happens is <b>~5% of reads become misses at once</b> and land on the database. If the DB has headroom, it's a blip while the ring re-hashes those keys onto survivors (~1/N remap with consistent hashing) and they re-warm. If not, you want a <b>gutter pool</b>: a small spare set absorbing the dead node's traffic with short TTLs — Facebook chose this over re-hashing precisely because migrating hot keys onto already-loaded survivors risks a cascade.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Why can a single Memcached node out-throughput a single Redis node on plain GET/SET?</summary>
+      <div class="a"><p>Memcached is <b>multithreaded</b> — worker threads across all cores serve requests concurrently from one process — while Redis executes commands on a single main thread (newer I/O threads help with network handling, but command execution stays serial). Add that Memcached does nothing per operation beyond hash-table + slab work, and one big box goes further. Redis's answer is running multiple shards per machine — valid, but now you're operating a cluster to match one process. This matters at the "maximum ops per node" margin; both are far beyond most workloads' needs.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Interviewer: "Sessions are small and hot — just keep them only in Memcached, it's fast."</summary>
+      <div class="a"><p>Push back on durability, not speed: Memcached evicts under memory pressure (LRU, per slab class), loses everything on restart, and a node death drops ~1/N of sessions instantly — so "sessions only in Memcached" means "we're fine mass-logging-out users at random times." Either declare that acceptable explicitly (some products can), or keep sessions in Redis with replication/persistence, or make the cache a look-aside over a session table. It's the one-sentence test: if losing it makes anyone sad, it doesn't live in Memcached.</p></div>
+    </details>
+  </div>
+
+  <p class="small muted">Sources: this page condenses the memcached wiki and protocol docs (commands, slab allocator, LRU), "Scaling Memcache at Facebook" (NSDI '13 — leases, gutter, mcsqueal, incast), and mcrouter documentation. Throughput/latency figures are order-of-magnitude interview ballparks — verify against your hardware before quoting in production.</p>
+</div>
+
+<script src="site.js"></script>
+<script>
+/* ===== Dogpile & leases simulator: 8 clients, 2 cache nodes, gutter, slow DB ===== */
+let M = null, mTimers = [];
+const m$ = id => document.getElementById(id);
+const NAME = { mc1:'mc-1', mc2:'mc-2', gut:'gutter' };
+const CHIP = { // state -> [background, border, color]
+  idle:['var(--panel)','var(--line)','var(--muted)'],
+  get:['var(--panel)','var(--accent)','var(--accent)'],
+  miss:['var(--badbg)','var(--bad)','var(--bad)'],
+  db:['var(--bad)','var(--bad)','#fff'],
+  hit:['var(--okbg)','var(--ok)','var(--ok)'],
+  wait:['var(--warnbg)','var(--warn)','var(--warn)'],
+  lease:['var(--accent2)','var(--accent2)','#fff']
+};
+
+function mState(){
+  return {
+    leases:false, gutter:false, alive:true, killUsed:false,
+    store:{ mc1:'none', mc2:'none', gut:'none' },   // 'none' | 'valid' | 'expired'
+    clients:new Array(8).fill('idle'), holder:-1,
+    waves:0, db:0, saved:0, lastDb:0, busy:false, flash:false
+  };
+}
+
+function mLog(cls, msg){
+  const d = document.createElement('div');
+  d.className = 'l ' + cls; d.textContent = msg;
+  m$('mLog').appendChild(d); m$('mLog').scrollTop = m$('mLog').scrollHeight;
+}
+function mExplain(html){ m$('mExplain').innerHTML = html; }
+function route(){ return M.alive ? 'mc1' : (M.gutter ? 'gut' : 'mc2'); }
+function storeLabel(st){ return st === 'valid' ? 'user:42 ✓' : (st === 'expired' ? 'expired ⏱' : '— cold —'); }
+
+function renderM(){
+  let h = '';
+  // clients
+  h += '<div class="node" style="min-width:190px"><div class="title">👥 8 clients</div><div>';
+  M.clients.forEach((c, i) => {
+    const s = CHIP[c] || CHIP.idle;
+    h += '<span title="client-' + (i+1) + ': ' + c + '" style="display:inline-flex;align-items:center;justify-content:center;'
+      + 'width:24px;height:24px;border-radius:50%;font-size:11px;font-weight:700;margin:2px;'
+      + 'background:' + s[0] + ';border:2px solid ' + s[1] + ';color:' + s[2] + '">'
+      + (c === 'lease' ? 'L' : (i+1)) + '</span>';
+  });
+  h += '</div><div class="small muted" style="margin-top:6px">'
+    + '<span style="color:var(--ok)">●</span> hit · <span style="color:var(--bad)">●</span> miss/DB · '
+    + '<span style="color:var(--warn)">●</span> lease-wait · <span style="color:var(--accent2)">●</span> lease holder</div></div>';
+
+  // mc-1
+  h += '<div class="node ' + (M.alive ? 'primary' : 'dead') + '"><div class="title">🧊 mc-1 '
+    + (M.alive ? '<span class="badge">owns user:42</span>' : '<span class="badge">dead</span>') + '</div>'
+    + '<div class="kv ' + (M.store.mc1 === 'expired' ? 'stale' : '') + '"><span class="k">user:42</span><span>' + storeLabel(M.store.mc1) + '</span></div>'
+    + '<div class="small muted">' + (M.alive ? 'ketama ring: user:42 → mc-1' : 'RAM gone — it was only a cache') + '</div></div>';
+
+  // mc-2
+  h += '<div class="node"><div class="title">🧊 mc-2 <span class="badge">rest of pool</span></div>'
+    + '<div class="kv ' + (M.store.mc2 === 'expired' ? 'stale' : '') + '"><span class="k">user:42</span><span>' + storeLabel(M.store.mc2) + '</span></div>'
+    + '<div class="small muted">' + (!M.alive && !M.gutter ? 'inherits user:42 after re-hash' : 'other keys live here') + '</div></div>';
+
+  // gutter (only when enabled)
+  if (M.gutter){
+    h += '<div class="node replica"><div class="title">🛟 Gutter <span class="badge">spare pool</span></div>'
+      + '<div class="kv ' + (M.store.gut === 'expired' ? 'stale' : '') + '"><span class="k">user:42</span><span>' + storeLabel(M.store.gut) + '</span></div>'
+      + '<div class="small muted">absorbs dead-node traffic · short TTLs</div></div>';
+  }
+
+  // DB
+  h += '<div class="node ' + (M.flash ? 'flash-bad' : '') + '"><div class="title">🐢 MySQL <span class="badge">500 ms/query</span></div>'
+    + '<div class="kv ' + (M.lastDb >= 8 ? 'stale' : '') + '"><span class="k">queries (last wave)</span><span>' + M.lastDb + '</span></div>'
+    + '<div class="kv"><span class="k">queries (total)</span><span>' + M.db + '</span></div></div>';
+
+  // stats
+  h += '<div class="node"><div class="title">📊 Stats</div>'
+    + '<div class="kv"><span class="k">waves</span><span>' + M.waves + '</span></div>'
+    + '<div class="kv" style="border-color:var(--ok)"><span class="k">DB queries saved</span><span>' + M.saved + '</span></div></div>';
+
+  m$('mNodes').innerHTML = h;
+  m$('waveBtn').disabled   = M.busy;
+  m$('expireBtn').disabled = M.busy;
+  m$('killBtn').disabled   = M.busy || M.killUsed;
+}
+
+function wave(){
+  if (M.busy) return;
+  M.busy = true; M.waves++; M.lastDb = 0; M.flash = false; M.holder = -1;
+  M.clients = new Array(8).fill('get');
+  const t = route(), st = M.store[t];
+  mLog('cmd', 'wave ' + M.waves + ': 8 clients → get user:42 @ ' + NAME[t]);
+  if (!M.alive){
+    mLog(M.gutter ? 'info' : 'warn', M.gutter
+      ? 'mc-1 dead → connects fail fast → clients retry against the GUTTER (mc-2 untouched: no cascade)'
+      : 'mc-1 dead → client re-hashes the ring → user:42 now maps to mc-2 (≈half of ALL keys in a 2-node pool went cold)');
+  }
+  renderM();
+
+  if (st === 'valid'){
+    mTimers.push(setTimeout(() => {
+      M.clients.fill('hit'); M.saved += 8;
+      mLog('ok', '8 × HIT from ' + NAME[t] + ' (~0.2 ms each) — DB untouched');
+      mExplain('<b>Warm cache:</b> 8 requests, 0 DB queries. Every wave like this is the multiple your database never has to be sized for.');
+      M.busy = false; renderM();
+    }, 700));
+    return;
+  }
+
+  if (M.leases){
+    mTimers.push(setTimeout(() => {
+      M.clients.fill('wait'); M.clients[0] = 'lease'; M.holder = 0;
+      mLog('info', 'MISS → ' + NAME[t] + ' issues ONE lease token to client-1; clients 2–8 get "hot miss — retry shortly"');
+      renderM();
+    }, 700));
+    mTimers.push(setTimeout(() => {
+      M.db += 1; M.lastDb = 1; M.clients[0] = 'db';
+      mLog('warn', 'client-1 → SELECT … (500 ms) — the ONLY DB query this wave');
+      renderM();
+    }, 1500));
+    mTimers.push(setTimeout(() => {
+      M.store[t] = 'valid'; M.clients.fill('hit'); M.saved += 7;
+      mLog('ok', 'client-1: set(user:42, lease-token) accepted → clients 2–8 retry → HIT');
+      if (t === 'gut') mLog('t', 'gutter entries carry a short TTL — it is a shock absorber, not a home');
+      mExplain('<b>Leases:</b> the refill is single-flight — one miss = one DB query, <b>7 saved</b>. The token also closes the stale-set race: a delete would invalidate it, so a late set of old data is refused.');
+      M.busy = false; renderM();
+    }, 2400));
+  } else {
+    mTimers.push(setTimeout(() => {
+      M.clients.fill('miss');
+      mLog('err', '8 × MISS — nobody coordinates; all 8 clients head for the database');
+      renderM();
+    }, 700));
+    mTimers.push(setTimeout(() => {
+      M.db += 8; M.lastDb = 8; M.flash = true; M.clients.fill('db');
+      mLog('err', 'DOGPILE: 8 identical SELECTs hit MySQL at once — 8× load to recompute ONE value');
+      renderM();
+    }, 1500));
+    mTimers.push(setTimeout(() => {
+      M.store[t] = 'valid'; M.clients.fill('hit'); M.flash = false;
+      mLog('warn', '8 racing set()s — last writer wins; if a DB write raced in between, a STALE value can stick until TTL');
+      if (t === 'gut') mLog('t', 'gutter entries carry a short TTL — it is a shock absorber, not a home');
+      mExplain('<b>The dogpile:</b> every concurrent reader of a cold/expired hot key becomes a DB query. With 8 clients it is a spike; with 10,000 it is an outage — and the racing sets add a staleness bug on top. Toggle 🎫 <b>Leases</b> and repeat.');
+      M.busy = false; renderM();
+    }, 2400));
+  }
+}
+
+function expireKey(){
+  if (M.busy) return;
+  const had = [];
+  for (const k of ['mc1','mc2','gut']){
+    if (M.store[k] === 'valid'){ M.store[k] = 'expired'; had.push(NAME[k]); }
+  }
+  if (had.length){
+    mLog('warn', '⏰ TTL reached — user:42 expired on ' + had.join(', ') + ' (the value is gone; only the stampede remains)');
+    mExplain('The hot key just expired. The next wave is a race: without leases, every client that misses becomes a DB query.');
+  } else {
+    mLog('t', 'nothing cached yet — send a wave first');
+  }
+  renderM();
+}
+
+function killNode(){
+  if (M.busy || M.killUsed) return;
+  M.alive = false; M.killUsed = true; M.store.mc1 = 'none';
+  mLog('err', '💀 mc-1 is down. Its RAM is gone — no data was "lost" (it is a cache), but every key it held is now a miss');
+  mExplain('mc-1 is dead. Next wave: with 🛟 <b>Gutter</b> off, the client re-hashes to mc-2 (and on a real ring, ~1/N of <i>all</i> keys go cold at once). With gutter on, a spare pool absorbs the traffic instead — no load lands on the survivors.');
+  renderM();
+}
+
+function resetM(){
+  mTimers.forEach(clearTimeout); mTimers = [];
+  M = mState();
+  M.leases = m$('leaseChk').checked;
+  M.gutter = m$('gutterChk').checked;
+  m$('mLog').innerHTML = '';
+  mLog('t', 'reset — 1 hot key (user:42), pool of 2 nodes, DB at 500 ms/query. Leases ' + (M.leases ? 'ON' : 'OFF') + ', gutter ' + (M.gutter ? 'ON' : 'OFF') + '.');
+  mExplain('Cold cache. Send a wave and watch what 8 concurrent readers do to a 500 ms database.');
+  renderM();
+}
+
+m$('waveBtn').onclick   = wave;
+m$('expireBtn').onclick = expireKey;
+m$('killBtn').onclick   = killNode;
+m$('mResetBtn').onclick = resetM;
+m$('leaseChk').onchange = () => { M.leases = m$('leaseChk').checked;
+  mLog('info', 'leases ' + (M.leases ? 'ON — misses become single-flight: one token, one refill' : 'OFF — every miss goes to the DB independently')); renderM(); };
+m$('gutterChk').onchange = () => { M.gutter = m$('gutterChk').checked;
+  mLog('info', 'gutter pool ' + (M.gutter ? 'ON — dead-node traffic will be absorbed by a spare pool (short TTLs)' : 'OFF — dead-node traffic re-hashes onto the surviving pool')); renderM(); };
+
+resetM();
+</script>
+</body>
+</html>

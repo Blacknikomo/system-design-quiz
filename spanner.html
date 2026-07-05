@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spanner &amp; NewSQL — Deep Dive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap art">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🌐 Spanner &amp; NewSQL — global SQL that doesn't lose your money</h1>
+      <div class="sub">TrueTime, commit-wait, Paxos under every split — how Google made SQL span continents, and how CockroachDB, TiDB &amp; Aurora attack the same problem without atomic clocks. <span class="rt">☕ ~15 min read</span></div>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">external consistency</span>
+      <span class="tag">TrueTime</span>
+      <span class="tag">Paxos per split</span>
+      <span class="tag">2PC over Paxos</span>
+      <span class="tag">interleaved tables</span>
+      <span class="tag">NewSQL</span>
+    </div>
+    <p class="lead">Spanner is the database Google built when sharded MySQL stopped being survivable: relational, ACID, SQL — and <b>sharded, replicated and writable across regions</b>, with the strongest consistency guarantee in the industry. The unlock wasn't a cleverer algorithm alone; it was hardware honesty: <b>put GPS receivers and atomic clocks in every datacenter, admit exactly how wrong any clock can be (ε), and make every commit wait out that doubt</b>. A few milliseconds of deliberate waiting turn timestamps into something you can trust to order the whole planet's transactions.</p>
+    <div class="note info"><b>In the interview:</b> in a Google loop, Spanner is <i>"the strongly-consistent global OLTP option"</i> — say it when the requirements demand multi-region <b>writes</b>, no lost updates, and real SQL transactions (payments, ledgers, inventory, bookings). Expect follow-ups on: <b>why waiting makes clocks safe</b> (TrueTime + commit-wait), <b>what multi-split transactions cost</b> (2PC over Paxos), <b>why keys must not be monotonic</b> (hot split), and <b>what you'd pick outside GCP</b> (CockroachDB &amp; friends).</div>
+  </div>
+
+  <div class="card">
+    <h3>On this page</h3>
+    <div class="toc">
+      <a href="#model">Mental model</a>
+      <a href="#api">Syntax &amp; API</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#distributed">Distributed setup</a>
+      <a href="#play">🎛 Play with it</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#scale">At scale</a>
+      <a href="#interview">In the interview</a>
+      <a href="#check">Check yourself</a>
+    </div>
+  </div>
+
+  <!-- ===== 1. MENTAL MODEL ===== -->
+  <div class="card" id="model">
+    <h2>1 · The mental model: sharded Postgres where time is an API</h2>
+    <p>Start with the pain. Google's ads business — the revenue engine — ran for years on a <b>manually sharded MySQL</b> fleet. The Spanner paper mentions, almost deadpan, that the last resharding of that system <b>took over two years</b> of careful, risky effort. That one sentence is the entire pitch. Sharding a relational database by hand buys you scale and quietly repossesses everything else: cross-shard transactions become your problem, global secondary indexes stop existing, resharding becomes a multi-year migration, and failover becomes a runbook full of "should be fine". Spanner (built over roughly five years, published at OSDI 2012, later sold as <b>Cloud Spanner</b>) is Google refusing that trade.</p>
+    <p>The storage layout is the easy half. A table lives sorted by primary key and is chopped into <b>splits</b> — contiguous key ranges. Each split is its own <b>Paxos group</b>: several replicas spread across zones (or regions), one of them elected <b>leader</b>. Writes for a split go to its leader and commit once a <b>majority</b> of replicas have them; splits split, merge and move around automatically based on <b>both size and load</b>. So far this is "sharded Postgres with self-driving shards and consensus instead of primary/replica" — nice, not revolutionary. Transactions that touch <i>one</i> split are just a Paxos round. The hard problems are the other two: transactions <b>across</b> splits, and consistent reads across a database whose thousands of leaders each march to their own clock.</p>
+    <p>Here is why clocks are the deep problem. Suppose you commit T1 ("deposit €100") on node A, and — after A confirms — a colleague commits T2 ("spend €100") on node B. If B's clock runs 5&nbsp;ms behind A's, B may stamp T2 with an <i>earlier</i> timestamp than T1. Nothing crashes. But any snapshot read, backup, or auditor replaying history in timestamp order now sees the spend <b>before</b> the deposit that funded it — money from nowhere. Ordinary serializability doesn't forbid this; it only promises <i>some</i> consistent order, not one that matches wall-clock reality. Spanner promises the stronger thing — <b>external consistency</b>: if T1 completes before T2 begins, T1's timestamp is smaller. Full stop, planet-wide.</p>
+    <p>The trick is a chain of notary offices. Every notary's watch may be wrong, but <b>never by more than ε</b> — and each notary knows its ε. Protocol: stamp each document with <i>your watch plus ε</i> (the latest the true time could be), then <b>hold the document on your desk</b> until your watch <i>minus</i> ε has passed the stamp. Only then hand it back. That pause guarantees that by the time anyone sees a stamped document, its stamp is already in the past for <i>every</i> notary on Earth — so two documents notarized one after another, even in different cities, can never carry inverted stamps. That is <b>TrueTime</b> (an API that returns an interval <code>[earliest, latest]</code> instead of a lying single number) plus <b>commit-wait</b> (the deliberate pause). GPS receivers and atomic clocks exist purely to keep ε small — single-digit milliseconds — so the pause is cheap. And if the clock hardware degrades, ε inflates and Spanner gets <i>slower, not wrong</i>.</p>
+    <div class="note warn"><b>Serializable vs externally consistent — the one-sentence test.</b> Serializability: "there exists <i>some</i> serial order consistent with what everyone saw." External consistency (≈ linearizability for transactions): "that serial order also matches <b>real time</b> — if your commit finished before mine started, yours sorts first." Spanner gives the second; most databases (and most NewSQL competitors) give only the first.</div>
+  </div>
+
+  <!-- ===== 2. SYNTAX ===== -->
+  <div class="card" id="api">
+    <h2>2 · Syntax &amp; core API</h2>
+    <p>Cloud Spanner speaks <b>GoogleSQL</b> (a PostgreSQL-dialect interface also exists). The schema keywords below are where the distributed design leaks into the SQL — each one is worth being able to explain, because each is a physical-placement decision wearing DDL clothes.</p>
+    <table class="cmd-tbl">
+      <tr><td>PRIMARY KEY (…)</td><td>Defines physical sort order <b>and</b> split boundaries. The one rule: <b>never monotonic</b> (no timestamps, no sequences) — all inserts would land on the last split's leader. Use UUIDv4, a bit-reversed sequence, or a hash prefix.</td></tr>
+      <tr><td>INTERLEAVE IN PARENT</td><td>Physically stores child rows inside the parent's key range → a customer and their orders live in the <b>same split</b>, so "checkout" stays a single-split (no-2PC) transaction.</td></tr>
+      <tr><td>CREATE INDEX … STORING (…)</td><td>Secondary index — itself a distributed table with its own splits (global by default; can be interleaved). <code>STORING</code> copies columns in to make it covering; a non-covering index read is a second, cross-split lookup.</td></tr>
+      <tr><td>read-write transaction</td><td>Pessimistic: acquires locks at each involved split's <b>leader</b> (wound-wait deadlock avoidance), commits via Paxos — plus 2PC if several groups are involved.</td></tr>
+      <tr><td>read-only transaction</td><td><b>Lock-free.</b> Picks a snapshot timestamp, reads a consistent view across the whole database. Never blocks writers, never aborts them — Spanner keeps multiple timestamped versions of each row.</td></tr>
+      <tr><td>stale read (bounded / exact)</td><td>"Give me data as of ≤ 10 s ago" — can be served by the <b>nearest replica</b> with no leader round-trip. The latency escape hatch for read-mostly, geo-distributed traffic.</td></tr>
+      <tr><td>allow_commit_timestamp</td><td>Column option; write <code>PENDING_COMMIT_TIMESTAMP()</code> and Spanner fills in the TrueTime commit timestamp — changelogs and sync feeds ordered by the real commit order.</td></tr>
+      <tr><td>SEQUENCE (bit-reversed)</td><td>Built-in sequence that hands out <b>bit-reversed</b> integers: unique, roughly uniform over the keyspace, hotspot-safe — sequential IDs without the sequential-key penalty.</td></tr>
+    </table>
+    <pre class="code"><span class="c">-- Schema that keeps checkout single-split and keys hotspot-free</span>
+CREATE TABLE Customers (
+  CustomerId STRING(36) NOT NULL,        <span class="c">-- UUIDv4, NOT a timestamp</span>
+  Name       STRING(MAX),
+  CreatedAt  TIMESTAMP OPTIONS (allow_commit_timestamp = true)
+) PRIMARY KEY (CustomerId);
+
+CREATE TABLE Orders (
+  CustomerId STRING(36) NOT NULL,
+  OrderId    INT64 NOT NULL,
+  Total      NUMERIC,
+  Status     STRING(16)
+) PRIMARY KEY (CustomerId, OrderId),
+  INTERLEAVE IN PARENT Customers ON DELETE CASCADE;   <span class="c">-- orders live WITH their customer</span>
+
+CREATE INDEX OrdersByStatus ON Orders(Status) STORING (Total);  <span class="c">-- covering → one lookup</span>
+
+<span class="c">-- Reads: three consistency dials, three prices</span>
+SELECT * FROM Orders WHERE CustomerId = @id;   <span class="c">-- strong read: sees every commit that finished before it started</span>
+<span class="c">-- client option: read-only txn { exact_staleness: 15s }  → served by nearest replica, no leader hop</span>
+<span class="c">-- client option: read-only txn (strong, multi-table)     → one snapshot timestamp across ALL splits, lock-free</span></pre>
+  </div>
+
+  <!-- ===== 3. USE CASES ===== -->
+  <div class="card" id="usecases">
+    <h2>3 · Use cases — when Spanner is the answer</h2>
+
+    <div class="recipe">
+      <div class="rh">🧾 Financial ledgers &amp; payments</div>
+      Double-entry ledger, users on three continents, two writable regions for survivability. External consistency means the replay of history <i>in timestamp order</i> is the truth — an auditor never sees a spend before its funding deposit, a backup restored at timestamp T is a consistent cut of the world.
+      <div class="why">Why Spanner: "multi-region, both writable, zero lost updates" is precisely the requirement classic replication can't meet honestly.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">📦 Global inventory, bookings &amp; ticketing</div>
+      Last seat on the flight, buyers in Tokyo and Berlin at the same instant. Read-write transactions lock the row at the split leader; one buyer commits, the other cleanly retries. No oversell, no "eventual" apology emails.
+      <div class="why">Why Spanner: contention on single hot rows is exactly what pessimistic locks + Paxos handle predictably.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🌍 User identity &amp; control planes for multi-region products</div>
+      Accounts, entitlements, configuration — data every region must read fast and any region may write. Strong writes go through leaders; the read fleet uses <b>bounded-staleness reads from the nearest replica</b> for local-latency reads that are still never-older-than-10s consistent.
+      <div class="why">Why Spanner: the staleness dial gives you per-query choice between "correct now" and "fast here".</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🔁 The escape hatch from sharded MySQL / Vitess</div>
+      You sharded, it worked, and now cross-shard transactions, global indexes and the next resharding own your roadmap (Google's own story — F1/AdWords migrated ads off sharded MySQL onto Spanner). NewSQL is that operational debt, refinanced: resharding becomes automatic split movement.
+      <div class="why">Why Spanner: it was literally built as this migration's destination.</div>
+    </div>
+
+    <h3>When Spanner is the WRONG answer</h3>
+    <table class="cmd-tbl">
+      <tr><td>single region, modest scale</td><td>A boring Postgres (or Cloud SQL / AlloyDB) is cheaper, richer in extensions, and has no commit-wait or Paxos tax. Distributed SQL for a single-region CRUD app is résumé-driven design — say so in the interview.</td></tr>
+      <tr><td>analytics / OLAP</td><td>Huge scans and aggregations want columnar engines (BigQuery, ClickHouse). Spanner is row-oriented OLTP; ship changes out via CDC instead.</td></tr>
+      <tr><td>sub-ms reads / cache duty</td><td>Commit-wait + consensus put a physics floor under latency. Point-read-heavy serving at microsecond budgets → Redis / DynamoDB+DAX in front.</td></tr>
+      <tr><td>write firehose, no transactions</td><td>Clickstreams, telemetry, feeds: you're paying for consistency you don't need — Bigtable / Cassandra take the writes for far less.</td></tr>
+      <tr><td>tight budget</td><td>Priced per node-hour + storage, multi-region configs a multiple of regional. The floor for "toy project" money is high; the value only shows up when the requirements are cruel.</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 4. DISTRIBUTED SETUP ===== -->
+  <div class="card" id="distributed">
+    <h2>4 · Distributed setup — what "running it for real" means</h2>
+    <p>You don't operate Spanner; you <b>configure</b> it. A <b>regional</b> instance puts 3 read-write replicas in 3 zones of one region: quorum round-trips are intra-region, so writes land in single-digit-to-low-tens of milliseconds. A <b>multi-region</b> config spreads replicas across regions and adds two special citizens: a <b>default leader region</b> (put it where your writers are — every read-write transaction talks to leaders) and <b>witness replicas</b>, which vote in Paxos but don't store full data — quorum durability without paying for another full copy. The write path is then: client → split leader → <b>cross-region Paxos majority</b> → commit-wait → ack; latency is dominated by the RTT to the nearest quorum, tens of milliseconds and up, set by geography rather than software.</p>
+    <p>Reads are where the config earns its keep. <b>Strong reads</b> must prove freshness — served from the leader, or from a replica after it confirms it's caught up past the read timestamp, which can mean a leader round-trip. <b>Stale reads</b> skip all of that: any nearby replica answers from its history, and TrueTime timestamps make "at most 10 s old" an actual guarantee rather than a hope. Well-built Spanner apps are loud about this split: strong reads on the money paths, bounded staleness everywhere else.</p>
+    <p><b>Where it sits in CAP:</b> Spanner is honestly <b>CP</b> — in a partition, the minority side stops accepting writes; consistency is never traded. And yet Eric Brewer's 2017 paper argues Spanner is <i>"effectively CA"</i>: on Google's private, redundantly-pathed fiber backbone, partitions are so rare that observed availability exceeds five nines, so users are entitled to <i>act as if</i> it were CA. Quote that carefully in an interview — it's a claim about measured availability on Google's network, not an exemption from the theorem. Formally: CP, with availability high enough that nobody builds a fallback.</p>
+    <div class="note gotcha"><b>The two self-inflicted wounds.</b> (1) <b>Hot split:</b> a monotonically increasing key (timestamp, sequence) aims every insert at the tail split — one Paxos leader becomes the whole database's throughput; load-based splitting can't fix a hotspot that's always at the newest key. Fix at schema time: UUIDv4 / bit-reversed sequence / hash prefix. (2) <b>Fat transactions:</b> every extra split in a read-write transaction adds a 2PC participant; a "batch update everything" transaction across dozens of splits turns commit into a cross-region committee meeting. Keep transactions few-split by design — interleaving exists precisely for this.</div>
+  </div>
+
+  <!-- ===== 5. INTERACTIVE ===== -->
+  <div class="card" id="play">
+    <h2>5 · 🎛 Play with it — TrueTime commit-wait, or: why waiting fixes clocks</h2>
+    <p class="small muted" style="margin-top:0">Two split leaders with skewed clocks. You commit <b>T1 on node A</b>; after its ack, a client immediately commits <b>T2 on node B</b> (2 ms think-time). T2 is <i>later in real time</i> — external consistency demands its timestamp sorts later too. Without commit-wait, each node stamps with its own (wrong) clock. With commit-wait, each node stamps <code>TT.now().latest</code> and holds the ack until the stamp is provably in the past (~2ε). ε here equals the skew bound — TrueTime being honest about its uncertainty.</p>
+    <div class="row" style="margin-bottom:10px">
+      <label class="fld" style="min-width:230px">clock skew (A fast, B slow) <span id="skewLbl" class="small">±3 ms → ε = 3 ms</span>
+        <input type="range" id="skewRange" min="0" max="7" step="1" value="3"></label>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="cwChk"> commit-wait (TrueTime)</label>
+      <button class="btn" id="runBtn">▶ Run: T1 on A, then T2 on B</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="stage" id="stage">
+      <div class="nodes" id="nodes"></div>
+      <div id="tline" style="margin-top:14px"></div>
+    </div>
+    <div class="explain" id="explain">Press <b>Run</b>. With commit-wait <b>off</b> and skew ±3 ms, watch the timestamps come out in the wrong order.</div>
+    <div class="cols" style="margin-top:12px">
+      <div><h3>Event log</h3><div class="log" id="log"></div></div>
+      <div><h3>What to try</h3>
+        <ol class="steps small">
+          <li>Skew ±3, commit-wait <b>off</b> → Run. T2 (later in real time) gets the <span style="color:var(--bad)">earlier timestamp</span> — any snapshot between the two sees the spend without the deposit.</li>
+          <li>Slide skew to 0, still off → Run. Perfect clocks need no tricks — the whole problem is skew.</li>
+          <li>Skew ±5, commit-wait <b>on</b> → Run. Each node stamps <code>latest</code>, then sits out ~2ε (progress bar). Order is provably correct — the price is latency.</li>
+          <li>With commit-wait on, slide skew 7 → 1 and re-run: the wait shrinks with ε. Better clocks ⇒ faster commits — <b>that</b> is why Google bought atomic clocks.</li>
+          <li>Skew ±1, off → Run. No violation: the 2 ms gap happened to exceed 2·skew. Violations are rare races — which is why they're so nasty in production.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 6. DEEP DIVES ===== -->
+  <div id="deep"></div>
+  <details class="fold">
+    <summary>🔍 Deep dive · TrueTime mechanics — ε, the sawtooth, and the 2ε wait <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>TrueTime's API is a confession: <code>TT.now()</code> returns not a number but an interval <code>[earliest, latest]</code> guaranteed to contain true absolute time; the half-width is the uncertainty <b>ε</b>. The machinery behind it: each datacenter runs <b>time master</b> machines — some GPS-disciplined, some with atomic (armageddon-resistant, as the paper cheerfully calls them) clocks, deliberately different failure modes. Every server's time daemon polls a mix of masters, rejects outliers, and between polls (~30 s) inflates ε at a conservative assumed drift rate (~200 µs/s). So ε breathes as a <b>sawtooth</b> — in the 2012 paper, roughly 1 to 7 ms, averaging ~4 ms; modern deployments are said to be tighter.</p>
+        <p><b>Commit-wait, precisely:</b> the leader picks commit timestamp <code>s ≥ TT.now().latest</code>, then blocks the <i>visibility</i> of the commit until <code>TT.now().earliest &gt; s</code> — i.e., until every clock on Earth agrees s is in the past. Expected wait ≈ <b>2ε</b> (assign at <code>now+ε</code>, wait until <code>now−ε</code> passes it). The elegant part: the wait <b>overlaps Paxos replication</b>, which also takes milliseconds — so much of the tax hides inside latency you were paying anyway. After that, external consistency is a two-line proof: T2 starts after T1's commit became visible ⇒ true time at T2's start &gt; s₁ ⇒ T2's timestamp (≥ its node's <code>latest</code> ≥ true time) &gt; s₁.</p>
+        <p>Notice the failure philosophy: Spanner never needs clocks to be <i>right</i>, only ε to be an honest bound. Clock trouble ⇒ masters get evicted, ε balloons, commits wait longer — <b>graceful slowdown instead of silent corruption</b>. The one unforgivable failure is ε being a lie (true time outside the interval); the redundant masters and paranoid drift assumptions exist to make that essentially impossible.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Transactions — 2PL for writes, timestamps for reads, 2PC over Paxos <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p><b>Read-write transactions</b> are old-school pessimistic: reads and writes acquire locks in the in-memory lock table of each involved split's <b>leader</b> (wound-wait avoids deadlock: an older transaction wounds a younger lock-holder instead of queueing forever). Single split ⇒ commit is one Paxos write plus commit-wait. Multiple splits ⇒ <b>two-phase commit where every participant is a Paxos group</b>. That sentence defuses the classic 2PC horror story: textbook 2PC blocks forever if the coordinator dies holding everyone's locks — but here the coordinator's state is itself replicated, so when the coordinator <i>leader</i> dies, a new leader is elected, reads the prepare/commit outcome from its group's log, and finishes the protocol. 2PC's fragility was never the two phases; it was the single point of memory. Paxos removes it. The cost that remains is honest latency: prepares to every participant leader, each a consensus round — which is why schema design (interleaving!) fights to keep transactions single-split.</p>
+        <p><b>Read-only transactions</b> touch none of that. Spanner is a <b>multi-version</b> store — every write is stamped with its commit timestamp — so a read-only transaction just picks a timestamp (for strong reads, <code>TT.now().latest</code>) and reads the versions below it. No locks taken, no writers blocked, no aborts; your midnight analytics scan and your checkout path never notice each other. Each replica tracks a <b>t_safe</b> ("I have everything up to here") and can serve any read at t ≤ t_safe locally — this is the machinery that makes <b>bounded-staleness reads from the nearest replica</b> both fast and actually-correct, and it's TrueTime timestamps that let replicas make that promise without phoning the leader.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · NewSQL without atomic clocks — CockroachDB, TiDB, Yugabyte <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p><b>CockroachDB</b> is the "Spanner outside Google" answer, and its central compromise is the clock. No GPS/atomic hardware — just NTP plus a configured <b>max clock offset</b> (default 500 ms) and <b>hybrid logical clocks</b> (physical time + logical counter). Instead of commit-waiting on every write, Cockroach makes <i>reads</i> pay: a read that encounters a value stamped within its uncertainty window can't tell "past or future?", so the transaction performs an <b>uncertainty restart</b> — it retries at a bumped timestamp. Same correctness goal, opposite billing: Spanner taxes every commit a few predictable ms; Cockroach taxes the unlucky reads with retries and tail latency. Data lives in <b>ranges</b> (~512 MB) replicated with <b>Raft</b>; a leaseholder serves reads; isolation is <b>serializable by default</b> (a rarity), and it speaks the Postgres wire protocol. Note the fine print: it guarantees serializability, not Spanner-grade external consistency across the board.</p>
+        <p><b>TiDB</b> splits the stack: stateless SQL nodes over <b>TiKV</b> (RocksDB-based key-value store, Raft-replicated ~100 MB regions), with a Placement Driver issuing timestamps from a central <b>TSO — timestamp oracle</b>. One clock for everyone means no uncertainty dance at all — and a round-trip to the TSO on transactions plus a strong gravitational pull toward one region. It's MySQL wire-compatible (the migration story), commits via Percolator-style 2PC, and bolts on <b>TiFlash</b> columnar replicas for HTAP. <b>YugabyteDB</b> rounds out the field: it reuses the actual PostgreSQL query layer on top of a Raft-replicated document store, with HLC-based timestamps — the "we want real PG compatibility, distributed" bet.</p>
+        <p>The taxonomy to carry: <b>consensus-replicated shards are table stakes</b> (Paxos/Raft everywhere); the differentiator is <b>where timestamps come from</b> — hardware-bounded uncertainty (Spanner), uncertainty-with-retries (CockroachDB, Yugabyte), or a central oracle (TiDB). Every global-SQL design pays the clock tax somewhere; the only question is which line of the bill it appears on.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Aurora is not distributed SQL — and why interviewers probe this <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Amazon <b>Aurora</b> gets name-dropped next to Spanner constantly, and conflating them is a classic interview trap. Aurora is a <b>single-writer, scale-up</b> MySQL/Postgres whose genius lives one layer down: compute and storage are split, and the storage tier keeps <b>6 copies across 3 AZs</b>, acknowledging writes at a <b>4-of-6 quorum</b>. The instance ships only <b>redo log records</b> — "the log is the database" — storage nodes materialize pages themselves, which slashes write amplification and makes crash recovery nearly instant. Up to ~15 read replicas hang off the <i>same shared storage</i>, so replica lag is milliseconds and failover is a promotion, not a rebuild.</p>
+        <p>But notice what it is <i>not</i>: writes still funnel through <b>one</b> writer node — there is no horizontal write scaling, no multi-region strong writes (cross-region replicas are async DR), and SQL throughput tops out at the biggest instance money rents. That's the boundary to say out loud: <b>Aurora scales the storage under one SQL brain; NewSQL scales the brains</b>. When a single writer's ceiling or multi-region writability is the requirement, Aurora graduates to Spanner/CockroachDB territory (AWS's own answer is bolting sharding back on — e.g. Aurora Limitless — which is Vitess-shaped, with sharding's usual asterisks). Until that moment, Aurora is often the <i>better</i> answer: one-region ACID with zero distributed-systems tax.</p>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== 7. AT SCALE ===== -->
+  <div class="card scale" id="scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Ballparks for capacity talk — quote orders of magnitude, not digits.</p>
+    <table class="cmd-tbl">
+      <tr><td>TrueTime ε</td><td>Sawtooth ~<b>1–7 ms, avg ~4 ms</b> in the 2012 paper (30 s master polls + assumed drift); commit-wait ≈ <b>2ε</b>, largely overlapped with Paxos replication. Treat "a few ms of commit-wait" as the quotable figure.</td></tr>
+      <tr><td>write latency</td><td>Regional config: <b>single-digit to low-tens ms</b> (intra-region quorum). Multi-region: <b>tens of ms and up</b> — floor set by RTT to the nearest quorum of regions, i.e., by geography.</td></tr>
+      <tr><td>per-node ballpark</td><td>Order of <b>~10k simple reads/s</b> and <b>a few thousand writes/s</b> per node (small rows), <b>several TB</b> of storage per node — size instances on <i>both</i> throughput and data. Scale by adding nodes; splits rebalance automatically.</td></tr>
+      <tr><td>the unit of scale</td><td>A <b>split</b> has one leader — per-split write throughput is bounded no matter the node count. Hot single rows/keys don't shard away; that's a schema problem, not a capacity problem.</td></tr>
+      <tr><td>availability SLA</td><td>Cloud Spanner: <b>99.999%</b> multi-region, <b>99.99%</b> regional — the five-nines number is the backbone of the "effectively CA" argument.</td></tr>
+      <tr><td>transaction limits</td><td>Commits have size/mutation-count caps — bulk backfills must be chunked. Long-running read-write transactions invite lock contention and aborts; do big reads as read-only (lock-free) transactions.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Failure modes that only appear at scale:</b>
+      <b>tail-split hotspot</b> (monotonic keys → one leader takes 100% of inserts while 99 nodes idle);
+      <b>2PC fan-out</b> (a transaction touching 30 splits pays ~30 prepare legs across regions — batch jobs written like OLTP melt);
+      <b>leader-geography mismatch</b> (default leader region in the US, writers in Asia → every commit swims the Pacific twice);
+      <b>strong-read stampede</b> (everything reads strong "to be safe" → leader-bound read load; bounded staleness exists for a reason);
+      <b>cost cliff</b> (multi-region configs cost a multiple of regional — consistency you don't need is money you don't have).</div>
+  </div>
+
+  <!-- ===== 8. INTERVIEW ===== -->
+  <div class="card" id="interview">
+    <h2>8 · In the interview</h2>
+    <p><b>How it comes up:</b> rarely "explain Spanner" — usually a design whose requirements quietly demand it: <i>global payments, worldwide inventory, multi-region active-active with zero lost updates</i>. The senior move is naming the requirement that forces it: "we need multi-region <b>write</b> availability with transactional integrity — that's distributed SQL territory: Spanner on GCP, CockroachDB elsewhere." Then pre-empt the follow-ups: how it's consistent (TrueTime + commit-wait, external consistency), what it costs (commit latency ≥ quorum RTT + ~2ε, and money), and the schema rules (non-monotonic keys, interleave to keep transactions single-split).</p>
+    <p><b>The choice script:</b> start with regional Postgres until a requirement kills it. Need read scale → replicas/caches. Need one-region write scale → Aurora-class or sharding (Vitess). Need <b>multi-region writes + transactions</b> → Spanner / CockroachDB / TiDB — and in a Google interview, know Spanner's mechanics cold, because the follow-up <i>will</i> be "and why does the waiting help?"</p>
+    <h3>Alternatives — one line each</h3>
+    <table class="cmd-tbl">
+      <tr><td>CockroachDB</td><td>Self-hosted / multi-cloud Spanner-alike: Raft ranges, PG wire, serializable default; NTP + uncertainty restarts instead of atomic clocks — reads may retry.</td></tr>
+      <tr><td>TiDB</td><td>MySQL-compatible distributed SQL; TiKV (RocksDB+Raft) + central timestamp oracle (TSO); TiFlash adds HTAP. Strong in the MySQL-ecosystem migration story.</td></tr>
+      <tr><td>YugabyteDB</td><td>Actual PostgreSQL query layer over Raft-replicated storage with HLC — the "maximum PG compatibility, distributed" option.</td></tr>
+      <tr><td>Aurora</td><td><b>Not</b> distributed SQL: single writer, disaggregated 6-way/3-AZ storage with 4/6 write quorum ("the log is the database"). Superb one-region default; no multi-region writes.</td></tr>
+      <tr><td>AlloyDB / Cloud SQL</td><td>GCP's managed Postgres tier (AlloyDB ≈ Aurora-shaped). The correct answer when the honest requirement is "one region, be boring".</td></tr>
+      <tr><td>Vitess</td><td>Sharded MySQL with a routing layer (YouTube heritage; PlanetScale). Huge scale, but cross-shard transactions/joins are your problem again — the pain Spanner was built to end.</td></tr>
+      <tr><td>DynamoDB (global tables)</td><td>Multi-region NoSQL: single-digit-ms KV at any scale, but no SQL/joins, and classic global tables resolve conflicts last-writer-wins (lost updates by design; a strongly consistent multi-region mode is a recent addition). The contrast, not the competitor.</td></tr>
+    </table>
+    <div class="note info"><b>Phrases that score:</b> "external consistency — commit order matches real-time order, so a snapshot is a true cut of history" · "TrueTime returns an interval; commit-wait holds the commit ~2ε until the timestamp is provably past" · "2PC over Paxos groups — coordinator state is replicated, so 2PC loses its blocking failure mode" · "interleave orders under customers so checkout is single-split, no 2PC" · "keys must not be monotonic or the tail split becomes the write throughput of the database" · "reads that tolerate 10 s staleness go to the nearest replica — that's most reads".</div>
+  </div>
+
+  <!-- ===== 9. CHECK YOURSELF ===== -->
+  <div class="card" id="check">
+    <h2>9 · Check yourself</h2>
+    <details class="qa">
+      <summary>Why does Spanner deliberately make every commit wait, and what exactly is it waiting for?</summary>
+      <div class="a"><p>The leader stamps the transaction with <code>TT.now().latest</code> — the latest true time could possibly be — then holds the commit's visibility until <code>TT.now().earliest</code> exceeds that stamp: until <b>every clock on Earth agrees the timestamp is in the past</b> (~2ε, a few ms). After that, any transaction that starts later must receive a larger timestamp, so timestamp order = real-time order (external consistency). No waiting ⇒ a node with a slow clock could stamp a later transaction earlier, and snapshots/backups would see effects before causes.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Interviewer: "CAP says you can't have consistency and availability. How does Spanner claim both?"</summary>
+      <div class="a"><p>It doesn't, formally — Spanner is <b>CP</b>: during a partition the minority side refuses writes. Brewer's argument is that on Google's private, redundant network, partitions are rare enough that <b>measured availability exceeds 5 nines</b>, so it's <i>"effectively CA"</i> — users don't build fallbacks. The theorem holds; the claim is about how rarely you pay the P. Bonus point: when clocks (not networks) misbehave, Spanner degrades to <i>slower</i>, never to <i>inconsistent</i> — ε grows and commit-wait grows with it.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Your orders table's primary key starts with <code>created_at</code>. What happens at 50k inserts/s, and what are the fixes?</summary>
+      <div class="a"><p>Every insert targets the <b>tail of the keyspace</b> → one split → one Paxos leader takes the entire write load while the rest of the fleet idles; adding nodes changes nothing, and load-based splitting can't help because the hotspot is always the newest key. Fixes: <b>UUIDv4</b> primary key, a <b>bit-reversed sequence</b>, or a <b>hash/shard prefix</b> (keep <code>created_at</code> as a regular column or index it separately). Same disease as monotonic partition keys in DynamoDB/Cassandra — different costume.</p></div>
+    </details>
+    <details class="qa">
+      <summary>How does CockroachDB stay correct without atomic clocks — and where does that cost show up?</summary>
+      <div class="a"><p>Hybrid logical clocks plus a configured <b>max clock offset</b> (default 500 ms). A read that meets a value stamped inside its uncertainty window can't tell whether that write is past or future, so it performs an <b>uncertainty restart</b> — retrying at a higher timestamp. Spanner pays a small, predictable tax on every commit (commit-wait ~2ε with ε in single-digit ms); Cockroach pays an unpredictable tax on reads (retries, tail latency) that grows with real skew. Same theorem, different victim.</p></div>
+    </details>
+    <details class="qa">
+      <summary>When is Aurora the better answer than any distributed SQL — and what's the tell that you've outgrown it?</summary>
+      <div class="a"><p>When writes fit one (large) writer and users are effectively one-region: you get ACID Postgres/MySQL, ms-lag read replicas on shared storage, fast failover — with zero distributed-transaction tax and no schema landmines. The tells you've outgrown it: the writer is vertically maxed, or the business demands <b>multi-region writes with no lost updates</b> — async cross-region replicas can't deliver that. Then it's Spanner/CockroachDB, and you accept quorum-RTT commit latency as the price of the guarantee.</p></div>
+    </details>
+  </div>
+
+  <p class="small muted">Sources: this page condenses the Spanner paper (OSDI 2012), Brewer's "Spanner, TrueTime and the CAP Theorem" (2017), Cloud Spanner documentation, CockroachDB &amp; TiDB architecture docs, and the Aurora paper. Numbers are order-of-magnitude interview figures — verify current quotas before quoting in production.</p>
+</div>
+
+<script src="site.js"></script>
+<script>
+/* ===== TrueTime commit-wait simulator ===== */
+const GAP  = 2;      // ms of client think-time between T1 ack and T2 start
+const PROC = 0.25;   // ms local processing before ack when there is no wait
+const STEP = 0.25;   // simulated ms per animation frame
+const FRAME = 45;    // wall-clock ms per frame
+
+let S = null, timer = null;
+const $ = id => document.getElementById(id);
+const fmt = x => (Math.round(x * 100) / 100).toFixed(2);
+
+function defaultState(){
+  return {
+    t: 0,
+    skew: +$('skewRange').value,
+    eps:  +$('skewRange').value,   // TrueTime's honest bound = the real skew
+    cw:   $('cwChk').checked,
+    running: false,
+    phase: 'idle',      // idle|arm|wait1|ack1wait|gap|wait2|ack2wait|done
+    waitFrom: 0,
+    ts1: null, ts2: null,
+    ack1: null, ack2: null,
+    ackDue: 0,
+    verdict: null,
+  };
+}
+const clockA = t => t + S.skew;   // A runs fast
+const clockB = t => t - S.skew;   // B runs slow
+
+function logLine(cls, msg){
+  const d = document.createElement('div');
+  d.className = 'l ' + cls;
+  d.textContent = msg;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+const tlog = (cls, msg) => logLine(cls, `[t=${fmt(S.t)}ms] ` + msg);
+function explain(html){ $('explain').innerHTML = html; }
+
+function commitOn(node){ // node: 'A'|'B' — assign timestamp, enter wait/ack phase
+  const local = node === 'A' ? clockA(S.t) : clockB(S.t);
+  const ts = S.cw ? local + S.eps : local;
+  if (node === 'A') S.ts1 = ts; else S.ts2 = ts;
+  const name = node === 'A' ? 'T1' : 'T2';
+  tlog('cmd', `${name} commit request → node ${node} (local clock ${fmt(local)}, TT.now()=[${fmt(local - S.eps)}, ${fmt(local + S.eps)}])`);
+  if (S.cw){
+    tlog('info', `${node} assigns ts(${name}) = TT.now().latest = ${fmt(ts)}`);
+    if (S.eps > 0){
+      tlog('warn', `${node} commit-wait: hold ack until TT.now().earliest > ${fmt(ts)} (≈ 2ε = ${fmt(2 * S.eps)} ms)`);
+      S.phase = node === 'A' ? 'wait1' : 'wait2';
+      S.waitFrom = S.t;
+    } else {
+      tlog('info', `ε = 0 → nothing to wait out (perfect clocks are a luxury TrueTime buys down, not assumes)`);
+      S.ackDue = S.t + PROC;
+      S.phase = node === 'A' ? 'ack1wait' : 'ack2wait';
+    }
+  } else {
+    tlog('info', `${node} assigns ts(${name}) = its local clock = ${fmt(ts)} — trusting a clock that is ${node === 'A' ? '+' : '−'}${fmt(S.skew)} ms wrong`);
+    S.ackDue = S.t + PROC;
+    S.phase = node === 'A' ? 'ack1wait' : 'ack2wait';
+  }
+}
+
+function finish(){
+  S.ack2 = S.t;
+  tlog('ok', `T2 ACK → client (ts₂ = ${fmt(S.ts2)})`);
+  const ok = S.ts2 > S.ts1;
+  S.verdict = ok;
+  if (ok){
+    tlog('ok', `✔ ts₂ (${fmt(S.ts2)}) > ts₁ (${fmt(S.ts1)}) — timestamp order matches real-time order`);
+    explain(`<b>External consistency holds.</b> T2 began after T1's ack and its timestamp ${fmt(S.ts2)} sorts after T1's ${fmt(S.ts1)}. ${S.cw ? `Each commit paid ~${fmt(2 * S.eps)} ms of commit-wait — the fee for planet-trustworthy timestamps.` : `No commit-wait was needed this run only because the ${GAP} ms gap exceeded 2·skew — a race you cannot count on.`}`);
+  } else {
+    tlog('err', `✘ VIOLATION: ts₂ (${fmt(S.ts2)}) ≤ ts₁ (${fmt(S.ts1)}) — the later transaction got the earlier timestamp`);
+    explain(`<b style="color:var(--bad)">External consistency violated.</b> T2 happened strictly after T1, but sorts <b>before</b> it. Any snapshot read, backup or audit replay at a timestamp between ${fmt(S.ts2)} and ${fmt(S.ts1)} sees the <i>spend without the deposit that funded it</i>. Serializability alone permits this; commit-wait exists to forbid it.`);
+  }
+  S.phase = 'done';
+  S.running = false;
+  $('runBtn').disabled = false;
+  clearInterval(timer); timer = null;
+}
+
+function tick(){
+  S.t += STEP;
+  switch (S.phase){
+    case 'arm':
+      if (S.t >= 1) commitOn('A');
+      break;
+    case 'wait1':
+      if (clockA(S.t) - S.eps > S.ts1){
+        S.ack1 = S.t;
+        tlog('ok', `TT.now().earliest on A = ${fmt(clockA(S.t) - S.eps)} > ts₁ → T1 ACK → client (ts₁ = ${fmt(S.ts1)}, now provably in the past everywhere)`);
+        S.phase = 'gap';
+      }
+      break;
+    case 'ack1wait':
+      if (S.t >= S.ackDue){
+        S.ack1 = S.t;
+        tlog('ok', `T1 ACK → client (ts₁ = ${fmt(S.ts1)})`);
+        S.phase = 'gap';
+      }
+      break;
+    case 'gap':
+      if (S.t >= S.ack1 + GAP){
+        tlog('t', `client saw T1 complete; ${GAP} ms later it issues T2 on node B — strictly after T1 in real time`);
+        commitOn('B');
+      }
+      break;
+    case 'wait2':
+      if (clockB(S.t) - S.eps > S.ts2){
+        tlog('ok', `TT.now().earliest on B = ${fmt(clockB(S.t) - S.eps)} > ts₂ → wait over`);
+        finish();
+      }
+      break;
+    case 'ack2wait':
+      if (S.t >= S.ackDue) finish();
+      break;
+  }
+  render();
+}
+
+function nodeCard(name, isA){
+  const local = isA ? clockA(S.t) : clockB(S.t);
+  const ts   = isA ? S.ts1 : S.ts2;
+  const ack  = isA ? S.ack1 : S.ack2;
+  const waiting = (isA && S.phase === 'wait1') || (!isA && S.phase === 'wait2');
+  const badge = (isA ? '+' : '−') + fmt(S.skew) + ' ms';
+  let h = `<div class="node ${isA ? 'primary' : 'replica'} ${waiting ? 'active' : ''}" style="min-width:230px">
+    <div class="title">${isA ? '🅰️ Node A — leader, split [a–m]' : '🅱️ Node B — leader, split [n–z]'} <span class="badge">clock ${badge}</span></div>
+    <div class="kv"><span class="k">local clock</span><span>${fmt(local)} ms</span></div>
+    <div class="kv"><span class="k">TT.now()</span><span>[${fmt(local - S.eps)}, ${fmt(local + S.eps)}]</span></div>`;
+  if (ts !== null) h += `<div class="kv"><span class="k">${isA ? 'ts₁' : 'ts₂'}</span><span>${fmt(ts)}</span></div>`;
+  if (waiting){
+    const p = Math.min(100, (S.t - S.waitFrom) / (2 * S.eps) * 100);
+    h += `<div class="small" style="color:var(--warn);margin-top:6px">⏳ commit-wait…</div>
+      <div style="height:8px;background:var(--bg);border:1px solid var(--line);border-radius:5px;overflow:hidden">
+        <div style="height:100%;width:${p}%;background:var(--warn)"></div></div>`;
+  } else if (ack !== null){
+    h += `<div class="small" style="color:var(--ok);margin-top:6px">✅ acked at t=${fmt(ack)}</div>`;
+  } else {
+    h += `<div class="small muted" style="margin-top:6px">idle</div>`;
+  }
+  return h + `</div>`;
+}
+
+function render(){
+  const phaseTxt = {
+    idle: 'waiting for Run', arm: 'client → T1 heading to A', wait1: 'A in commit-wait',
+    ack1wait: 'A committing T1', gap: 'client think-time before T2', wait2: 'B in commit-wait',
+    ack2wait: 'B committing T2',
+    done: S.verdict ? '✔ order correct' : '⚠ order violated',
+  }[S.phase];
+  let h = `<div class="node" style="min-width:170px"><div class="title">🧑‍💻 Client</div>
+    <div class="kv"><span class="k">true time</span><span>${fmt(S.t)} ms</span></div>
+    <div class="kv"><span class="k">step</span><span>${phaseTxt}</span></div>
+    <div class="small muted" style="margin-top:6px">runs T1, waits for ack,<br>then runs T2 (${GAP} ms later)</div></div>`;
+  h += nodeCard('A', true) + nodeCard('B', false);
+  $('nodes').innerHTML = h;
+
+  // timestamp-axis timeline
+  let t = `<div class="small muted" style="margin-bottom:4px">snapshot / audit order — commits sorted by <b>timestamp</b> →</div>
+    <div style="position:relative;height:58px;background:var(--panel);border:1px solid var(--line);border-radius:10px">
+    <div style="position:absolute;left:3%;right:3%;top:24px;height:2px;background:var(--line)"></div>`;
+  const span = Math.max(S.ts1 || 0, S.ts2 || 0, 12) + 3;
+  const dot = (ts, label, color, warnTxt) => {
+    const pct = 5 + (ts / span) * 90;
+    return `<div style="position:absolute;left:${pct}%;top:12px;transform:translateX(-50%);text-align:center">
+      <div style="width:12px;height:12px;border-radius:50%;background:${color};margin:0 auto 2px;box-shadow:0 0 7px ${color}"></div>
+      <div style="font-size:11px;color:${color};white-space:nowrap">${label} @ ${fmt(ts)}${warnTxt || ''}</div></div>`;
+  };
+  if (S.ts1 !== null) t += dot(S.ts1, 'T1', 'var(--accent)');
+  if (S.ts2 !== null) t += dot(S.ts2, 'T2', S.phase === 'done' && !S.verdict ? 'var(--bad)' : 'var(--accent2)',
+                               S.phase === 'done' && !S.verdict ? ' ⚠ sorts first!' : '');
+  if (S.ts1 === null && S.ts2 === null) t += `<div class="small muted" style="position:absolute;left:0;right:0;top:20px;text-align:center">commits will land here, positioned by their timestamps</div>`;
+  t += `</div>`;
+  $('tline').innerHTML = t;
+}
+
+function run(){
+  if (S && S.running) return;
+  const keepLog = $('log').childNodes.length > 0;
+  S = defaultState();
+  S.running = true;
+  S.phase = 'arm';
+  $('runBtn').disabled = true;
+  if (keepLog) logLine('t', '────────────────────────────');
+  logLine('t', `run: skew ±${fmt(S.skew)} ms, ε = ${fmt(S.eps)} ms, commit-wait ${S.cw ? 'ON' : 'OFF'}, client gap ${GAP} ms`);
+  explain('Running… node A commits T1, then the client fires T2 at node B.');
+  timer = setInterval(tick, FRAME);
+  render();
+}
+
+function reset(){
+  if (timer){ clearInterval(timer); timer = null; }
+  S = defaultState();
+  $('log').innerHTML = '';
+  $('runBtn').disabled = false;
+  logLine('t', 'reset — pick a skew, toggle commit-wait, press Run');
+  explain('Press <b>Run</b>. With commit-wait <b>off</b> and skew ±3 ms, watch the timestamps come out in the wrong order.');
+  render();
+}
+
+$('skewRange').oninput = () => {
+  $('skewLbl').textContent = `±${$('skewRange').value} ms → ε = ${$('skewRange').value} ms`;
+  if (S && !S.running){ S.skew = +$('skewRange').value; S.eps = S.skew; render(); }
+};
+$('cwChk').onchange = () => { if (S && !S.running){ S.cw = $('cwChk').checked; render(); } };
+$('runBtn').onclick = run;
+$('resetBtn').onclick = reset;
+
+reset();
+</script>
+</body>
+</html>

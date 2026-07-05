@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MongoDB — Deep Dive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap art">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🍃 MongoDB — documents, replica sets &amp; the shard-key bet</h1>
+      <div class="sub">The document database: store data the way the app reads it, tune consistency per query, and choose your shard key like you're choosing a spouse. <span class="rt">☕ ~15 min read</span></div>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">document model</span>
+      <span class="tag">BSON ≤ 16 MB</span>
+      <span class="tag">replica set</span>
+      <span class="tag">tunable consistency</span>
+      <span class="tag">shard key</span>
+    </div>
+    <p class="lead">MongoDB stores <b>whole aggregates as single documents</b> — the order with its line items, address and status packed together, the way the application will read it. That one bet buys you atomic single-document updates, no joins on the hot path, and easy horizontal sharding; the price is that <b>your access patterns become your schema</b>, and a badly chosen document boundary (or shard key) is the most expensive mistake in the system.</p>
+    <div class="note info"><b>In the interview:</b> MongoDB shows up when entities are <i>heterogeneous and read as a whole</i> — product catalogs, user profiles, CMS content, flexible event payloads. The interviewer expects you to defend it against <b>"why not Postgres with JSONB?"</b>, to reason about <b>embed vs reference</b>, to name the <b>w:1 rollback</b> gotcha, and to explain why sharding on a monotonic key melts one shard.</div>
+  </div>
+
+  <div class="card">
+    <h3>On this page</h3>
+    <div class="toc">
+      <a href="#model">Mental model</a>
+      <a href="#api">Syntax &amp; API</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#distributed">Distributed setup</a>
+      <a href="#play">🎛 Play with it</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#scale">At scale</a>
+      <a href="#interview">In the interview</a>
+      <a href="#check">Check yourself</a>
+    </div>
+  </div>
+
+  <!-- ===== 1. MENTAL MODEL ===== -->
+  <div class="card" id="model">
+    <h2>1 · The mental model: assembled boxes, not parts bins</h2>
+    <p>Open a relational database and you're standing in a parts warehouse: customers in one aisle, orders in another, order lines in a third — everything shelved by <i>type</i>, and every read is a walk through the aisles with a picking list (joins) to reassemble the thing you actually wanted. Open MongoDB and you're in a room of <b>finished boxes</b>: each <b>document</b> is a whole aggregate — the order with its items, shipping address and payment history inside — pre-packed exactly the way it will be read. The whole philosophy fits in one sentence: <b>data that is accessed together is stored together</b>.</p>
+    <p>Physically, a document is <b>BSON</b> — binary JSON with real types (ObjectId, dates, 64-bit ints, Decimal128, raw binary), capped at <b>16 MB</b> per document. Documents live in <b>collections</b>, and collections don't enforce a schema: two documents in <code>products</code> can have completely different fields. Don't mistranslate that as "no schema" — the schema exists, it just <b>lives in your application code</b> (plus optional server-side validation rules) instead of in <code>CREATE TABLE</code>. Flexible schema is a loan: cheap to take out when iterating fast, repaid later in defensive code that handles three generations of document shapes.</p>
+    <p>The design decision that dominates everything else is <b>embed vs reference</b>. A user's shipping addresses (one-to-few, read with the user, bounded) — <b>embed</b> them. A user's orders (one-to-many, queried independently, growing forever) — <b>reference</b> them from their own collection, or group them with the <i>bucket pattern</i>. The classic self-inflicted wound is the <b>unbounded array</b>: comments embedded in a post, events embedded in a device. It demos beautifully, then the hot document grows toward 16 MB, every update rewrites megabytes, and the array's index bloats. If a list can grow without limit, it doesn't belong inside the document.</p>
+    <p>Why the obsession with getting the boundary right? Because in MongoDB <b>the document is the unit of atomicity</b>. Every single-document write — even one that sets three fields, increments a counter and pushes into an array at once — is atomic, always, no transaction required. Model the data so that each business action touches <i>one</i> document, and you get ACID-feeling behavior for free at document granularity. Multi-document transactions exist (more later), but leaning on them constantly is a sign the model is fighting you.</p>
+    <div class="note warn"><b>The one-question modeler:</b> "how does the app read this data?" Read as one thing → one document. Recombined in ways you can't predict at design time → that's a relational workload wearing a hoodie; normalize it in Postgres instead.</div>
+  </div>
+
+  <!-- ===== 2. SYNTAX ===== -->
+  <div class="card" id="api">
+    <h2>2 · Syntax &amp; core API</h2>
+    <p>Nobody writes queries in a system-design round, but naming the operators fluently signals you've actually operated this thing. The API is JavaScript-flavored: filters, updates and pipelines are all documents themselves.</p>
+
+    <h3>CRUD &amp; queries</h3>
+    <table class="cmd-tbl">
+      <tr><td>insertOne / insertMany</td><td>Write documents. <code>_id</code> is auto-filled with an <b>ObjectId</b> — 12 bytes whose <b>first 4 bytes are a timestamp</b> (remember this; it decides a shard's fate later).</td></tr>
+      <tr><td>find(filter, projection)</td><td>Rich declarative filters: <code>$eq/$gt/$in/$regex</code>, nested fields via dot-paths, array operators (<code>$elemMatch</code>, <code>$all</code>). Projection trims fields — the seed of a <i>covered query</i>.</td></tr>
+      <tr><td>updateOne + operators</td><td><code>$set</code>, <code>$inc</code>, <code>$push</code>, <code>$pull</code>, <code>$addToSet</code> mutate <b>in place, atomically</b> — one document's worth of changes is all-or-nothing, always.</td></tr>
+      <tr><td>findOneAndUpdate</td><td>Atomic read-modify-write returning the doc — the idiom for claiming a job, bumping a counter, optimistic version checks.</td></tr>
+      <tr><td>aggregate([stages])</td><td>The <b>aggregation pipeline</b>: documents flow through <code>$match → $group → $sort…</code>. This is Mongo's GROUP BY, its reporting engine, and its join (<code>$lookup</code>).</td></tr>
+      <tr><td>createIndex</td><td>Secondary <b>B-tree</b> indexes, same mental model as Postgres: compound, unique, TTL, partial, multikey, text, geo.</td></tr>
+      <tr><td>explain("executionStats")</td><td>The truth serum: <b>IXSCAN</b> vs <b>COLLSCAN</b>, <code>totalDocsExamined</code> vs <code>nReturned</code>. A healthy query examines about what it returns.</td></tr>
+    </table>
+    <pre class="code"><span class="c">// find: filter + projection + sort — all declarative documents</span>
+db.products.find(
+  { category: "laptop", "specs.ram_gb": { $gte: 16 }, price: { $lte: 2000 } },
+  { name: 1, price: 1, _id: 0 }            <span class="c">// projection: only what you need</span>
+).sort({ price: -1 }).limit(20)
+
+<span class="c">// one document, several changes — atomic WITHOUT a transaction</span>
+db.orders.updateOne(
+  { _id: orderId, status: "cart" },         <span class="c">// filter doubles as a guard (CAS-style)</span>
+  { $set: { status: "paid" }, $inc: { version: 1 },
+    $push: { events: { t: new Date(), e: "paid" } } }
+)</pre>
+
+    <h3>Aggregation pipeline</h3>
+    <pre class="code"><span class="c">// revenue by SKU for July — stages run top to bottom like a unix pipe</span>
+db.orders.aggregate([
+  { $match: { status: "paid", ts: { $gte: ISODate("2026-07-01") } } },  <span class="c">// filter FIRST — this stage can use indexes</span>
+  { $unwind: "$items" },                                    <span class="c">// explode the embedded array</span>
+  { $group: { _id: "$items.sku", revenue: { $sum: "$items.price" }, n: { $sum: 1 } } },
+  { $sort: { revenue: -1 } }, { $limit: 10 }
+])
+<span class="c">// $lookup = left outer join — exists, works, and is a smell if it's on every hot path</span></pre>
+
+    <h3>Indexes worth naming</h3>
+    <table class="cmd-tbl">
+      <tr><td>compound</td><td><code>{ userId: 1, ts: -1 }</code> — order matters: equality fields first, then sort, then range (the ESR rule of thumb). Serves any <i>prefix</i> of itself.</td></tr>
+      <tr><td>multikey</td><td>Index a field that's an <b>array</b> → one index entry per element. Powerful (tags, SKUs), and the reason unbounded arrays bloat storage.</td></tr>
+      <tr><td>TTL</td><td><code>{ createdAt: 1 }, { expireAfterSeconds: 86400 }</code> — a background sweep (runs on the order of once a minute) deletes expired docs. Sessions, tokens, caches.</td></tr>
+      <tr><td>partial</td><td>Index only documents matching a predicate — e.g. only <code>status: "active"</code>. Small index, cheap writes for everything else.</td></tr>
+      <tr><td>text / 2dsphere</td><td>Basic full-text and geo queries. Real relevance search wants a Lucene engine (Atlas Search / Elasticsearch) — say so before the interviewer does.</td></tr>
+      <tr><td>hashed</td><td>Index on a hash of the field — exists almost entirely to serve <b>hashed shard keys</b>.</td></tr>
+      <tr><td>covered query</td><td>Filter + projection satisfied <i>entirely from the index</i> — zero document fetches. The projection <code>{ name: 1, _id: 0 }</code> above is fishing for exactly this.</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 3. USE CASES ===== -->
+  <div class="card" id="usecases">
+    <h2>3 · Use cases — when documents are the answer</h2>
+
+    <div class="recipe">
+      <div class="rh">🛍 Product catalog — the canonical win</div>
+      A laptop has CPU, RAM, screen size; a t-shirt has fabric, fit, color; a book has ISBN and page count. In a relational schema this ends as a 300-column table of NULLs or an EAV monstrosity. As documents, each product simply carries its own attributes, with indexes on the fields people actually filter by.
+      <div class="why">Why Mongo: per-document shape variance is the native case, not a workaround; new product types ship without migrations.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">👤 User profiles &amp; preferences</div>
+      Profile, settings, notification preferences, feature flags, saved addresses — read as one blob on every login, written field-by-field. One document per user, fetched by <code>_id</code> in one round-trip, updated atomically with <code>$set</code>.
+      <div class="why">Why Mongo: the read is always "the whole aggregate for one user" — the exact shape a document is.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">📰 CMS / content platform</div>
+      Articles with nested blocks (paragraphs, embeds, galleries), drafts whose structure keeps evolving, per-tenant custom fields. Content is a tree; documents store trees natively, and the editor round-trips the same JSON it renders.
+      <div class="why">Why Mongo: the document <i>is</i> the article; versioned shapes coexist in one collection while the product iterates.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">📡 Device events with the bucket pattern</div>
+      IoT readings or user activity where payload shape varies by device type. Instead of one doc per reading (billions of tiny docs) or one array per device (unbounded!), store <b>one document per device per hour</b> with a bounded array of readings inside.
+      <div class="why">Why the bucket: bounded growth, ~60× fewer index entries, and reads fetch an hour of data in one document. (Dedicated time-series collections exist too — name them, then move on.)</div>
+    </div>
+
+    <h3>When it's the WRONG answer</h3>
+    <table class="cmd-tbl">
+      <tr><td>many-to-many + ad-hoc joins</td><td>Students↔courses↔teachers, queried from every direction. Documents force you to pick <i>one</i> nesting; every other access path becomes app-side joins or <code>$lookup</code> chains. Normalize it — Postgres.</td></tr>
+      <tr><td>cross-entity invariants</td><td>Debit one account, credit another, never half — double-entry ledgers, inventory reservations. Multi-doc transactions exist but cost latency and complexity; a relational DB gives this for free.</td></tr>
+      <tr><td>analytics / OLAP</td><td>"Scan 2 B rows, group by 3 dimensions" — the aggregation pipeline is not a columnar warehouse. Ship to ClickHouse / BigQuery / Snowflake.</td></tr>
+      <tr><td>search with relevance</td><td><code>$text</code> is a checkbox feature. Typo tolerance, ranking, facets → Lucene (Elasticsearch / OpenSearch / Atlas Search).</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 4. DISTRIBUTED SETUP ===== -->
+  <div class="card" id="distributed">
+    <h2>4 · Distributed setup — replica sets, then shards</h2>
+    <p>Unit one is the <b>replica set</b>: one <b>primary</b> takes all writes and appends them to the <b>oplog</b> (a capped collection of idempotent operations); <b>secondaries</b> tail the oplog and replay it. If the primary dies, the survivors hold an <b>election</b> (a Raft-style majority vote; with default timeouts failover completes on the order of ~10 seconds) and a secondary promotes itself. Clients use the same connection string throughout — drivers discover the new primary and retry. A production set is 3 or 5 data-bearing members; you can stretch to 50 members but only <b>7 vote</b>.</p>
+    <p>What makes MongoDB interesting in interviews is that consistency is <b>tunable per operation</b>, on three dials. <b>writeConcern</b>: <code>w:1</code> acks after the primary alone; <code>w:"majority"</code> waits for a majority to persist it (the default since 5.0). <b>readConcern</b>: <code>local</code> reads whatever the node has; <code>majority</code> reads only majority-committed data; <code>linearizable</code> gives real-time guarantees on the primary at real latency cost. <b>readPreference</b>: <code>primary</code> by default, or offload to secondaries — accepting that secondaries are <b>asynchronous replicas</b>, so a user who just wrote may read the past. The senior move is naming <i>which dial each endpoint gets</i>: money path <code>w:majority / readConcern:majority</code>, activity feed <code>w:1</code> + secondary reads.</p>
+    <div class="note gotcha"><b>The classic gotcha — w:1 + failover = silent un-write.</b> Primary acks your write at <code>w:1</code>, dies before any secondary copied it; a new primary is elected without it. When the old primary rejoins, it <b>rolls back</b> the acked write (dumped to a rollback file for a human to contemplate). The user saw "saved"; the database disagrees. If losing it hurts, the answer is <code>w:"majority"</code> — you pay one replication round-trip to make the write election-proof.</div>
+    <p>When one primary can't carry the write rate or the working set, you <b>shard</b>: data splits across multiple replica sets (shards) by ranges of a <b>shard key</b>. Stateless <b>mongos</b> routers front the cluster, and a <b>config server replica set</b> stores the routing table: which chunk (contiguous key range, default max size on the order of 64–128 MB depending on version) lives on which shard. A <b>balancer</b> splits and migrates chunks to keep shards even. Every query now has two possible shapes: filter contains the shard key → <b>targeted</b> to one shard; otherwise → <b>scatter-gather</b> to all shards, where p99 latency is the <i>slowest</i> shard's answer.</p>
+    <p>And so the whole game compresses into one decision: <b>the shard key</b>. A <b>ranged</b> key preserves order (great for range scans, targeted lookups) but a monotonically increasing key — like the default ObjectId with its timestamp prefix — aims <i>every insert at the single chunk at the end of the range</i>: one shard burns while the rest idle. A <b>hashed</b> key spreads writes evenly but destroys order: every range query becomes scatter-gather. Resharding online exists (5.0+) but rewrites the whole collection in the background over hours — which is why the folklore says <b>you marry your shard key</b>. The simulator below lets you feel the trade in ten clicks.</p>
+  </div>
+
+  <!-- ===== 5. INTERACTIVE ===== -->
+  <div class="card" id="play">
+    <h2>5 · 🎛 Play with it — the shard-key bet</h2>
+    <p class="small muted" style="margin-top:0">Four shards behind a <b>mongos</b> router. Pick a shard key, pour in inserts, and watch where they land — bars are total docs, the 🔥 flame marks a shard taking &gt;60% of recent writes. Then run the three queries and see which route to <b>one shard (targeted, green)</b> and which fan out to <b>all four (scatter-gather, orange)</b>. Changing the key resets the cluster — that's resharding for you.</p>
+    <div class="row" style="margin-bottom:10px">
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px">shard key
+        <select id="keySel">
+          <option value="objectid">_id: ObjectId (ranged — the default)</option>
+          <option value="hashed">hashed(_id)</option>
+          <option value="userid">userId (ranged)</option>
+        </select>
+      </label>
+      <button class="btn" id="insBtn">➕ Insert ×10</button>
+      <button class="btn sec" id="ins50Btn">⏩ Insert ×50</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="stage" id="stage"><div class="nodes" id="nodes"></div></div>
+    <div class="row" style="margin-top:10px">
+      <span class="small muted">Run a query:</span>
+      <button class="btn sec" id="qIdBtn">🔎 find({_id: …})</button>
+      <button class="btn sec" id="qUserBtn">👤 find({userId:"u07"})</button>
+      <button class="btn sec" id="qTimeBtn">🕐 find({_id ≥ 1 h ago})</button>
+    </div>
+    <div class="explain" id="explain">Insert a few batches with the default ObjectId key and watch which shard sweats.</div>
+    <div class="cols" style="margin-top:12px">
+      <div><h3>Event log</h3><div class="log" id="log"></div></div>
+      <div><h3>What to try</h3>
+        <ol class="steps small">
+          <li>Keep <b>ObjectId</b>, Insert ×50 twice → every write lands on ONE shard (🔥), even while the balancer migrates older chunks away — the write frontier never moves.</li>
+          <li>Run the queries: <code>_id</code> lookup is targeted, the 1-hour range is targeted <i>onto the hot shard</i>, the user query scatters to all four.</li>
+          <li>Switch to <b>hashed(_id)</b>, Insert ×50 → perfectly even writes; <code>_id</code> lookup still targeted… but the range query now scatters — hashing destroyed order.</li>
+          <li>Switch to <b>userId</b>, Insert ×50 → even-ish writes, and "u07's orders" becomes a one-shard query. If every query is per-user, this is the marriage that lasts.</li>
+          <li>Notice every key switch wiped the cluster: in production that's <code>reshardCollection</code> — hours of background rewriting. Choose once, choose well.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 6. DEEP DIVES ===== -->
+  <div id="deep"></div>
+  <details class="fold">
+    <summary>🔍 Deep dive · Embed vs reference — the patterns that make or break the model <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>The honest rules are boring: <b>embed</b> for one-to-few, data owned by the parent, read together, bounded (addresses in a user, line items in an order). <b>Reference</b> for one-to-many and anything queried on its own (orders out of users, comments out of posts). The interesting part is the middle, where the named patterns live.</p>
+        <p><b>Extended reference</b> — reference, but copy the 2–3 fields you always need into the referrer: the order stores <code>customerId</code> <i>plus</i> <code>customerName</code> and city, so the orders list renders with zero joins. You've bought read speed with a denormalization debt: names change rarely, and when they do, a background pass fixes history. Saying "I denormalize deliberately and I know the update cost" is precisely the signal interviewers fish for.</p>
+        <p><b>Bucket</b> — for streams: one document per device per hour, readings appended into a bounded array with a count field; when full, roll to a new bucket. Turns billions of tiny docs into millions of medium ones, collapses index size, matches the read ("last hour of sensor 7"). <b>Outlier</b> — model for the 99%: a post document embeds its likes, but the 0.1% of viral posts set an <code>overflow: true</code> flag and spill extra likes to a side collection, so Bieber doesn't dictate schema for everyone. <b>Subset</b> — embed the newest 10 comments for first paint, keep the full history referenced.</p>
+        <p>The anti-patterns are the same list inverted: <b>unbounded arrays</b> (any embedded list without a cap), <b>16 MB roulette</b> (documents that only <i>usually</i> fit), and <b>relational cosplay</b> — fully normalized collections joined by <code>$lookup</code> on every read, which combines the guarantees of neither world. And for blobs: GridFS chunks files into ~255 KB pieces inside the DB, but in a system-design answer, large binaries go to object storage and the document keeps the URL.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · WiredTiger — what actually happens on disk <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Since 3.2 the default storage engine is <b>WiredTiger</b>, and it quietly retired MongoDB's worst old reputation. Writers get <b>document-level concurrency</b>: two updates to different documents in one collection proceed in parallel (the ancient engine locked whole databases, then collections). Under the hood it's <b>MVCC</b> — readers see a consistent snapshot while writers work on copies; conflicting writers to the <i>same</i> document retry via optimistic concurrency rather than blocking.</p>
+        <p>Durability is the standard WAL recipe wearing different names. Writes land in cache and in the <b>journal</b> (write-ahead log), which is fsynced on the order of every 100 ms — and immediately for writes demanding <code>j: true</code>, which <code>w:"majority"</code> implies by default. Every ~60 s WiredTiger writes a <b>checkpoint</b>, a clean consistent image of the data files; crash recovery is "load the last checkpoint, replay the journal since". Lose power at the wrong instant with <code>w:1</code> and no journal ack, and the last handful of milliseconds is gone — one more reason the money path runs at majority.</p>
+        <p>Two numbers worth carrying: the WiredTiger <b>cache defaults to roughly half of (RAM − 1 GB)</b>, and it's a <i>document</i> cache — your working set (hot docs + indexes) should fit inside or latency falls off a cliff; and data is <b>compressed on disk</b> — Snappy by default (fast, ~2–4× on JSON-ish data), zstd/zlib if you trade CPU for space, prefix compression for indexes. BSON's repeated field names compress beautifully, which is why "documents waste space on keys" is mostly an obsolete complaint.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Replication mechanics — oplog, elections &amp; the rollback story <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>The <b>oplog</b> is a capped collection (<code>local.oplog.rs</code>) of <i>idempotent</i> operations — not the statements you ran, but their effects (an <code>$inc</code> is logged as the resulting <code>$set</code>-like op), so replaying twice is safe. Secondaries tail it like a change feed and apply ops in batches. Its size (default ~5% of free disk, within roughly a 1–50 GB window) is your <b>replication headroom</b>: a secondary that falls behind by more than the oplog window can't catch up incrementally and must do a full resync. Watch <b>replication lag</b> like a fire alarm — it's also your staleness bound for secondary reads and the data-loss bound for <code>w:1</code>.</p>
+        <p><b>Elections</b> are Raft-flavored: terms, majority votes, and a same-term guarantee that only one primary exists. The subtlety interviewers love: during a network partition the <i>old</i> primary may not yet know it's deposed — for a few seconds a stale primary can still serve <code>readConcern: local</code> reads on the minority side. That's why <code>linearizable</code> reads exist (they confirm a majority round-trip before answering) and why "MongoDB is CP-ish, but only if you pay at both the write and read counter" is the accurate summary.</p>
+        <p>After a failover, the deposed primary compares its oplog with the new primary's, finds the divergence point, and <b>rolls back</b> everything after it — those ops are written to rollback files, not merged. Reads at <code>readConcern: majority</code> never see such doomed writes, which is the practical reason that dial exists. One architecture note that scores points: a <b>PSA</b> set (primary–secondary–arbiter, where the arbiter votes but stores nothing) keeps <i>electing</i> fine when a data node dies, but <code>w:"majority"</code> writes need a majority of <i>data-bearing</i> members — with one of two data nodes down they stall. Arbiters are a budget trick with a sharp edge.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Transactions — real ACID, and why reaching for it is a smell <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Since 4.0 MongoDB has genuine multi-document ACID transactions on replica sets, and since 4.2 across shards (a two-phase commit coordinated over the participating shards). Snapshot isolation, all-or-nothing, the works. So why does every experienced Mongo engineer wince slightly when they appear?</p>
+        <p>Because of what they cost. A transaction holds a snapshot open and buffers its writes; long-running ones pin WiredTiger cache and abort at a default lifetime of <b>60 seconds</b>. Documents touched inside are locked against concurrent writers, so hot documents turn transactions into a conflict-retry carnival. Cross-shard transactions add coordinator round-trips to commit latency. None of this is broken — it's the honest price of coordination, the same price Spanner or Postgres pays — but MongoDB's whole value proposition was <i>designing so you don't need it</i>: the document is supposed to BE the transaction boundary.</p>
+        <p>So the interview framing: single-document atomicity covers the vast majority of well-modeled operations, including read-modify-write via <code>findOneAndUpdate</code>. Multi-document transactions are the escape hatch for the genuinely cross-entity cases — and if your design invokes them on every request, that's not a Mongo feature you're using, that's a relational database you're missing. Mention <b>retryable writes</b> too (modern drivers retry a failed write exactly once, safely, across failovers — on by default): it kills a whole class of "but what if the ack was lost" follow-ups.</p>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== 7. AT SCALE ===== -->
+  <div class="card scale" id="scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Order-of-magnitude figures for capacity talk — round aggressively out loud.</p>
+    <table class="cmd-tbl">
+      <tr><td>document</td><td>≤ <b>16 MB</b> BSON, ≤ 100 nesting levels. Blobs → object storage + URL (GridFS exists; rarely the right answer).</td></tr>
+      <tr><td>replica set</td><td>≤ <b>50 members</b>, ≤ <b>7 voting</b>; failover on the order of <b>~10 s</b> with default timeouts. Oplog default ~5% of free disk — its window is your lag/resync budget.</td></tr>
+      <tr><td>WiredTiger</td><td>Cache ≈ <b>50% of (RAM − 1 GB)</b>; journal fsync ~100 ms cadence; checkpoints ~60 s; Snappy compression by default. Working set must fit cache.</td></tr>
+      <tr><td>throughput feel</td><td>A well-tuned replica set on solid hardware sustains on the order of <b>tens of thousands of simple writes/s</b>; shard when the write rate, working set, or storage outgrows one primary — not before.</td></tr>
+      <tr><td>sharding</td><td>Chunk max size on the order of <b>64–128 MB</b> (version-dependent). Balancer migrations cost I/O — schedule windows. Clusters run from 2 to hundreds of shards; config servers are their own replica set.</td></tr>
+      <tr><td>aggregation</td><td>~<b>100 MB per pipeline stage</b> in RAM before it needs <code>allowDiskUse</code>; $lookup fan-out multiplies reads. Heavy analytics belongs elsewhere.</td></tr>
+      <tr><td>transactions</td><td>Default lifetime <b>60 s</b>; cross-shard = 2PC latency. Keep them rare, short, and away from hot documents.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Failure modes that only appear at scale:</b>
+      <b>the hot shard</b> (monotonic shard key → every insert on one shard; the cluster scales reads while writes melt one box);
+      <b>jumbo chunks</b> (one over-popular key value makes a chunk unsplittable and unmovable — the balancer routes around it forever);
+      <b>scatter-gather amplification</b> (p99 of a fan-out query = the slowest shard; one degraded shard poisons every non-targeted query);
+      <b>unbounded array growth</b> (documents creep toward 16 MB, updates rewrite megabytes, multikey indexes bloat);
+      <b>secondary reads sold as fresh</b> (replication lag turns "read your own write" into a support ticket);
+      <b>PSA majority stall</b> (arbiter + one dead data node = <code>w:majority</code> writes hang).</div>
+  </div>
+
+  <!-- ===== 8. INTERVIEW ===== -->
+  <div class="card" id="interview">
+    <h2>8 · In the interview</h2>
+    <p><b>How it comes up:</b> you propose it — "product catalog with wildly varying attributes; I'll store each product as a document" — or you defend against it: <i>"why MongoDB and not Postgres?"</i> The follow-up script is stable: <i>how do you model X?</i> (embed vs reference, out loud), <i>what's atomic?</i> (the document; transactions exist but are the exception), <i>what happens on failover?</i> (election ~10 s, w:1 rollback risk, majority as the fix), <i>how does it scale?</i> (shard key choice, targeted vs scatter-gather, hot-shard story).</p>
+    <p><b>The choice script:</b> default to Postgres; move to MongoDB when the data is <b>naturally aggregate-shaped and heterogeneous</b> (catalog, profiles, CMS, flexible events), reads fetch whole entities by key, and you want <b>built-in replica-set failover and sharding</b> rather than bolting them onto an RDBMS. Handle the JSONB retort honestly: for one node's worth of data with occasional JSON fields, <b>Postgres JSONB wins</b> — relational spine plus document flexibility. MongoDB earns its keep when the document model is the <i>primary</i> model and horizontal scale-out is on the roadmap, not a hypothetical. Then close the loop: "if requirements drift toward many-to-many joins and cross-entity invariants everywhere, that's my signal the document bet was wrong."</p>
+    <h3>Alternatives — one line each</h3>
+    <table class="cmd-tbl">
+      <tr><td>Postgres JSONB</td><td>The retort to have an answer for: relational + documents in one engine, real FKs and transactions. Single-node ceiling and manual sharding are what MongoDB answers back with.</td></tr>
+      <tr><td>DynamoDB</td><td>Managed KV/document with hard access-pattern discipline and per-request pricing; no rich ad-hoc queries or server-side aggregation. Choose for known access patterns at AWS scale; Mongo for query flexibility.</td></tr>
+      <tr><td>Cassandra</td><td>Write-optimized wide-column, leaderless, linear scale; query-first modeling with no joins and limited filtering. Telemetry firehoses, not flexible catalogs.</td></tr>
+      <tr><td>Couchbase</td><td>Document store with memcached DNA and SQL-ish N1QL; strong in caching-adjacent and mobile-sync niches.</td></tr>
+      <tr><td>Firestore</td><td>Serverless documents with client SDKs, live sync, offline mode — mobile/web apps on GCP; not a general backend workhorse.</td></tr>
+      <tr><td>Elasticsearch</td><td>Also "JSON in, JSON out", but it's a search index: eventual consistency, no transactions. Pair it with Mongo (CDC), don't replace either with the other.</td></tr>
+    </table>
+    <div class="note info"><b>Phrases that score:</b> "the document is my transaction boundary — that's a modeling decision, not luck" · "w:majority and readConcern majority on the money path; w:1 and secondary reads where staleness is priced in" · "shard key is userId because every query is per-user; ObjectId would funnel all inserts to one shard — its first four bytes are a timestamp" · "that array is unbounded, so I'll bucket it" · "if we're reaching for $lookup and transactions on every request, the model is fighting us and Postgres is the honest answer".</div>
+  </div>
+
+  <!-- ===== 9. CHECK YOURSELF ===== -->
+  <div class="card" id="check">
+    <h2>9 · Check yourself</h2>
+    <details class="qa">
+      <summary>You embedded comments in each post document. Six months later the app is slow. What happened, and what's the fix?</summary>
+      <div class="a"><p>Popular posts grew <b>unbounded arrays</b>: documents creep toward the 16 MB cap, every new comment rewrites an ever-larger document, the multikey index on comments bloats, and hot documents evict everything else from cache. Fix: move comments to their own collection keyed by <code>postId</code> (reference), optionally keep the newest handful embedded for first paint (<b>subset pattern</b>), or bucket comments in pages. Rule: if it grows without limit, it doesn't live inside the document.</p></div>
+    </details>
+    <details class="qa">
+      <summary>A write was acknowledged with w:1; the primary crashed a moment later. The user's data is gone. Walk through why — and the two-dial fix.</summary>
+      <div class="a"><p>With <code>w:1</code> the primary acked before any secondary replicated the write. The election picked a secondary that never saw it; when the old primary rejoined it <b>rolled back</b> the divergent write into a rollback file. Fix dial one: <code>w:"majority"</code> — the ack now means a majority has it, so any electable node includes it. Dial two: <code>readConcern:"majority"</code> so readers can never observe data that might roll back. Cost: one replication round-trip of latency — cheap insurance on anything that matters.</p></div>
+    </details>
+    <details class="qa">
+      <summary>You sharded on the default _id (ObjectId) and one shard is on fire while three idle. Why, and what are your options?</summary>
+      <div class="a"><p>ObjectId's <b>first 4 bytes are a timestamp</b>, so keys are monotonically increasing — every insert targets the single chunk at the top of the range, i.e. one shard. The balancer migrates old chunks away but the <i>write frontier</i> stays put. Options: <b>hashed(_id)</b> for even writes (losing range targeting), a <b>compound key</b> like <code>{tenantId, ts}</code> that distributes by a high-cardinality prefix while keeping per-tenant locality, or <code>reshardCollection</code> (5.0+) to migrate online — at the cost of hours of background rewriting. This is why you interview the shard key harder than you interview candidates.</p></div>
+    </details>
+    <details class="qa">
+      <summary>The interviewer asks: "MongoDB has transactions now, so it's just as good as Postgres for our banking ledger, right?"</summary>
+      <div class="a"><p>Push back gently: yes, 4.0+/4.2+ transactions are real ACID (snapshot isolation, cross-shard 2PC). But they carry a 60 s default lifetime, cache pressure, conflict-retry loops on hot documents, and extra commit latency across shards — and if <i>every</i> operation needs multi-document invariants, you're paying Mongo's costs to emulate what a relational database does natively, with none of the document model's payoff. Documents win when the aggregate is the transaction boundary; ledgers are the textbook case where it isn't.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Your read replicas (secondaries) serve the profile page. Users complain they edit their name and still see the old one. What do you tune?</summary>
+      <div class="a"><p>Secondary reads are <b>asynchronous</b> — replication lag makes read-your-own-write fail. Options in increasing strength: route the post-write read to the <b>primary</b> (readPreference), use a <b>causally consistent session</b> so reads wait for their own writes, or drop secondary reads for this endpoint entirely. Keep secondary reads for content where staleness is explicitly acceptable (feeds, counts), and monitor replication lag as the staleness bound you're selling.</p></div>
+    </details>
+  </div>
+
+  <p class="small muted">Sources: MongoDB Manual (replication, sharding, WiredTiger, transactions), MongoDB data-modeling pattern guides (bucket / outlier / extended-reference), plus standard interview framing. Numbers are order-of-magnitude interview figures — verify exact limits against current docs before quoting in production.</p>
+</div>
+
+<script src="site.js"></script>
+<script>
+/* ===== The shard-key bet — where writes & queries land ===== */
+const SHARDS = 4, SPLIT_EVERY = 25, WINDOW = 20;
+const USERS = ['u01','u02','u03','u04','u05','u06','u07','u08','u09','u10','u11','u12'];
+
+let S = null;
+const $ = id => document.getElementById(id);
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};}
+
+function defaultState(){
+  const key = $('keySel').value;
+  return {
+    key, seq:0, rng:mulberry32(42),
+    docs:[0,0,0,0],
+    chunks: key==='hashed' ? [2,2,2,2] : (key==='userid' ? [1,1,1,1] : [1,0,0,0]),
+    frontier:0, sinceSplit:0, recent:[],
+  };
+}
+function keyLabel(){
+  return S.key==='objectid' ? '_id (ObjectId)' : S.key==='hashed' ? 'hashed(_id)' : 'userId (ranged)';
+}
+function logLine(cls, msg){
+  const d = document.createElement('div');
+  d.className = 'l ' + cls;
+  d.textContent = msg;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function explain(html){ $('explain').innerHTML = html; }
+
+function shardForInsert(){
+  if (S.key === 'objectid') return S.frontier;
+  if (S.key === 'hashed'){ let h = (S.seq * 2654435761) >>> 0; h = (h ^ (h >>> 13)) >>> 0; return h % SHARDS; }
+  const u = Math.floor(S.rng() * USERS.length);            // uniform-ish user activity
+  return Math.floor(u / 3);                                // u01–u03 → shard-1, … u10–u12 → shard-4
+}
+function recentShare(i){
+  if (!S.recent.length) return 0;
+  return S.recent.filter(x => x === i).length / S.recent.length;
+}
+function hotShard(){
+  if (S.recent.length < 10) return -1;
+  for (let i = 0; i < SHARDS; i++) if (recentShare(i) > 0.6) return i;
+  return -1;
+}
+
+function insert(n){
+  const landed = [0,0,0,0];
+  for (let i = 0; i < n; i++){
+    S.seq++;
+    const s = shardForInsert();
+    S.docs[s]++; landed[s]++;
+    S.recent.push(s); if (S.recent.length > WINDOW) S.recent.shift();
+    if (S.key === 'objectid'){
+      S.sinceSplit++;
+      if (S.sinceSplit >= SPLIT_EVERY){
+        S.sinceSplit = 0;
+        let cool = (S.frontier + 1) % SHARDS;
+        for (let j = 0; j < SHARDS; j++) if (j !== S.frontier && S.docs[j] < S.docs[cool]) cool = j;
+        const moved = Math.min(SPLIT_EVERY, Math.max(0, S.docs[S.frontier] - 5));
+        S.chunks[cool]++;
+        S.docs[S.frontier] -= moved; S.docs[cool] += moved;
+        logLine('warn', `⚖️ top chunk split at _id≈t${S.seq}; balancer migrates the closed chunk shard-${S.frontier+1} → shard-${cool+1} (${moved} docs). The open [t${S.seq}, MaxKey) chunk stays on shard-${S.frontier+1} — writes keep landing there.`);
+      }
+    }
+  }
+  logLine('cmd', `insertMany ×${n} → ` + landed.map((c,i)=> c ? `shard-${i+1}: ${c}` : null).filter(Boolean).join(' · '));
+  if (S.key === 'objectid'){
+    explain(`ObjectId is <b>monotonic</b> (4-byte time prefix), so every insert targets the chunk at the top of the range — <b>one shard takes 100% of writes</b> no matter how many shards you buy. The balancer shuffles <i>old</i> data; the write frontier never moves.`);
+  } else if (S.key === 'hashed'){
+    explain(`hashed(_id) spreads inserts <b>evenly</b> — the hash scatters consecutive ids across all ${SHARDS} shards. The price shows up on the query side: try the range query.`);
+  } else {
+    explain(`userId (ranged) distributes writes across shards roughly as evenly as your users are active — and keeps each user's docs <b>together on one shard</b>. Try the u07 query.`);
+  }
+  render();
+  const hot = hotShard();
+  if (hot >= 0) flashNode('shN' + hot, 'flash-bad');
+}
+
+function center(el){
+  const s = $('stage').getBoundingClientRect(), r = el.getBoundingClientRect();
+  return { x: r.left - s.left + r.width/2, y: r.top - s.top + r.height/2 };
+}
+function spawnPacket(fromId, toId, text, kind, delay){
+  setTimeout(() => {
+    const from = $(fromId), to = $(toId);
+    if (!from || !to) return;
+    const p = document.createElement('div');
+    p.className = 'packet' + (kind === 'ok' ? ' read' : '');
+    if (kind === 'warn'){ p.style.background = 'var(--warn)'; p.style.color = '#1a1205'; }
+    p.textContent = text;
+    const a = center(from), b = center(to);
+    p.style.left = (a.x - 24) + 'px'; p.style.top = (a.y - 10) + 'px';
+    $('stage').appendChild(p);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      p.style.left = (b.x - 24) + 'px'; p.style.top = (b.y - 10) + 'px';
+    }));
+    setTimeout(() => { p.style.opacity = '0'; }, 800);
+    setTimeout(() => p.remove(), 1100);
+  }, delay || 0);
+}
+function flashNode(id, cls){
+  const el = $(id);
+  if (!el) return;
+  el.classList.add(cls);
+  setTimeout(() => { const e2 = $(id); if (e2) e2.classList.remove(cls); }, 900);
+}
+
+function weightedShard(){
+  const tot = S.docs.reduce((a,b)=>a+b, 0);
+  if (!tot) return S.frontier;
+  let r = S.rng() * tot;
+  for (let i = 0; i < SHARDS; i++){ r -= S.docs[i]; if (r < 0) return i; }
+  return SHARDS - 1;
+}
+
+function query(type){
+  let target = -1, label = '', note = '';
+  if (type === 'id'){
+    label = 'find({_id: ObjectId("665f…")})';
+    if (S.key === 'userid'){ note = 'shard key is userId — an _id equality can\'t be routed'; }
+    else { target = weightedShard(); note = 'equality on the shard key → mongos routes straight to the owning chunk'; }
+  } else if (type === 'user'){
+    label = 'find({userId: "u07"})';
+    if (S.key === 'userid'){ target = 2; note = 'u07 falls in shard-3\'s key range — one shard answers'; }
+    else { note = 'userId isn\'t (part of) the shard key — mongos can\'t route it'; }
+  } else {
+    label = 'find({_id: {$gte: ObjectId(1h ago)}})';
+    if (S.key === 'objectid'){ target = S.frontier; note = 'recent ids live in the top chunk — targeted… onto the SAME shard taking all the writes 🔥'; }
+    else if (S.key === 'hashed'){ note = 'hashing destroyed order — a RANGE on a hashed key must broadcast'; }
+    else { note = '_id isn\'t the shard key — broadcast'; }
+  }
+  if (target >= 0){
+    logLine('ok', `${label} → TARGETED: shard-${target+1} only. (${note})`);
+    explain(`<b>Targeted query</b> — the filter contains the shard key, so mongos consults the routing table and asks <b>one shard</b>. Latency = one shard's latency; cluster does 1 unit of work.`);
+    spawnPacket('mongosN', 'shN' + target, '🔎 targeted', 'ok', 0);
+    setTimeout(() => flashNode('shN' + target, 'flash-ok'), 700);
+  } else {
+    logLine('warn', `${label} → SCATTER-GATHER: all ${SHARDS} shards + merge on mongos. (${note})`);
+    explain(`<b>Scatter-gather</b> — no shard key in the filter, so mongos must ask <b>every shard</b> and merge. p99 = the <i>slowest</i> shard; cluster does ${SHARDS}× the work. A few of these are fine; a hot path of these means you picked the wrong key.`);
+    for (let i = 0; i < SHARDS; i++){
+      spawnPacket('mongosN', 'shN' + i, '📡 scatter', 'warn', i * 90);
+      setTimeout(() => flashNode('shN' + i, 'flash-bad'), 750 + i * 90);
+    }
+  }
+}
+
+function render(){
+  const hot = hotShard();
+  const maxd = Math.max(1, ...S.docs);
+  const total = S.docs.reduce((a,b)=>a+b, 0);
+  let h = `<div class="node primary" id="mongosN" style="min-width:170px"><div class="title">🧭 mongos <span class="badge">router</span></div>
+    <div class="kv"><span class="k">shard key</span><span>${keyLabel()}</span></div>
+    <div class="kv"><span class="k">docs</span><span>${total}</span></div>
+    <div class="kv"><span class="k">chunks</span><span>${S.chunks.reduce((a,b)=>a+b,0)}</span></div>
+    <div class="small muted" style="margin-top:6px">routes by chunk map (from config servers)</div></div>`;
+  for (let i = 0; i < SHARDS; i++){
+    const isHot = hot === i;
+    const badge = isHot
+      ? '<span class="badge" style="color:var(--bad);border-color:var(--bad)">🔥 hot</span>'
+      : `<span class="badge">${S.chunks[i]} chunk${S.chunks[i]===1?'':'s'}</span>`;
+    h += `<div class="node${isHot ? ' flash-bad' : ''}" id="shN${i}" style="min-width:150px">
+      <div class="title">🗄 shard-${i+1} ${badge}</div>
+      <div class="kv"><span class="k">docs</span><span>${S.docs[i]}</span></div>
+      <div style="height:8px;border:1px solid var(--line);border-radius:4px;background:var(--panel2);overflow:hidden">
+        <div style="height:100%;width:${Math.round(S.docs[i]/maxd*100)}%;background:${isHot ? 'var(--bad)' : 'var(--accent)'}"></div>
+      </div>
+      <div class="small muted" style="margin-top:6px">${Math.round(recentShare(i)*100)}% of last ${S.recent.length || 0} writes</div>
+    </div>`;
+  }
+  $('nodes').innerHTML = h;
+}
+
+function reset(clearLog){
+  S = defaultState();
+  if (clearLog !== false){
+    $('log').innerHTML = '';
+    logLine('t', `reset — ${SHARDS} shards · chunk auto-split every ${SPLIT_EVERY} docs (scaled down for the demo)`);
+  }
+  explain('Insert a few batches with the default ObjectId key and watch which shard sweats.');
+  render();
+}
+
+$('insBtn').onclick   = () => insert(10);
+$('ins50Btn').onclick = () => insert(50);
+$('qIdBtn').onclick   = () => query('id');
+$('qUserBtn').onclick = () => query('user');
+$('qTimeBtn').onclick = () => query('time');
+$('resetBtn').onclick = () => reset(true);
+$('keySel').onchange  = () => {
+  logLine('warn', `reshardCollection → shard key is now ${$('keySel').value === 'objectid' ? '_id (ranged)' : $('keySel').value === 'hashed' ? 'hashed(_id)' : 'userId (ranged)'} — in production this rewrites the whole collection in the background (hours). Cluster reset.`);
+  reset(false);
+  explain('New shard key, empty cluster — in real life that "empty cluster" moment was an online resharding job you scheduled for a quiet week. Insert again and compare.');
+};
+
+reset(true);
+</script>
+</body>
+</html>

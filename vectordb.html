@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vector Databases — Deep Dive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap art">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🧲 Vector Databases — nearest neighbors at scale</h1>
+      <div class="sub">Embeddings, ANN indexes (HNSW vs IVF), recall as an SLO, filtered &amp; hybrid search — and the memory math that decides pgvector vs a dedicated engine. <span class="rt">☕ ~15 min read</span></div>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">embeddings</span>
+      <span class="tag">ANN</span>
+      <span class="tag">HNSW / IVF</span>
+      <span class="tag">recall@k</span>
+      <span class="tag">filtered search</span>
+      <span class="tag">hybrid retrieval</span>
+    </div>
+    <p class="lead">An embedding model turns every document, image or user into a point in a ~100–3,000-dimensional space where <b>distance ≈ meaning</b>; a vector database answers exactly one query shape — <i>"find the k points nearest to this one"</i> — at millions-to-billions scale, by being deliberately, <b>measurably</b> wrong a few percent of the time. That trade — approximate results in exchange for 100–1000× less work — is the whole technology.</p>
+    <div class="note info"><b>In the interview:</b> reach for a vector DB the moment requirements say <i>"semantic search"</i>, <i>"similar items"</i>, <i>"recommendations"</i>, or <i>"RAG"</i>. The interviewer then expects you to handle, unprompted: <b>the memory math</b> (n × d × 4 bytes), <b>recall vs latency tuning</b> (efSearch / nprobe), <b>the filtered-search trap</b> (tenant predicates during traversal, not after), and <b>the pragmatic ladder</b> (brute force → pgvector → dedicated engine).</div>
+  </div>
+
+  <div class="card">
+    <h3>On this page</h3>
+    <div class="toc">
+      <a href="#model">Mental model</a>
+      <a href="#api">Syntax &amp; API</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#distributed">Distributed setup</a>
+      <a href="#play">🎛 Play with it</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#scale">At scale</a>
+      <a href="#interview">In the interview</a>
+      <a href="#check">Check yourself</a>
+    </div>
+  </div>
+
+  <!-- ===== 1. MENTAL MODEL ===== -->
+  <div class="card" id="model">
+    <h2>1 · The mental model: a map where distance is meaning</h2>
+    <p>An <b>embedding model</b> is a function that eats a piece of content — a paragraph, a product photo, a user's listening history — and returns a list of a few hundred to a few thousand floats. The magic is in the training objective: things that <i>mean</i> similar end up <i>near</i> each other. "How do I reset my password" and "can't log into my account" share almost no words, yet their vectors sit side by side. Content becomes geography: every item is a pin on a map, and <b>similarity becomes distance</b>.</p>
+    <p>Once you buy that, every retrieval problem collapses into one query shape: <b>k-nearest-neighbors (kNN)</b> — "given this query point, return the k closest pins." And here is the uncomfortable part: <b>none of your existing indexes can answer it.</b> A B-tree needs <i>one</i> dimension to sort by — it answers "ordered" questions (ranges, prefixes) brilliantly, but in 1,536 dimensions there is no single sort order that keeps neighbors adjacent. An inverted index answers "which documents contain this exact token" — vocabulary, not geometry. Classic spatial trees (KD-trees, R-trees) work in 2–3 dimensions and degrade toward a full scan somewhere past a few dozen — the <b>curse of dimensionality</b>. This query genuinely needs a new index family.</p>
+    <p>The brute-force answer — compare the query to every vector — is <b>exact kNN</b>: O(n·d) per query. At 100k vectors that's a single matrix multiplication, instant and <i>exact</i>; do that and ship it. At 10M × 1,536 dims it's on the order of 10<sup>10</sup> multiply-adds <i>per query</i> — hundreds of milliseconds to seconds of CPU each time, dead on arrival at real QPS. The escape hatch is to give up exactness: an <b>Approximate Nearest Neighbor (ANN)</b> index returns k neighbors that overlap the true k almost always — the usual operating band is <b>95–99% recall</b> — for a tiny fraction of the work. Approximation isn't an implementation shortcut; it's the product contract. <b>Recall becomes an SLO</b> you measure and tune, exactly like p99 latency.</p>
+    <p>Two index families dominate. <b>HNSW</b> builds a navigable graph over the points with express layers on top — the skip-list idea lifted into high dimensions: coarse jumps up high, precise steps at the bottom. <b>IVF</b> partitions the space into k-means cells and, at query time, searches only the few cells nearest the query. Both are pure CPU + RAM structures — <b>no GPU needed</b> for serving. The simulator below makes their trade-offs physical.</p>
+    <p>One more piece of vocabulary: <b>distance metrics</b>. <b>Cosine</b> compares angle only; <b>dot product</b> mixes angle with magnitude; <b>L2</b> is straight-line distance. For <i>normalized</i> vectors (most text-embedding models ship them normalized) all three produce the <b>same ranking</b> — on the unit sphere, ‖a−b‖² = 2 − 2·(a·b). So don't agonize: use whatever the model card says, and make sure index and query use the same one.</p>
+    <div class="note warn"><b>The one-sentence test.</b> "Things <i>like</i> this" → vector search. "Things <i>containing exactly</i> this" → inverted index / BM25. "The record <i>with</i> id / status = X" → B-tree. Saying out loud which of the three index families a query needs is half the design.</div>
+  </div>
+
+  <!-- ===== 2. SYNTAX ===== -->
+  <div class="card" id="api">
+    <h2>2 · Syntax &amp; core API</h2>
+    <p>You won't write SQL in the interview, but naming the knobs — <code>ef_search</code>, <code>probes</code>, "filter during traversal" — signals you've operated one of these, not just read about it.</p>
+
+    <h3>pgvector (Postgres extension)</h3>
+    <table class="cmd-tbl">
+      <tr><td>vector(1536)</td><td>Column type: float32, 4 B per dimension (<code>halfvec</code> = fp16, 2 B/dim). Vectors live in ordinary rows next to your data.</td></tr>
+      <tr><td>&lt;=&gt; · &lt;-&gt; · &lt;#&gt;</td><td>Distance operators: <b>cosine distance</b> / <b>L2</b> / <b>negative inner product</b>. Must match the ops class the index was built with.</td></tr>
+      <tr><td>USING hnsw</td><td>Build an HNSW index. <code>m</code> = graph links per node (default 16), <code>ef_construction</code> = build-time candidate list (default 64). Slower to build, best query speed/recall, handles inserts.</td></tr>
+      <tr><td>hnsw.ef_search</td><td>Query-time candidate-list size (default 40) — <b>the</b> recall ↔ latency dial. Set per session or per query.</td></tr>
+      <tr><td>USING ivfflat</td><td>IVF index: <code>lists</code> = number of k-means cells. Rule of thumb: rows/1000 up to ~1M rows, ~√rows beyond. Fast build, lower memory, needs data present at build time (it trains centroids).</td></tr>
+      <tr><td>ivfflat.probes</td><td>Cells probed per query — <b>default 1</b>, which is a recall trap. Raise toward √lists and measure.</td></tr>
+      <tr><td>iterative scans</td><td>Recent pgvector versions keep scanning the index until enough rows survive your <code>WHERE</code> filter — the fix for filtered queries coming back short.</td></tr>
+    </table>
+    <pre class="code"><span class="c">-- one datastore: your rows, your filters, your vectors</span>
+CREATE EXTENSION vector;
+CREATE TABLE docs (
+  id        bigserial PRIMARY KEY,
+  tenant_id int NOT NULL,
+  body      text,
+  embedding vector(1536)              <span class="c">-- 1536 × 4 B ≈ 6 KB per row</span>
+);
+CREATE INDEX ON docs USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);    <span class="c">-- defaults shown</span>
+
+SET hnsw.ef_search = 100;                 <span class="c">-- recall dial (default 40)</span>
+SELECT id, body FROM docs
+WHERE tenant_id = 42                      <span class="c">-- filter + ANN: see deep dive 3</span>
+ORDER BY embedding &lt;=&gt; $query             <span class="c">-- cosine distance</span>
+LIMIT 5;</pre>
+
+    <h3>Dedicated engine (Qdrant-flavored)</h3>
+    <table class="cmd-tbl">
+      <tr><td>upsert(id, vector, payload)</td><td>Vector + JSON metadata ("payload") written together; payload fields are indexable for filtering.</td></tr>
+      <tr><td>search(vector, limit, filter)</td><td>The filter is evaluated <b>during</b> graph traversal (filtered HNSW), not bolted on after.</td></tr>
+      <tr><td>collection / namespace</td><td>Hard isolation unit. One namespace per tenant beats filters when tenants never share data.</td></tr>
+      <tr><td>hnsw_ef / ef</td><td>Per-request recall dial — same concept as <code>hnsw.ef_search</code>.</td></tr>
+      <tr><td>quantization config</td><td>Scalar (int8, ~4×) or product quantization (8–32×) to shrink RAM; originals kept on disk to re-score the top candidates.</td></tr>
+    </table>
+    <pre class="code"><span class="c"># upsert: the vector and its metadata travel together</span>
+PUT /collections/docs/points
+{ "points": [ { "id": 1, "vector": [0.02, -0.41, …],
+                "payload": { "tenant_id": 42, "lang": "en" } } ] }
+
+<span class="c"># search: tenant filter applied DURING the HNSW walk</span>
+POST /collections/docs/points/search
+{ "vector": [0.13, -0.08, …], "limit": 5,
+  "filter": { "must": [ { "key": "tenant_id", "match": { "value": 42 } } ] },
+  "params": { "hnsw_ef": 128 } }</pre>
+  </div>
+
+  <!-- ===== 3. USE CASES ===== -->
+  <div class="card" id="usecases">
+    <h2>3 · Use cases — when a vector DB is the answer</h2>
+
+    <div class="recipe">
+      <div class="rh">🤖 RAG — retrieval for an LLM</div>
+      Chunk your docs (~200–500 tokens each), embed every chunk, store. At question time: embed the question, fetch the top 5–20 nearest chunks, stuff them into the prompt. The LLM answers from <i>your</i> current, private data instead of its training set.
+      <div class="why">Why a vector DB: freshness without retraining, ACL filters per user, and the retrieval quality ceiling is set here — hybrid + rerank (deep dive 4) is the highest-ROI lever in most RAG stacks.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🔎 Semantic search over tickets / docs / code</div>
+      "Payment declined after card renewal" should find tickets that say "transaction failed following expiry update". Keyword search can't; embeddings can. Ship it hybrid: BM25 still wins on error codes, SKUs and function names.
+      <div class="why">Why a vector DB: paraphrase and synonym matching is exactly what embedding geometry encodes — and what inverted indexes structurally miss.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🛍 "More like this" — recommendation candidates</div>
+      Embed items (content or two-tower behavioral models); "similar items" = kNN around the item; "for you" = kNN around the <i>user's</i> vector. ANN generates a few hundred candidates cheaply; a heavier ranking model reorders them.
+      <div class="why">Why a vector DB: candidate generation must scan the whole catalog in milliseconds — precisely the ANN contract. This is the classic recsys retrieval stage.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🪞 Near-duplicate &amp; similarity detection</div>
+      Re-uploaded banned images, plagiarized text, duplicate support articles. Not top-k but a <b>threshold query</b>: "anything within distance ε?" Embed, search, compare distance against a calibrated cutoff.
+      <div class="why">Why a vector DB: robust to crops, rewording and re-encodes that defeat exact hashing; one index serves both dedupe and search.</div>
+    </div>
+
+    <h3>When a vector DB is the WRONG answer</h3>
+    <table class="cmd-tbl">
+      <tr><td>exact / compliance search</td><td>"Every document containing <i>clause 7.3</i>" — approximate retrieval may <b>miss some</b>, by design. Auditors don't accept 97% recall. Use BM25 / an inverted index.</td></tr>
+      <tr><td>tiny corpus (≤ ~100k)</td><td>Brute force is a matrix multiply: exact, zero infra, no recall question. Adding an ANN index here is résumé-driven architecture.</td></tr>
+      <tr><td>source of truth</td><td>A vector index is a <b>derived</b>, rebuildable structure — not where orders or balances live. Keep the system of record in a transactional store; treat embeddings like a search index.</td></tr>
+      <tr><td>filter does all the work</td><td><code>WHERE user_id = ? ORDER BY created_at</code> needs a B-tree. If the structured predicate already narrows to a handful of rows, similarity adds nothing — scan and sort.</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 4. DISTRIBUTED SETUP ===== -->
+  <div class="card" id="distributed">
+    <h2>4 · Distributed setup — what "running it for real" means</h2>
+    <p>Replication is the boring half: replicas serve reads, queries are stateless, scale-out for QPS is standard. <b>Sharding is where vector search is strange.</b> In a key-value store you hash the key and prune to one shard. Here the "key" is <i>meaning</i>, and you can't hash meaning into ranges — vectors are sharded essentially at random, so <b>every query fans out to every shard</b>, each runs ANN locally, and a coordinator merges the per-shard top-k into a global top-k. Scatter-gather, always. That has two consequences worth saying in an interview: query cost grows with shard count (no pruning), and <b>p99 = the slowest shard</b> — one cold or overloaded node drags every query, the classic tail-latency amplification.</p>
+    <p>Writes look like an LSM tree wearing an ANN costume. Fresh vectors land in a small <b>growing segment</b> that is brute-force-searched (exact, fine because it's small); background jobs seal it into an immutable indexed segment; queries search all segments and merge. <b>Deletes are tombstones</b>: the graph or cell entry stays, results get filtered at query time, and the space (and graph quality) is reclaimed only on merge/rebuild. IVF has an extra ageing problem — centroids are trained once, so as your data distribution drifts, cells get lopsided and recall quietly sags until you retrain. Index builds are real maintenance events: plan them like you plan compactions.</p>
+    <div class="note gotcha"><b>The embedding-version gotcha.</b> Vectors are only comparable if the <b>same model version</b> produced them. Upgrade your embedding model and every stored vector must be re-embedded and re-indexed — distances between model-v1 and model-v2 vectors are meaningless, and nothing errors: quality just silently craters. The production pattern is dual-index + backfill + cutover, and it costs one full pass over the corpus (often GPU-billed). Mention this before the interviewer does.</div>
+  </div>
+
+  <!-- ===== 5. INTERACTIVE ===== -->
+  <div class="card" id="play">
+    <h2>5 · 🎛 Play with it — exact kNN vs IVF probing</h2>
+    <p class="small muted" style="margin-top:0">80 vectors in 2-D, pre-clustered into <b>6 IVF cells</b> (dashed circles sketch each cell's reach; ✕ = centroid). <b>Click anywhere</b> to drop a query, k=5. In <b>exact</b> mode you pay for scanning all 80 vectors and get ground truth. In <b>IVF</b> mode only the <code>nprobe</code> nearest cells are scanned — watch <span style="color:var(--ok)">found neighbors</span> vs <span style="color:var(--bad)">missed true neighbors</span> and the recall readout. Scanned-vector count is your latency proxy.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn" id="exactBtn">Exact kNN</button>
+      <button class="btn sec" id="ivfBtn">IVF (probe cells)</button>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:8px">nprobe
+        <input type="range" id="npSlider" min="1" max="6" value="2" style="width:120px" disabled>
+        <b id="npVal">2</b>/6</label>
+      <button class="btn sec" id="dropBtn">⏭ Next demo query</button>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="row" style="gap:8px;margin-bottom:10px">
+      <span class="pill">mode <b id="stMode">exact</b></span>
+      <span class="pill">cells probed <b id="stCells">—</b></span>
+      <span class="pill">vectors scanned <b id="stScan">—</b> <span class="muted">(≈ latency)</span></span>
+      <span class="pill">recall@5 <b id="stRecall">—</b></span>
+    </div>
+    <div class="stage" style="padding:10px"><div id="svgWrap"></div></div>
+    <div class="explain" id="explain">Click the map to drop a query vector. Green = the true 5 nearest neighbors.</div>
+    <div class="cols" style="margin-top:12px">
+      <div><h3>Event log</h3><div class="log" id="log"></div></div>
+      <div><h3>What to try</h3>
+        <ol class="steps small">
+          <li>Exact mode: click around — 5 green lines = ground truth, and the cost is always 80/80 vectors scanned.</li>
+          <li>Switch to <b>IVF</b>, nprobe=1, and click near a cell border (or use ⏭) — <span style="color:var(--bad)">red rings</span> are true neighbors sitting in unprobed cells.</li>
+          <li>Raise nprobe 1→6: recall climbs <i>and so does</i> vectors-scanned. That slider is <code>ivfflat.probes</code> / <code>ef_search</code> — the recall↔latency dial.</li>
+          <li>nprobe=6 probes everything: recall 100%, cost = brute force. The savings only exist while you accept missing something.</li>
+          <li>Note recall depends on <b>where the query lands</b>: cell centers are easy, borders are where ANN earns — or loses — its keep.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 6. DEEP DIVES ===== -->
+  <div id="deep"></div>
+  <details class="fold">
+    <summary>🔍 Deep dive · HNSW — a skip list over meaning <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p><b>Hierarchical Navigable Small World</b> (Malkov &amp; Yashunin) is the index most engines default to. Picture a skip list: the bottom layer contains everything, each layer above keeps an exponentially thinner sample. HNSW does that with a graph per layer: every vector is a node connected to ~<code>M</code> near neighbors; sparse top layers make continent-sized hops, the dense bottom layer makes street-level steps. A query starts at the top entry point, <b>greedily walks</b> to whichever neighbor is closest to the query, drops a layer when it can't improve, and at layer 0 keeps a candidate list of the best <code>efSearch</code> nodes seen. Logarithmic-ish hops instead of a linear scan.</p>
+        <p>The three knobs to name: <b>M</b> (links per node — more links, better recall, more memory), <b>efConstruction</b> (how hard the build searches for good links — build time vs graph quality), and <b>efSearch</b> (query-time candidate list — the live recall↔latency dial; raise it and recall climbs as p99 grows, which is exactly the trade you demoed in the simulator with nprobe). Because inserts are just "search for neighbors, then link", HNSW <b>absorbs inserts well</b> — no retraining step, unlike IVF's centroids.</p>
+        <p>The costs are memory and deletes. Everything — full-precision vectors plus graph links — wants to be in RAM; links add roughly <code>d×4 + M×8</code> bytes per vector in hnswlib-style layouts, and the rule of thumb from practice is that an HNSW deployment runs <b>2–5× more memory</b> than lean quantized/IVF alternatives. Deletes are worse than expensive — they're <i>structural</i>: removing nodes punches holes in the paths other queries walk through. Engines tombstone-and-skip, then repair or rebuild in the background; after mass deletions, expect a <b>recall cliff</b> until that happens.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · IVF, quantization &amp; searching from disk <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p><b>IVF (inverted file)</b> is the simulator made real: run k-means over (a sample of) your vectors to get <code>lists</code> centroids; each vector is filed under its nearest centroid. A query ranks centroids, probes the <code>nprobe</code> nearest cells, and brute-forces only those. Cheap to build, cheap in RAM, embarrassingly parallel — and its failure mode is geometric: a true neighbor sitting just across a cell boundary in an unprobed cell is simply <b>never seen</b>. That's the red ring in the widget, and it's why probes=1 defaults are recall traps. IVF also assumes centroids still describe your data: after heavy drift or bulk inserts, cells go lopsided and recall sags until you <b>retrain</b>.</p>
+        <p><b>Quantization</b> attacks the RAM bill. Scalar quantization stores int8 instead of float32 — 4× smaller, tiny recall cost. <b>Product quantization (PQ)</b> goes further: chop the vector into subvectors, replace each with a 1-byte codebook id — commonly <b>8–32× compression</b>. Distances get computed against the compressed codes (fast, approximate), and good engines <b>re-rank the top candidates with the original vectors</b> (kept on disk) to claw quality back. IVF+PQ is the classic FAISS recipe for "a billion vectors on a handful of boxes".</p>
+        <p>When even that doesn't fit, go to SSD. <b>DiskANN-style</b> graph indexes (Microsoft's Vamana lineage) keep a compressed sketch of every vector in RAM for navigation and fetch full vectors from NVMe with a few random reads per query — latency in the milliseconds-to-low-tens range, RAM an order of magnitude smaller. The mental ladder for capacity: <b>float32 in RAM → int8 → PQ → disk-based ANN → shard</b>, each step trading a little recall or latency for a lot of money.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Filtered search — the tenant trap <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Real queries are never pure similarity: it's "nearest docs <i>that this user may read</i>", "similar products <i>in stock, under $50</i>". The naive plan — run ANN for top-k, then apply the filter — is the <b>post-filter trap</b>: if your tenant owns 1% of the corpus, the global top-10 neighbors are ~99% other tenants' documents, and after filtering you return one result, or zero. Not slower — <b>wrong</b>. And over-fetching (top-1000, then filter) just moves the cliff while multiplying cost.</p>
+        <p>The strategies, by filter selectivity: (1) <b>Pre-filter</b> — when the predicate matches few rows (one user's 2,000 docs), fetch those ids and brute-force them exactly; no index needed. (2) <b>In-traversal filtering</b> — the engine evaluates the predicate <i>while walking the graph</i>, only admitting matching nodes into the candidate list, walking <i>through</i> non-matching ones so the graph stays connected. Qdrant's filterable HNSW, Weaviate, Pinecone's metadata filtering and pgvector's iterative index scans are all versions of this. (3) <b>Partition outright</b> — if tenants never share data, give each a namespace/collection: hard isolation, no filter cost, no cross-tenant leakage risk at the index layer.</p>
+        <p>The senior phrasing: <i>"filter selectivity picks the strategy — highly selective filters pre-filter and brute-force; broad filters ride along the traversal; disjoint tenants get separate namespaces."</i> And treat ACL filtering as a <b>correctness</b> feature, not a performance one — a post-filter design here is a security review finding, not a perf bug.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Hybrid retrieval &amp; reranking — the quality stack <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Dense vectors and keyword search fail in opposite directions. Embeddings nail paraphrase ("can't log in" ≈ "password reset") but smear exact tokens — error codes, SKUs, proper names, <code>NullPointerException</code> — into fuzzy neighborhoods. BM25 nails exact tokens and rare terms but is blind to synonyms. So production search runs <b>both</b> and fuses the ranked lists, most simply with <b>Reciprocal Rank Fusion</b>: score(doc) = Σ 1/(60 + rank<sub>list</sub>). Rank-based, no score normalization across incomparable scales, one line of code — and commonly reported to lift recall <b>+15–30%</b> over either retriever alone.</p>
+        <p>Then spend your quality budget where it's cheapest: <b>rerank the top-N with a cross-encoder</b>. Your retriever is a bi-encoder — query and doc embedded <i>separately</i>, so similarity is one dot product and the corpus is indexable. A cross-encoder reads query and document <i>together</i> through one model and scores the pair — far more accurate, but O(model-inference) per pair, so it can never scan a corpus. The stack: ANN + BM25 pull ~100–200 candidates fast; the cross-encoder reorders them; top 5–10 go to the user or the LLM. Adds tens-to-low-hundreds of ms — usually the single highest-ROI quality lever in a RAG pipeline.</p>
+        <p>Interview framing: <i>"retrieval is recall-oriented and cheap; reranking is precision-oriented and expensive; hybrid + RRF + cross-encoder on the top-100 is the default quality stack."</i> That one sentence upgrades a "we'll use a vector DB" answer into a search-systems answer.</p>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== 7. AT SCALE ===== -->
+  <div class="card scale" id="scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Figures to quote in capacity talk. Do the RAM math out loud — it's the part interviewers check.</p>
+    <table class="cmd-tbl">
+      <tr><td>RAM ≈ n × d × 4 B</td><td>float32 raw: <b>1M × 768 ≈ 3 GB</b> · <b>1M × 1536 ≈ 6 GB</b> · <b>10M × 1536 ≈ ~60 GB</b> · <b>100M × 1536 ≈ ~0.6 TB</b> — before index overhead. This one line decides pgvector vs quantize vs shard.</td></tr>
+      <tr><td>HNSW overhead</td><td>Graph links ≈ <code>M×8</code> bytes/vector extra (~130 B at M=16) — small next to a 6 KB vector; the <b>vectors themselves are the bill</b>. Everything wants to be RAM-resident; budget 2–5× vs quantized/IVF setups.</td></tr>
+      <tr><td>quantization</td><td>fp16/halfvec <b>2×</b> · int8 scalar <b>~4×</b> · PQ <b>8–32×</b> — each with a recall haircut; re-rank top candidates with full vectors to recover most of it.</td></tr>
+      <tr><td>recall SLO</td><td>Operate at <b>95–99% recall@k</b>. Measure against brute-force ground truth on a sampled query set — recall is invisible unless you build the harness.</td></tr>
+      <tr><td>latency</td><td>In-RAM HNSW at millions of vectors: ~<b>ms-scale</b> per query. Brute force 10M × 1536: hundreds of ms–seconds per core. Disk-based ANN: low tens of ms. (Orders of magnitude, not benchmarks.)</td></tr>
+      <tr><td>index builds</td><td>HNSW at 100M scale: <b>order of hours</b>, CPU-parallel; IVF trains centroids on a sample (minutes) then assigns fast. Rebuilds are scheduled maintenance — plan them like compactions.</td></tr>
+      <tr><td>throughput</td><td>Order of <b>10²–10³ QPS per node</b> at high recall (d- and recall-dependent); scale reads with replicas, capacity with shards — remembering every query hits every shard.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Failure modes that only appear at scale:</b>
+      <b>recall cliff after mass deletes</b> (tombstoned graph nodes degrade paths until repair/rebuild);
+      <b>stale IVF centroids</b> (distribution drift → lopsided cells → recall sags with no errors anywhere);
+      <b>post-filter zero-results</b> (selective tenant + global ANN = correctness bug);
+      <b>scatter-gather tail</b> (p99 = slowest shard; one hot shard taxes every query);
+      <b>hot namespace</b> (one big tenant dominates a node while others idle);
+      <b>embedding version skew</b> (mixing model-v1 and v2 vectors — no errors, garbage similarity).</div>
+  </div>
+
+  <!-- ===== 8. INTERVIEW ===== -->
+  <div class="card" id="interview">
+    <h2>8 · In the interview</h2>
+    <p><b>How it comes up:</b> "design semantic search / RAG for enterprise docs / a recommendation feed" — or you introduce it yourself the moment similarity appears. The follow-ups are predictable: <i>how does the index actually work?</i> (HNSW layers, greedy descent), <i>how much RAM?</i> (do n×d×4 out loud), <i>what about per-tenant access control?</i> (filter during traversal, or namespaces), <i>how do you know it's working?</i> (recall@k vs ground truth as an SLO), <i>why is keyword search still in your diagram?</i> (hybrid + rerank).</p>
+    <p><b>The choice script — a ladder, not a brand.</b> Under ~100k vectors: <b>brute force</b>, exact, no infra. To ~1M-ish: <b>pgvector</b> — one datastore, transactions, joins, filters, no new ops surface. Beyond that, or when you need filtered HNSW, quantization and shard/replica management as first-class features: a <b>dedicated engine</b> (Qdrant, Milvus, Weaviate — or managed Pinecone). Already running Elasticsearch/OpenSearch? Its kNN support is often "good enough without a new database". Naming the <i>rungs and the cutover triggers</i> is the senior signal; naming only a vendor is the junior one.</p>
+    <h3>Alternatives — one line each</h3>
+    <table class="cmd-tbl">
+      <tr><td>pgvector</td><td>Postgres extension (HNSW/IVFFlat). One datastore, SQL filters/joins/transactions. The pragmatic first choice to ~1M-ish vectors; you outgrow it on RAM and index-build ops.</td></tr>
+      <tr><td>Pinecone</td><td>Managed/serverless vector DB — namespaces, metadata filters, zero ops. You buy freedom from capacity planning; you pay per-usage and accept a black box.</td></tr>
+      <tr><td>Qdrant</td><td>Open-source (Rust): filterable HNSW done well, payload indexes, quantization options. Strong self-hosted default.</td></tr>
+      <tr><td>Milvus / Zilliz</td><td>Open-source, cloud-native, storage/compute-separated architecture; multiple index types (HNSW, IVF, disk-based). Built for the billions-scale end; more moving parts.</td></tr>
+      <tr><td>Weaviate</td><td>Open-source engine with hybrid (BM25+vector) built in and a module ecosystem. Comfortable developer experience.</td></tr>
+      <tr><td>OpenSearch / ES kNN</td><td>kNN inside the search engine you already run — hybrid in one system, mature filters. Heavier per-node, but "no new database" is a powerful argument.</td></tr>
+      <tr><td>FAISS</td><td><b>A library, not a database</b> — in-process ANN (CPU/GPU), no server, replication, filters or auth. Right inside an ML pipeline; wrong as a shared service unless you build the service.</td></tr>
+      <tr><td>Vertex AI Vector Search</td><td>Google's managed ANN (ScaNN lineage) — the GCP-flavored answer, integrates with Vertex pipelines.</td></tr>
+    </table>
+    <div class="note info"><b>Phrases that score:</b> "under a million vectors this is just pgvector next to our OLTP data — one datastore, real filters" · "10M × 1536-d ≈ 60 GB of raw float32, so we quantize to int8 or shard" · "we tune efSearch to hold 97% recall@10 inside our p99 budget — recall is an SLO with a ground-truth harness" · "tenant filters run <i>during</i> traversal; post-filtering can return zero valid hits" · "hybrid BM25 + vectors via RRF, cross-encoder rerank on the top-100" · "ANN shards are scatter-gather — no pruning by similarity, so p99 is the slowest shard".</div>
+  </div>
+
+  <!-- ===== 9. CHECK YOURSELF ===== -->
+  <div class="card" id="check">
+    <h2>9 · Check yourself</h2>
+    <details class="qa">
+      <summary>Why can't a B-tree or an inverted index answer "the 10 most similar documents"?</summary>
+      <div class="a"><p>A B-tree serves queries along <b>one sort order</b> (equality/range on a key); in ~1000-d space no single ordering keeps semantic neighbors adjacent, so "nearest" can't be a range scan. An inverted index maps <b>exact tokens</b> → documents; similarity of meaning isn't token overlap. kNN in high dimensions needs its own index family (graph- or partition-based ANN), and low-dimensional spatial trees (KD/R-trees) degrade toward full scans as dimensionality grows.</p></div>
+    </details>
+    <details class="qa">
+      <summary>The interviewer says: "just run the vector search, then filter results by tenant". What breaks?</summary>
+      <div class="a"><p>If the tenant owns a small slice of the corpus, the global top-k is dominated by other tenants' vectors; after filtering you return few or <b>zero</b> results even though good on-tenant matches exist. Over-fetching only moves the cliff. Correct designs: apply the predicate <b>during traversal</b> (filtered HNSW / iterative scans), <b>pre-filter + exact scan</b> when the tenant's set is small, or give disjoint tenants their own <b>namespaces</b>. For ACLs this is a correctness/security issue, not a perf tweak.</p></div>
+    </details>
+    <details class="qa">
+      <summary>10M documents, 1536-dim float32 embeddings. What's the RAM bill, and what are your options?</summary>
+      <div class="a"><p>10M × 1536 × 4 B ≈ <b>61 GB raw</b>, before HNSW graph links and working memory — so a single fat node is possible but uncomfortable. Options: <b>fp16</b> (~30 GB), <b>int8</b> (~15 GB, minor recall cost), <b>PQ</b> (8–32×, bigger haircut, re-rank with originals), <b>disk-based ANN</b> (RAM holds compressed sketches), or <b>shard</b> — accepting scatter-gather on every query. Saying the multiplication out loud is the point.</p></div>
+    </details>
+    <details class="qa">
+      <summary>HNSW vs IVF — pick one for a corpus with constant inserts and justify it.</summary>
+      <div class="a"><p><b>HNSW</b>: inserts are incremental (find neighbors, link in) with no retraining, recall/latency is strong, and <code>efSearch</code> gives a live recall dial. Cost: 2–5× memory and painful deletes. <b>IVF</b> would need periodic centroid retraining as the distribution drifts — its cells go stale and recall sags silently. IVF(+PQ) wins instead when memory or build cost dominates and the corpus is relatively static.</p></div>
+    </details>
+    <details class="qa">
+      <summary>Recall@10 quietly dropped from 97% to ~85% over a quarter. Name three plausible causes.</summary>
+      <div class="a"><p>(1) <b>Mass deletes/churn</b> punched tombstone holes in the HNSW graph — needs repair/rebuild. (2) <b>IVF centroid staleness</b>: the data distribution drifted (new product line, new language) so cells no longer match the data — retrain. (3) <b>Embedding version skew</b>: some vectors written by a newer model version — cross-version distances are meaningless. Honorable mention: someone "optimized latency" by lowering efSearch/probes. You only catch any of these if recall is measured continuously against a ground-truth sample.</p></div>
+    </details>
+  </div>
+
+  <p class="small muted">Sources: condenses the HelloInterview vector-DB deep dive, the pgvector README, the HNSW paper (Malkov &amp; Yashunin) and FAISS/DiskANN write-ups, plus vendor docs (Qdrant, Pinecone, Milvus, Weaviate). Numbers are order-of-magnitude interview figures — benchmark before quoting in production.</p>
+</div>
+
+<script src="site.js"></script>
+<script>
+/* ===== ANN playground: exact kNN vs IVF cells ===== */
+const W = 560, H = 400, K = 5, N_CELLS = 6;
+const HUES = [210, 268, 150, 35, 320, 185];
+const DEMO_QS = [[195,185],[380,190],[62,195],[515,205],[285,205]];
+
+let seed = 42;
+function rnd(){ seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+function d2(a, b){ const dx = a.x - b.x, dy = a.y - b.y; return dx*dx + dy*dy; }
+
+function buildData(){
+  seed = 42;
+  const centers = [[100,95],[285,68],[465,115],[105,300],[295,330],[470,285]];
+  const counts  = [14,13,14,13,13,13];   // 80 points
+  const pts = [];
+  centers.forEach((c, ci) => {
+    for (let i = 0; i < counts[ci]; i++){
+      const a = rnd() * Math.PI * 2, r = (rnd() + rnd()) * 46;
+      pts.push({ x: Math.min(W-14, Math.max(14, c[0] + Math.cos(a)*r)),
+                 y: Math.min(H-16, Math.max(16, c[1] + Math.sin(a)*r*0.86)), cell: 0 });
+    }
+  });
+  let cents = centers.map(c => ({x:c[0], y:c[1]}));
+  const assign = () => pts.forEach(p => {
+    let bi = 0, bd = Infinity;
+    cents.forEach((c, i) => { const d = d2(p, c); if (d < bd){ bd = d; bi = i; } });
+    p.cell = bi;
+  });
+  assign();
+  cents = cents.map((c, ci) => {           // one Lloyd step: recompute centroids
+    const m = pts.filter(p => p.cell === ci);
+    if (!m.length) return c;
+    return { x: m.reduce((s,p)=>s+p.x,0)/m.length, y: m.reduce((s,p)=>s+p.y,0)/m.length };
+  });
+  assign();
+  return { pts, cents };
+}
+
+let S = null;
+const $ = id => document.getElementById(id);
+
+function logLine(cls, msg){
+  const d = document.createElement('div');
+  d.className = 'l ' + cls;
+  d.textContent = msg;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function explain(html){ $('explain').innerHTML = html; }
+
+function analyze(){
+  const pts = S.data.pts, cents = S.data.cents;
+  const byDist = pts.map((p, i) => ({i, d: d2(S.q, p)})).sort((a,b) => a.d - b.d);
+  const truth = byDist.slice(0, K).map(o => o.i);
+  const cellOrder = cents.map((c, i) => ({i, d: d2(S.q, c)})).sort((a,b) => a.d - b.d).map(o => o.i);
+  const probed = cellOrder.slice(0, S.nprobe);
+  const scanned = pts.map((p, i) => i).filter(i => probed.includes(pts[i].cell));
+  const found = scanned.map(i => ({i, d: d2(S.q, pts[i])})).sort((a,b) => a.d - b.d).slice(0, K).map(o => o.i);
+  const hit = truth.filter(i => found.includes(i)).length;
+  return { truth, probed, scanned, found, hit, recall: hit / K };
+}
+
+function render(){
+  const pts = S.data.pts, cents = S.data.cents;
+  const R = S.q ? analyze() : null;
+  const ivf = S.mode === 'ivf';
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" id="annSvg" ' +
+          'style="width:100%;max-width:680px;display:block;margin:0 auto;background:var(--bg);border-radius:10px;cursor:crosshair">';
+
+  // cell hulls + centroid markers
+  for (let ci = 0; ci < N_CELLS; ci++){
+    const m = pts.filter(p => p.cell === ci);
+    if (!m.length) continue;
+    const rad = Math.sqrt(Math.max.apply(null, m.map(p => d2(p, cents[ci])))) + 12;
+    const probed = R && ivf && R.probed.includes(ci);
+    const col = 'hsl(' + HUES[ci] + ',55%,62%)';
+    s += '<circle cx="' + cents[ci].x.toFixed(1) + '" cy="' + cents[ci].y.toFixed(1) + '" r="' + rad.toFixed(1) + '"' +
+         ' fill="' + (probed ? col : 'none') + '" fill-opacity="0.07"' +
+         ' stroke="' + col + '" stroke-opacity="' + (ivf ? (probed ? 0.9 : 0.3) : 0.18) + '"' +
+         ' stroke-width="1.4" stroke-dasharray="5 4"/>';
+    const cx = cents[ci].x, cy = cents[ci].y;
+    s += '<path d="M ' + (cx-5) + ' ' + cy + ' L ' + (cx+5) + ' ' + cy + ' M ' + cx + ' ' + (cy-5) + ' L ' + cx + ' ' + (cy+5) + '"' +
+         ' stroke="' + col + '" stroke-width="1.6" stroke-opacity="' + (ivf ? 0.95 : 0.35) + '"/>';
+    if (ivf) s += '<text x="' + (cx+8) + '" y="' + (cy-7) + '" font-size="11" fill="var(--muted)">c' + (ci+1) + '</text>';
+  }
+
+  // points
+  pts.forEach((p, i) => {
+    let op = 0.85;
+    if (ivf && R) op = R.probed.includes(p.cell) ? 0.95 : 0.18;
+    s += '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="4" fill="hsl(' + HUES[p.cell] + ',55%,62%)" fill-opacity="' + op + '"/>';
+  });
+
+  if (R){
+    const q = S.q;
+    if (!ivf){
+      R.truth.forEach(i => {
+        const p = pts[i];
+        s += '<line x1="' + q.x + '" y1="' + q.y + '" x2="' + p.x.toFixed(1) + '" y2="' + p.y.toFixed(1) + '" stroke="var(--ok)" stroke-width="1.5" stroke-opacity="0.8"/>';
+        s += '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="7.5" fill="none" stroke="var(--ok)" stroke-width="2"/>';
+      });
+    } else {
+      R.found.forEach(i => {
+        const p = pts[i], isTrue = R.truth.includes(i);
+        const col = isTrue ? 'var(--ok)' : 'var(--warn)';
+        s += '<line x1="' + q.x + '" y1="' + q.y + '" x2="' + p.x.toFixed(1) + '" y2="' + p.y.toFixed(1) + '" stroke="' + col + '" stroke-width="1.5" stroke-opacity="0.85"/>';
+        s += '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="7.5" fill="none" stroke="' + col + '" stroke-width="2"/>';
+      });
+      R.truth.filter(i => !R.found.includes(i)).forEach(i => {
+        const p = pts[i];
+        s += '<line x1="' + q.x + '" y1="' + q.y + '" x2="' + p.x.toFixed(1) + '" y2="' + p.y.toFixed(1) + '" stroke="var(--bad)" stroke-width="1.5" stroke-dasharray="3 3" stroke-opacity="0.9"/>';
+        s += '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="7.5" fill="none" stroke="var(--bad)" stroke-width="2.2"/>';
+      });
+    }
+    s += '<circle cx="' + q.x + '" cy="' + q.y + '" r="6" fill="var(--accent)" stroke="#fff" stroke-width="1.6"/>';
+    s += '<text x="' + (q.x + 10) + '" y="' + (q.y + 4) + '" font-size="11" fill="var(--txt)">query</text>';
+  } else {
+    s += '<text x="' + (W/2) + '" y="' + (H/2) + '" font-size="14" fill="var(--muted)" text-anchor="middle">click anywhere to drop a query vector</text>';
+  }
+  s += '</svg>';
+  $('svgWrap').innerHTML = s;
+
+  // stats
+  $('stMode').textContent = S.mode;
+  if (R && ivf){
+    $('stCells').textContent = S.nprobe + '/6';
+    $('stScan').textContent = R.scanned.length + '/80';
+    $('stRecall').textContent = R.hit + '/5 = ' + Math.round(R.recall * 100) + '%';
+  } else if (R){
+    $('stCells').textContent = '—';
+    $('stScan').textContent = '80/80';
+    $('stRecall').textContent = '5/5 = 100%';
+  } else {
+    $('stCells').textContent = $('stScan').textContent = $('stRecall').textContent = '—';
+  }
+  $('npVal').textContent = S.nprobe;
+  $('npSlider').value = S.nprobe;
+  $('npSlider').disabled = !ivf;
+  $('exactBtn').className = ivf ? 'btn sec' : 'btn';
+  $('ivfBtn').className = ivf ? 'btn' : 'btn sec';
+}
+
+function report(){
+  render();
+  if (!S.q) return;
+  const R = analyze();
+  if (S.mode === 'exact'){
+    logLine('info', '[q' + S.qn + '] exact kNN — scanned 80/80 vectors, recall 100% by definition');
+    explain('<b>Exact scan:</b> the query was compared to all 80 vectors — ground truth, at full cost. At 80 points that is free; at 10M × 1536-d it is ~10<sup>10</sup> multiply-adds <i>per query</i>. Now switch to IVF and pay less.');
+  } else {
+    const pct = Math.round(R.recall * 100);
+    const missed = R.truth.filter(i => !R.found.includes(i)).length;
+    logLine(pct === 100 ? 'ok' : (pct >= 80 ? 'warn' : 'err'),
+      '[q' + S.qn + '] IVF nprobe=' + S.nprobe + ' — probed ' + S.nprobe + '/6 cells, scanned ' +
+      R.scanned.length + '/80 vectors, recall ' + R.hit + '/5 = ' + pct + '%' +
+      (missed ? ' — ' + missed + ' true neighbor' + (missed > 1 ? 's' : '') + ' in unprobed cells' : ''));
+    explain(missed
+      ? '<b>The boundary problem:</b> ' + missed + ' of the true 5 (red rings) sit in cells you did not probe — the index never even looked at them. Raise <b>nprobe</b> to trade scanned-vectors (latency) for recall.'
+      : '<b>Full recall at ' + Math.round(100 * R.scanned.length / 80) + '% of the work:</b> all 5 true neighbors were inside the ' + S.nprobe + ' probed cell(s). This query landed comfortably inside a cell — border queries are the hard ones.');
+  }
+}
+
+function setMode(m){
+  S.mode = m;
+  logLine('cmd', 'mode → ' + (m === 'ivf' ? 'IVF (probe ' + S.nprobe + '/6 cells)' : 'exact kNN (scan everything)'));
+  if (S.q){ S.qn++; report(); } else render();
+}
+
+function reset(){
+  S = { data: buildData(), q: null, mode: 'exact', nprobe: 2, qn: 0 };
+  $('log').innerHTML = '';
+  logLine('t', 'reset — 80 vectors, 6 k-means cells, k=5');
+  S.q = { x: DEMO_QS[0][0], y: DEMO_QS[0][1] };
+  S.qn = 1;
+  report();
+}
+
+$('svgWrap').addEventListener('click', e => {
+  const svg = document.getElementById('annSvg');
+  if (!svg) return;
+  const r = svg.getBoundingClientRect();
+  const x = (e.clientX - r.left) * W / r.width;
+  const y = (e.clientY - r.top) * H / r.height;
+  if (x < 0 || y < 0 || x > W || y > H) return;
+  S.q = { x: Math.round(x), y: Math.round(y) };
+  S.qn++;
+  report();
+});
+$('exactBtn').onclick = () => setMode('exact');
+$('ivfBtn').onclick   = () => setMode('ivf');
+$('npSlider').oninput = e => {
+  S.nprobe = +e.target.value;
+  if (S.mode === 'ivf' && S.q){ S.qn++; report(); } else render();
+};
+$('dropBtn').onclick = () => {
+  const d = DEMO_QS[S.qn % DEMO_QS.length];
+  S.q = { x: d[0], y: d[1] };
+  S.qn++;
+  report();
+};
+$('resetBtn').onclick = reset;
+
+reset();
+</script>
+</body>
+</html>

@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CDN (Content Delivery Networks) — Deep Dive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap art">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🌍 CDN — the cache that lives next door</h1>
+      <div class="sub">PoPs, cache keys, purges and the brutal arithmetic of hit ratios — how a fleet of reverse proxies makes a Virginia origin feel local in Sydney. <span class="rt">☕ ~15 min read</span></div>
+    </div>
+  </div>
+
+  <!-- ===== HERO ===== -->
+  <div class="card">
+    <div class="row" style="gap:8px">
+      <span class="tag accent">reverse-proxy cache</span>
+      <span class="tag">anycast / DNS steering</span>
+      <span class="tag">cache key</span>
+      <span class="tag">TTL &amp; purge</span>
+      <span class="tag">hit-ratio math</span>
+      <span class="tag">edge compute</span>
+    </div>
+    <p class="lead">A CDN is a <b>fleet of reverse-proxy caches parked in hundreds of cities</b>. Users are routed to the nearest one; it serves what it has, fetches what it doesn't, and keeps a copy for the next person. That's the whole trick. The <i>craft</i> is in the cache key, the TTLs and the invalidation story — and the payoff is measured by one number, the <b>hit ratio</b>, whose economics are brutally non-linear.</p>
+    <div class="note info"><b>In the interview:</b> a CDN is your first move whenever reads are global and the same bytes can be served to many users — static assets, images, video, public API GETs. The interviewer then expects you to handle, unprompted: <b>what exactly the cache key is</b>, <b>how invalidation works</b> (hint: you design so you almost never invalidate), <b>what a hit-ratio dip does to the origin</b>, and <b>how private content stays private</b> on a shared cache.</div>
+  </div>
+
+  <div class="card">
+    <h3>On this page</h3>
+    <div class="toc">
+      <a href="#model">Mental model</a>
+      <a href="#api">Headers &amp; knobs</a>
+      <a href="#usecases">Use cases</a>
+      <a href="#distributed">Distributed setup</a>
+      <a href="#play">🎛 Play with it</a>
+      <a href="#deep">Deep dives</a>
+      <a href="#scale">At scale</a>
+      <a href="#interview">In the interview</a>
+      <a href="#check">Check yourself</a>
+    </div>
+  </div>
+
+  <!-- ===== 1. MENTAL MODEL ===== -->
+  <div class="card" id="model">
+    <h2>1 · The mental model: corner shops for a Virginia warehouse</h2>
+    <p>Your origin is a warehouse in Virginia. A customer in Sydney is ~200 ms away as the packet flies — and a fresh HTTPS fetch isn't one round trip, it's several: TCP handshake, TLS handshake, then the request itself. Stack three or four 200 ms round trips and the user has stared at a blank screen for the best part of a second <i>before the first byte of your 2 MB of JavaScript even starts moving</i>. No amount of server tuning fixes the speed of light.</p>
+    <p>The CDN answer is the corner shop. Instead of shipping every carton from Virginia, you park small shops — <b>PoPs</b> (points of presence, also "edge locations") — in hundreds of cities, each one a rack of reverse proxies with fast disks and fat peering links. The shop stocks whatever locals have asked for recently. First customer for an item waits for the warehouse run; everyone after gets it across the counter in ~20 ms. Nobody in Sydney talks to Virginia any more; they talk to a machine a few suburbs away that <i>pretends</i> to be you.</p>
+    <p>Two mechanisms get the user to the nearest shop. <b>Anycast</b>: every PoP announces the <i>same IP address</i>, and BGP — the internet's routing fabric — naturally delivers each packet to the topologically closest announcer (Cloudflare's model). Or <b>DNS-based steering</b>: the CDN's DNS server looks at where the query comes from and hands back the address of a nearby PoP (the Akamai/CloudFront lineage). Either way, the crucial consequence is that <b>TLS terminates at the edge</b>: the handshake round trips happen over a 15 ms path instead of a 250 ms one, and the edge keeps warm, long-lived, congestion-tuned connections back to your origin for whatever it can't serve itself.</p>
+    <p>On a miss, the edge behaves like any reverse proxy: it forwards the request to the origin (often via a mid-tier — more in §4), stores the response according to its headers, and serves it. This fetch-on-demand style is a <b>pull CDN</b>, and it is how almost everything works today. <b>Push</b> (pre-warming) still exists for special occasions — game-patch day, a product launch video — when you'd rather pre-place the bytes than let ten million first-customers pile up. But the default mental model is: <i>the CDN stocks itself, driven by demand, bounded by TTLs</i>.</p>
+    <p>And the number everyone stares at is the <b>hit ratio</b>. The origin only ever sees misses, so origin load is proportional to <i>(1 − hit ratio)</i> — which makes small dips enormous. Going from 98% to 97% hits sounds like a rounding error; it means misses went from 2% to 3%, i.e. <b>your origin traffic just grew 50%</b>. This one piece of arithmetic explains most CDN engineering, most CDN incidents, and is the centerpiece of the simulator in §5.</p>
+    <div class="note warn"><b>CDN vs "a cache" — the one-sentence test.</b> Redis caches computed data <i>inside your datacenter, for your servers</i>. A CDN caches <b>whole HTTP responses next to your users</b>. The litmus test for the CDN layer: <i>could this exact URL, byte for byte, be served to two different users?</i> If yes, it belongs on the CDN. If every response is personal, the CDN can still terminate TLS and carry the bytes — but it's a fast pipe, not a cache.</div>
+  </div>
+
+  <!-- ===== 2. SYNTAX / API ===== -->
+  <div class="card" id="api">
+    <h2>2 · Syntax &amp; core API — the API is HTTP itself</h2>
+    <p>There's no query language here: a CDN is programmed with <b>HTTP response headers</b> (what the origin says) plus a slab of <b>CDN configuration</b> (what the edge is allowed to override). Fluency in these headers is the hands-on signal in an interview — they are the knobs.</p>
+    <table class="cmd-tbl">
+      <tr><td>Cache-Control: public | private</td><td>Who may store this. <b>public</b> = shared caches OK; <b>private</b> = browser only — the CDN must pass it through. Forgetting <code>private</code> on a per-user page is the classic data-leak incident.</td></tr>
+      <tr><td>max-age=60</td><td>Freshness lifetime in seconds, for <i>all</i> caches including the browser.</td></tr>
+      <tr><td>s-maxage=300</td><td>Freshness for <b>shared caches only</b> (the CDN); overrides <code>max-age</code> there. Idiom: short <code>max-age</code> for browsers (you can't purge browsers), long <code>s-maxage</code> for the edge (you can purge that).</td></tr>
+      <tr><td>no-cache / no-store</td><td>Two very different things: <b>no-cache</b> = store, but <b>revalidate before every use</b>; <b>no-store</b> = never write to disk at all (auth pages, PII).</td></tr>
+      <tr><td>immutable</td><td>"This URL's content will never change" — don't even revalidate on reload. Only safe with content-hashed filenames (§ deep dive).</td></tr>
+      <tr><td>stale-while-revalidate=60</td><td>May serve a stale copy for up to 60 s past expiry <b>while refreshing in the background</b> — users never wait on a revalidation.</td></tr>
+      <tr><td>stale-if-error=600</td><td>If the origin is down or 5xx-ing, keep serving the stale copy for up to 10 min. Free resilience — set it everywhere.</td></tr>
+      <tr><td>ETag / If-None-Match</td><td>Revalidation: origin returns a version tag; on expiry the edge asks "still <code>"9f3a2c"</code>?" and gets a body-less <b>304 Not Modified</b> instead of a re-download.</td></tr>
+      <tr><td>Vary: Accept-Encoding</td><td>Extends the cache key by a request header. <code>Accept-Encoding</code> is fine (one copy per compression). <code>Vary: Cookie</code> is <b>death</b> — cookies are near-unique per user, so hit ratio → ~0 (§ deep dive).</td></tr>
+      <tr><td>Age: 41</td><td>Added by the cache: seconds since this copy was fetched. With <code>X-Cache: Hit</code> / <code>CF-Cache-Status</code>, your main debugging tool — "is the edge actually serving hits?"</td></tr>
+      <tr><td>Surrogate-Key: prod-42 html</td><td>Tag responses with keys (Fastly; Cloudflare calls them cache tags); later <b>purge by tag</b> in one API call instead of enumerating URLs.</td></tr>
+      <tr><td>signed URL / signed cookie</td><td>Private content on a public CDN: the URL carries an expiry + signature; the <b>edge verifies it cryptographically</b> without calling your origin.</td></tr>
+    </table>
+
+    <pre class="code"><span class="c"># anatomy of a cacheable response — origin proposes, edge disposes</span>
+HTTP/1.1 200 OK
+Cache-Control: public, s-maxage=300, max-age=60, stale-while-revalidate=60, stale-if-error=600
+ETag: "9f3a2c"
+Vary: Accept-Encoding            <span class="c"># key extension: one copy per encoding — harmless</span>
+Age: 41                          <span class="c"># edge adds this: cached 41 s ago</span>
+
+<span class="c"># five minutes later the edge revalidates instead of re-downloading:</span>
+GET /article/42 HTTP/1.1
+If-None-Match: "9f3a2c"
+  → HTTP/1.1 304 Not Modified    <span class="c"># headers only — no body crosses the ocean</span></pre>
+
+    <p>The second thing to know cold is the <b>two-tier asset strategy</b> — it dissolves 90% of invalidation questions before they're asked:</p>
+    <pre class="code"><span class="c"># tier 1 — content-hashed assets: cache FOREVER, never purge</span>
+GET /static/app.3f9c1b.js
+Cache-Control: public, max-age=31536000, immutable
+
+<span class="c"># tier 2 — the small HTML that points at them: short TTL + revalidation</span>
+GET /index.html
+Cache-Control: public, s-maxage=60, stale-while-revalidate=300
+ETag: "release-2041"
+
+<span class="c"># deploy = upload NEW hashed assets first, then flip the HTML.</span>
+<span class="c"># if you must purge at all, you purge only the HTML — by tag:</span>
+curl -X POST https://api.cdn.example/purge -d '{"surrogate_keys":["html"]}'</pre>
+    <p>New release → <code>app.7d21e0.js</code> is a <i>different URL</i>, so there is nothing stale to purge; old HTML keeps working against old assets until its 60-second TTL rolls over. The asset that never changes can be cached for a year; the pointer that changes is cheap to refresh. This pattern is why serious shops treat "we purge assets on every deploy" as a smell.</p>
+  </div>
+
+  <!-- ===== 3. USE CASES ===== -->
+  <div class="card" id="usecases">
+    <h2>3 · Use cases — when the CDN is the answer</h2>
+
+    <div class="recipe">
+      <div class="rh">🧱 Static assets with content-hashed names</div>
+      The default, non-negotiable case: JS bundles, CSS, fonts, product images. Hashed filenames + <code>max-age=1 year, immutable</code> → hit ratios in the high-90s, zero purge traffic, deploys that can't serve half-old half-new bundles.
+      <div class="why">Why a CDN: these bytes are identical for every user on Earth — the definition of cacheable. Your origin becomes a factory that only ever builds each file once.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🎞 Video &amp; large media via ranged requests</div>
+      HLS/DASH streaming chops video into small segment files (a few seconds each) plus a tiny playlist — <b>segments are immutable and perfectly cacheable</b>, so a viral video is served almost entirely from the edge. Big downloads use <code>Range:</code> requests; CDNs cache in chunks so a million people resuming a 4 GB game patch don't re-pull it from origin.
+      <div class="why">Why a CDN: video is ~most of internet traffic by volume; egress from the edge is cheaper and closer. Live streaming works too — segments are cacheable the moment they're written, with 2–6 s TTLs.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">⚡ API acceleration — even for uncacheable traffic</div>
+      Point <code>api.example.com</code> at the CDN with caching mostly off. Users get edge TLS termination (handshakes over ~20 ms, not ~200), HTTP/3 at the edge even if your origin speaks HTTP/1.1, and warm persistent connections over the provider's tuned backbone to your origin. Then selectively cache the safe GETs — a product catalog with <code>s-maxage=30</code> — for extra credit.
+      <div class="why">Why a CDN: global p95 drops materially without touching a line of backend code; DDoS and TLS churn are absorbed at the edge.</div>
+    </div>
+    <div class="recipe">
+      <div class="rh">🛍 Flash-sale / launch-day front door</div>
+      Ticket drop, sneaker release, exam-results page: 99% of the traffic is the same product page, requested a million times a minute. Cache it at the edge with <code>s-maxage=5, stale-while-revalidate=30</code>: the origin renders the page <i>once every few seconds per shield</i>, and the CDN absorbs everything else. Pair with an edge-served waiting room for the write path.
+      <div class="why">Why a CDN: this converts "we melted at launch" into "the origin served a few QPS while the edge did the screaming."</div>
+    </div>
+
+    <h3>When a CDN is the WRONG answer</h3>
+    <table class="cmd-tbl">
+      <tr><td>personalized everything</td><td>If ~every response is per-user (dashboards, feeds with server-rendered personalization), there's nothing shareable to cache. The CDN still helps as a TLS/transport layer, but don't promise hit ratios — or restructure: cache the shell, fetch the personal bits as an API call.</td></tr>
+      <tr><td>strong read-after-write</td><td>"User updates price, next GET must show it" on the cached path = fighting your own TTLs with purges. Either bypass the CDN for those reads or accept bounded staleness explicitly.</td></tr>
+      <tr><td>single-region, internal users</td><td>An internal tool used by 200 employees in one office gains nothing from 300 PoPs — a local cache/proxy (or nothing) is simpler and cheaper.</td></tr>
+      <tr><td>as a system of record</td><td>A CDN is a cache: eviction is a feature, not an incident. Anything that must exist durably lives in object storage; the CDN sits in front of it, never instead of it.</td></tr>
+    </table>
+  </div>
+
+  <!-- ===== 4. DISTRIBUTED SETUP ===== -->
+  <div class="card" id="distributed">
+    <h2>4 · Distributed setup — PoPs, shields and multi-CDN</h2>
+    <p>A real deployment is a <b>cache hierarchy</b>: hundreds of edge PoPs → a handful of <b>regional shields</b> (mid-tier caches; CloudFront calls the concept regional edge caches / Origin Shield) → your origin. The shield exists to <b>collapse fan-in</b>. Without it, a popular object expiring means up to <i>one miss per PoP</i> — hundreds of near-simultaneous requests hammering the origin for the same bytes. With a shield, edges miss <i>to the shield</i>, the shield misses <b>once</b> to the origin, and your origin's peak concurrency stops scaling with the provider's PoP count. In capacity terms: origin load ≈ one fetch per object per TTL per shield, not per PoP.</p>
+    <p>What happens when a PoP dies — or a new one comes online cold? Traffic shifts (BGP reconverges under anycast; DNS steering updates in seconds-to-minutes) to a neighboring PoP, which has <i>its own</i> cache — warm for the hot head of the catalog, cold for the long tail. The result is a hit-ratio dip and an origin bump, not an outage. The design consequence: <b>your origin must survive the worst-case regional miss storm</b>, or you must let the CDN shed load for you (serve-stale, request collapsing, rate limits at the edge). "Origin sized for steady state only" is a latent incident.</p>
+    <p><b>Multi-CDN</b> is the grown-up resilience posture: run two or more providers, with a DNS-level traffic steerer choosing per-user based on real-user-measurement data (latency, availability), plus commercial leverage as a bonus. Big streamers and game launchers live like this. The costs are real: you can only rely on lowest-common-denominator features, cache keys/configs/purges must be maintained twice, TLS certs live in two places, and your effective global hit ratio drops because each provider warms its own copy.</p>
+    <p>Finally, remember what the CDN <i>also</i> is: an <b>availability layer</b>. <code>stale-if-error</code> turns an origin outage into "users see slightly old content"; an edge-hosted static fallback page turns it into a branded apology instead of a connection reset. Some of the best incident stories end with "…and the CDN quietly served stale for 40 minutes while we fixed it."</p>
+    <div class="note gotcha"><b>Gotchas that bite in production:</b> (1) <b>CDN config is a global deploy that lands in seconds</b> — a bad cache-key or header rule is instantly worldwide; the industry's most famous CDN outages were config pushes tripping latent bugs (Fastly's 2021 global outage is the canonical example), so treat CDN config as code: versioned, reviewed, canaried where the provider allows. (2) <b>Purges are eventually consistent</b> — seconds to minutes on most providers; a client can re-fetch <i>during</i> propagation and re-cache stale from a not-yet-purged shield. (3) There is <b>no read-after-write on a cached path</b>, full stop — design the write path around the cache, not through it.</div>
+  </div>
+
+  <!-- ===== 5. INTERACTIVE ===== -->
+  <div class="card" id="play">
+    <h2>5 · 🎛 Play with it — hit-ratio economics</h2>
+    <p class="small muted" style="margin-top:0">Three PoPs (40% / 40% / 20% of traffic) in front of one origin. Each ▶ press fires <b>100 requests in one concurrent burst</b> over a catalog of N objects, zipf-ish: the hottest 20% of objects draw 80% of traffic. Every PoP caches what it fetches; entries expire after the TTL (measured in rounds). Misses go to the origin — <b>watch the bar</b>. Traffic is a seeded PRNG: same clicks ⇒ same numbers, every time.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn" id="simBtn">▶ Simulate 100 requests</button>
+      <button class="btn warn" id="purgeBtn">🧹 Purge all</button>
+      <label class="fld" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="coalChk"> request coalescing</label>
+      <button class="btn ghost" id="resetBtn">↺ Reset</button>
+    </div>
+    <div class="row" style="gap:24px;margin-bottom:10px">
+      <label class="fld" style="min-width:220px">catalog: <b id="catVal">200</b> distinct objects
+        <input type="range" id="catSlider" min="10" max="1000" step="10" value="200"></label>
+      <label class="fld" style="min-width:180px">TTL: <b id="ttlVal">8</b> rounds
+        <input type="range" id="ttlSlider" min="1" max="20" value="8"></label>
+    </div>
+    <div class="stage" id="stage">
+      <div class="nodes" id="nodes"></div>
+      <div id="originBar"></div>
+    </div>
+    <div class="explain" id="explain">Press <b>▶ Simulate</b> a few times and watch the caches warm up. Then read the origin bar like an SRE: it shows exactly the misses.</div>
+    <div class="cols" style="margin-top:12px">
+      <div><h3>Event log</h3><div class="log" id="log"></div></div>
+      <div><h3>What to try</h3>
+        <ol class="steps small">
+          <li>▶ ×5 with defaults → hit ratio climbs into the 90s as the hot set settles into all three caches.</li>
+          <li>Drag catalog to 1000 → the long tail no longer survives its TTL between requests — a structural <b>hit-ratio ceiling</b> appears.</li>
+          <li>Drop TTL to 1 → constant expiry churn; origin load roughly doubles-to-triples. TTLs are origin-protection, not just freshness.</li>
+          <li>🧹 Purge all → next ▶ is a <b>miss storm</b> (red bar). This is also what a cold PoP or a careless "purge everything" deploy does.</li>
+          <li>Purge again with <b>request coalescing ON</b> → same misses, far fewer origin fetches: concurrent misses for one object collapse into a single fetch.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 6. DEEP DIVES ===== -->
+  <div id="deep"></div>
+  <details class="fold">
+    <summary>🔍 Deep dive · The cache key — where hit ratios are made and destroyed <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Every cache lookup answers one question: <i>have I seen this key before?</i> The default key is roughly <b>host + path + query string</b> — and every element you add to it <b>fragments</b> the cache into more distinct copies. Cache-key design is therefore a knife's edge: too broad a key and you serve the wrong content to the wrong person; too narrow (too many dimensions) and your hit ratio quietly dies of a thousand variants.</p>
+        <p>The classic slow poison is the <b>query string</b>. Marketing links arrive as <code>/product/42?utm_source=nl&amp;utm_campaign=july</code> — same page, thousands of "different" URLs, each cached separately, each a miss. The fix is key <b>normalization</b> at the edge: whitelist the query parameters that actually change the response (<code>?size=</code>, <code>?page=</code>), drop or sort everything else. Same story for device buckets: don't key on the full <code>User-Agent</code> (thousands of strings — a fragmentation bomb); have the edge classify into <code>mobile|desktop</code> and key on that one bit.</p>
+        <p><b><code>Vary</code> is the origin reaching into the key</b>, and it deserves fear. <code>Vary: Accept-Encoding</code> is benign — two or three variants. <code>Vary: Cookie</code> means "one cache copy per unique Cookie header", and cookies carry session IDs — so effectively <i>every user gets a private copy</i>, hit ratio ≈ 0, and your CDN degrades into an expensive TCP terminator. Many CDNs simply refuse to cache such responses. If personalization is one widget on the page, don't vary the page: cache the shared shell and fetch the personal fragment client-side (or assemble at the edge — see the edge-compute dive).</p>
+        <p>The opposite failure is scarier: an <b>under-specified key</b> serves user A's content to user B. The incident archetype (it has happened to household-name sites): a config change makes the CDN ignore cookies <i>while the origin still renders per-user pages</i>, or an origin suddenly emits <code>Set-Cookie</code> (or a session-dependent body) on a cacheable response — and the edge dutifully serves one user's account page, or their session cookie, to the next thousand visitors. Defenses: never cache responses bearing <code>Set-Cookie</code> (most CDNs do this by default — do not disable it), mark private endpoints <code>Cache-Control: private/no-store</code> at the origin, and treat "make X cacheable" changes as security reviews, not perf tweaks.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Invalidation — purge APIs vs the immutable pattern <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>Two hard problems in computer science, and cache invalidation is both of them once your cache has 300 locations. Every CDN offers a <b>purge API</b>: by exact URL, by prefix/wildcard, or — the scalable form — by <b>surrogate key / cache tag</b>: the origin stamps responses with tags (<code>Surrogate-Key: product-42 catalog</code>), and one API call purges every URL carrying the tag, whether that's three objects or three million. Purge-by-tag is the difference between "invalidate the product page, its API JSON and its OG image" being one call or a scavenger hunt.</p>
+        <p>Speed varies wildly and is worth knowing: <b>Fastly</b> made near-instant purge its brand — ~150 ms globally is the advertised figure — because its market (news front pages, live sports, retail inventory) treats freshness as a product feature. Most other CDNs propagate purges in <b>seconds to minutes</b>; CloudFront invalidations are the slow, billed end (first ~1,000 paths/month free, then per-path fees — and minutes of propagation). Design rule: if your correctness depends on sub-second purge, you've either picked Fastly deliberately or you've designed a fragile system.</p>
+        <p>Which is the real lesson: <b>the robust pattern is to make purging unnecessary</b>. Content-hashed, <i>immutable</i> filenames (<code>app.3f9c1b.js</code>, cached for a year) mean assets never need invalidation — a new deploy mints new URLs. Only the thin HTML layer that references them stays short-TTL'd (or <code>no-cache</code> + ETag, so every request is a cheap 304 revalidation). Deploy choreography matters: <b>upload new assets first</b>, then flip HTML, and keep the previous release's assets around — a user holding 60-second-old HTML must still find <code>app.OLD.js</code>, or you've built a self-inflicted outage window into every deploy.</p>
+        <p>Purges also fail <i>upward</i>: a "purge everything" against a busy property converts your entire request rate into misses within seconds — a self-inflicted DDoS on the origin (the simulator's 🧹 button is exactly this). Mature setups restrict wildcard purges, rely on tags scoped to what actually changed, and lean on <code>stale-while-revalidate</code> so even a purge-then-refill cycle never makes users wait.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Request coalescing, stampedes &amp; negative caching <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>A cache's worst moment is the <b>synchronized miss</b>. A hot object expires (or gets purged) and ten thousand concurrent requests arrive at edges that all say "not in cache". Naively, all ten thousand go to origin — the <b>thundering herd / cache stampede</b>. The origin, sized for a 2% miss rate, meets 100× its normal load for one URL and folds; its slowness makes more requests pile up; the herd grows. Classic metastable failure.</p>
+        <p>The fix is <b>request coalescing</b> (a.k.a. collapsed forwarding): the first miss for a key acquires a per-key lock and goes to origin; every concurrent request for the same key <b>waits for that one fetch</b> and is answered from it. Ten thousand requests, one origin fetch, per PoP. Layer the shield on top (all PoPs miss to it; it coalesces again) and a global celebrity-post spike costs your origin <i>roughly one fetch per TTL</i>. Every serious cache implements this — Varnish/Fastly natively, Nginx via <code>proxy_cache_lock</code> — and the §5 toggle shows the effect precisely.</p>
+        <p>Coalescing handles the burst; <code>stale-while-revalidate</code> removes the cliff entirely — expiry stops being an event because one background fetch refreshes while users keep getting the stale-but-fine copy. For self-inflicted synchronization (thousands of objects cached at deploy time, all expiring together), add <b>TTL jitter</b> — ±10% noise so expirations smear out.</p>
+        <p><b>Negative caching</b> is the sharp knife in the drawer: caching 404s/5xxs briefly (CloudFront defaults to ~10 s for error responses) protects the origin from a herd of requests for something that doesn't exist — imagine a bad HTML deploy referencing <code>app.WRONG.js</code>, and every visitor's browser hammering that 404 through to origin. But the same mechanism <b>masks recovery</b>: cache a 503 for 5 minutes and you've extended every blip by 5 minutes, globally. Keep negative TTLs in seconds, never minutes, and never let an error response inherit the success TTL.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🔍 Deep dive · Beyond static — signed URLs &amp; compute at the edge <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p><b>Private content on a public cache</b> sounds like a contradiction; signed URLs resolve it. The origin (which knows who's allowed) mints a URL carrying an expiry and a cryptographic signature (CloudFront signed URLs, GCS/S3 presigned variants); the <b>edge validates the signature and expiry locally</b> — no call to your origin — then serves the cached bytes. The object is cached once; authorization travels in the URL. <b>Signed cookies</b> do the same for whole sessions ("this user may fetch any segment of this video for 6 hours" — one cookie, thousands of segment URLs). Keep expiries short (minutes), scope them narrowly, and lock the origin bucket so the CDN is the only door (CloudFront's Origin Access Control): otherwise the "private" file is public at its S3 URL.</p>
+        <p><b>Edge compute</b> moved the CDN from "cache" to "programmable first hop". Cloudflare Workers run V8 isolates in every PoP with ~ms startup; CloudFront pairs lightweight CloudFront Functions (header-level tweaks) with Lambda@Edge (heavier, runs at regional caches); Fastly runs WebAssembly. The sweet-spot uses are request-shaping <i>before</i> the cache: <b>auth</b> (verify a JWT at the edge, reject junk without waking the origin), <b>A/B bucketing</b> (assign a cohort, key the cache on it — two variants, not per-user copies), <b>geo/compliance routing</b>, <b>cache-key normalization</b> beyond what config allows, and assembling a cached shell with small dynamic fragments — the modern descendant of edge-side includes.</p>
+        <p>The honest caveats: edge functions run in hundreds of locations with <b>no shared state</b> (state = a global KV/durable-object service with its own consistency lattice), debugging is distributed-systems debugging, and CPU/memory budgets are tight. The interview-safe framing: <i>"logic that shapes requests and caching belongs at the edge; logic that owns data doesn't."</i></p>
+      </div>
+    </div>
+  </details>
+
+  <!-- ===== 7. AT SCALE ===== -->
+  <div class="card scale" id="scale">
+    <h2 style="margin-top:0">⚖️ At scale — numbers, limits &amp; failure modes</h2>
+    <p class="small muted" style="margin-top:0">Order-of-magnitude figures for capacity talk — round aggressively out loud.</p>
+    <table class="cmd-tbl">
+      <tr><td>footprint</td><td>Major CDNs run PoPs in <b>hundreds of cities</b> (Cloudflare advertises 300+; CloudFront many hundreds of edge locations behind a dozen-ish regional caches; Akamai the largest/oldest footprint). Consequence: most users sit <b>&lt; ~30–50 ms</b> from an edge, vs 100–300 ms cross-continent.</td></tr>
+      <tr><td>latency win</td><td>A cold HTTPS fetch is ~3 round trips before the first body byte (TCP + TLS 1.3 + request). Over a 200 ms path ≈ <b>~600 ms</b>; over a 20 ms edge path ≈ <b>~60 ms</b> — and a hit never leaves the city.</td></tr>
+      <tr><td>hit-ratio economics</td><td>Origin load = miss rate. <b>98% → 97% hits = 2% → 3% misses = +50% origin traffic</b>; 99% → 98% <b>doubles</b> it. Alarm on <i>miss rate</i>, not hit rate — the same delta reads as "1 point" on one graph and "+50%" on the other.</td></tr>
+      <tr><td>hit-ratio ceiling</td><td>Edge storage is finite and LRU-ish: the long tail re-evicts before re-request. Static assets hit <b>95–99%+</b>; long-tail media plateaus lower no matter the TTL. Raising TTLs can't beat eviction — only a bigger/warmer tier (shield) can.</td></tr>
+      <tr><td>capacity</td><td>Big providers advertise aggregate edge capacity in the <b>hundreds of Tbps</b> — absorbing volumetric DDoS at the edge is a core product. Egress list price is roughly <b>$0.02–0.09/GB</b> at entry tiers (CloudFront ~$0.085/GB NA/EU first tier; budget CDNs ~a cent or two), falling steeply with volume; origin→CDN fetch is often free in-provider (S3 → CloudFront).</td></tr>
+      <tr><td>purge speed</td><td>Fastly: <b>~150 ms</b> global (advertised). Most others: <b>seconds–minutes</b>. CloudFront: minutes + per-path billing past the free ~1,000 paths/month. Tag/surrogate-key purge scales; wildcard purge storms don't.</td></tr>
+      <tr><td>defaults worth knowing</td><td>Origin sends no caching headers → CDN applies a default TTL (CloudFront: <b>24 h</b>) — surprise staleness. Error responses get short negative TTLs (~10 s CloudFront default). Multi-GB objects are fine — fetched and cached in ranged chunks.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Failure modes that only appear at scale:</b>
+      <b>purge storm</b> (mass invalidation → your full request rate becomes misses → self-DDoS of the origin);
+      <b>cache stampede</b> (hot-key expiry without coalescing/SWR → thundering herd);
+      <b>private-data caching</b> (a key/header misconfig caches <code>Set-Cookie</code> or per-user pages — the classic "logged in as someone else" incident);
+      <b>Vary explosion</b> (<code>Vary: User-Agent/Cookie</code> shreds the cache into per-client copies — hit ratio collapses silently);
+      <b>negative-cache masking recovery</b> (a cached 503 keeps "failing" minutes after the origin healed);
+      <b>cold-PoP miss storm</b> (failover/new region → tail re-warms through your origin — size it, or serve stale).</div>
+  </div>
+
+  <!-- ===== 8. INTERVIEW ===== -->
+  <div class="card" id="interview">
+    <h2>8 · In the interview</h2>
+    <p><b>How it comes up:</b> rarely as "design a CDN" (that's an infra-team special); constantly as a component. Any design with global users and read-heavy content — social feed images, video platform, news site, static hosting, "make p95 &lt; 200 ms worldwide" — should have you drawing the CDN box in the first five minutes. The predictable follow-ups: <i>what exactly do you cache and on what key?</i> · <i>how does an update reach users?</i> (TTL vs purge vs hashed URLs) · <i>what happens to your origin if the CDN goes cold?</i> · <i>how do private files stay private?</i> (signed URLs) · <i>what's your hit ratio and what does a 1-point dip mean?</i> (+50% at 98→97 — say it before they ask).</p>
+    <p><b>The choice script:</b> in an AWS design, default to <b>CloudFront</b> ("integrated with S3/ALB, origin access control, Lambda@Edge if I need edge logic"). Reach for <b>Cloudflare</b> when you want the whole front door — anycast DNS, WAF, DDoS, Workers — as one layer. Name <b>Fastly</b> when freshness is a product feature (news, inventory, sports scores) because of instant purge. Mention <b>multi-CDN + steering</b> when availability requirements are extreme (major streamers). And say the quiet part: <i>the pattern (immutable assets, tagged purge, shielded origin) transfers across vendors — the vendor is a pricing decision.</i></p>
+    <h3>Alternatives — one line each</h3>
+    <table class="cmd-tbl">
+      <tr><td>CloudFront</td><td>The AWS-native choice: S3/ALB origins, free S3→edge fetch, OAC bucket lockdown, Functions/Lambda@Edge. Weak spot: slow, billed invalidations — lean on hashed assets.</td></tr>
+      <tr><td>Cloudflare</td><td>Giant anycast network (300+ cities advertised); you proxy your whole domain — DNS, WAF, DDoS, Workers, R2 (no egress fees) in one bundle; flat pricing tiers and a famously generous free plan.</td></tr>
+      <tr><td>Akamai</td><td>The incumbent with the largest legacy footprint; enterprise media + security contracts. You inherit it in BigCo estates more often than you pick it greenfield.</td></tr>
+      <tr><td>Fastly</td><td>Near-instant global purge (~150 ms advertised), VCL/Compute programmability, real-time logs. The pick when cache freshness is a feature. Smaller network, sharper tool.</td></tr>
+      <tr><td>bunny.net / KeyCDN</td><td>Budget tier (~a cent or two per GB): startups serving assets/video without enterprise trimmings. Fewer PoPs, fewer features, delightful bills.</td></tr>
+      <tr><td>multi-CDN</td><td>A strategy, not a vendor: 2+ providers behind RUM-driven DNS steering. Buys availability and negotiating leverage; costs feature-LCD and doubled config/purge surface.</td></tr>
+    </table>
+    <div class="note info"><b>Phrases that score:</b> "immutable content-hashed assets, one-year TTL — we purge HTML, never assets" · "cache-key discipline: whitelist query params, normalize device class, never <code>Vary: Cookie</code>" · "origin shield + request coalescing: a global hot object costs us ~one origin fetch per TTL" · "we alarm on miss rate — 98→97% hit is +50% origin load" · "signed URLs, 5-minute expiry, bucket locked to the CDN via OAC" · "<code>stale-if-error</code> everywhere: an origin outage degrades to slightly-stale, not down".</div>
+  </div>
+
+  <!-- ===== 9. CHECK YOURSELF ===== -->
+  <div class="card" id="check">
+    <h2>9 · Check yourself</h2>
+    <details class="qa">
+      <summary>Your dashboard shows hit ratio slipping 99% → 98%. Why is ops being paged over "one percent"?</summary>
+      <div class="a"><p>Because the origin doesn't see hit ratio — it sees misses, and misses went from 1% to 2% of total traffic: <b>origin load doubled</b>. The general rule: origin traffic ∝ (1 − hit ratio), so deltas near the top of the scale are enormous in relative terms (98→97% = +50%). This is also why capacity planning for the origin starts from "worst credible miss rate" (cold PoP, purge storm), not from yesterday's average.</p></div>
+    </details>
+    <details class="qa">
+      <summary>An engineer adds <code>Vary: Cookie</code> to fix "users seeing each other's pages". What actually happens, and what's the right fix?</summary>
+      <div class="a"><p>Cookies are near-unique (session IDs), so the cache key now includes an effectively per-user value: every user gets a private copy, hit ratio collapses toward zero, and most CDNs will simply stop caching the response. The symptom is "fixed" by disabling the cache. Right fixes: mark truly per-user responses <code>Cache-Control: private/no-store</code>; never cache anything bearing <code>Set-Cookie</code>; restructure the page — cache the shared shell, fetch personal fragments via an authenticated API call or assemble them in edge compute keyed on a low-cardinality cohort, not the raw cookie.</p></div>
+    </details>
+    <details class="qa">
+      <summary>How do you serve private user photos through a CDN without making them public?</summary>
+      <div class="a"><p><b>Signed URLs</b>: the app (which knows the ACL) mints a URL with an expiry and signature; the edge verifies both cryptographically without contacting the origin, then serves the cached object. For session-wide access (video segments), <b>signed cookies</b> authorize a whole path prefix. Two details that separate senior answers: keep expiries short (minutes) and scoped narrowly, and lock the origin bucket so only the CDN can read it (CloudFront OAC) — otherwise the object is still public at its storage URL.</p></div>
+    </details>
+    <details class="qa">
+      <summary>You deploy a new JS bundle. Walk through why you don't purge — and what you do instead.</summary>
+      <div class="a"><p>Assets are content-hashed: the new bundle is <code>app.7d21e0.js</code> — a brand-new URL with no stale copies anywhere, cached <code>max-age=1y, immutable</code>. The HTML that references it carries a short <code>s-maxage</code> (or <code>no-cache</code> + ETag), so it rolls over within seconds-to-minutes — purge the HTML tag if you're impatient. Choreography: upload new assets <i>first</i>, keep the old release's assets available, then flip HTML — a user holding old HTML must still resolve old assets. Result: zero purge dependencies, no window of broken half-deployed pages.</p></div>
+    </details>
+    <details class="qa">
+      <summary>A celebrity posts a link and one URL goes from 10 to 500k requests/min. What protects your origin, layer by layer?</summary>
+      <div class="a"><p>(1) The object is cached: 99.9%+ served at the edges. (2) On expiry, <b>request coalescing</b> collapses each PoP's concurrent misses into one origin-bound fetch. (3) The <b>origin shield</b> collapses the PoPs' fetches again — the origin sees roughly one request per TTL. (4) <code>stale-while-revalidate</code> removes even that synchronized wait by refreshing in the background. Without (2)–(4), a single expiry moment becomes a thundering herd — the difference between "one fetch per TTL" and "ten thousand concurrent misses".</p></div>
+    </details>
+  </div>
+
+  <p class="small muted">Sources: this page condenses HTTP caching semantics (RFC 9111 / MDN), CloudFront, Fastly and Cloudflare documentation and public postmortems, and HelloInterview's CDN notes. Numbers are order-of-magnitude interview figures — verify vendor quotas and prices before quoting in production.</p>
+</div>
+
+<script src="site.js"></script>
+<script>
+/* ===== Hit-ratio economics — 3 PoPs, 1 origin, seeded & deterministic ===== */
+const POPS = [
+  {key:'eu', name:'🇩🇪 Frankfurt', share:40},
+  {key:'us', name:'🇺🇸 Virginia',  share:40},
+  {key:'ap', name:'🇸🇬 Singapore', share:20},
+];
+let S = null;
+const $ = id => document.getElementById(id);
+
+function mulberry32(seed){
+  let a = seed;
+  return function(){
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function defaultState(){
+  const pops = {};
+  for (const p of POPS) pops[p.key] = {cache:{}, hitsAll:0, reqsAll:0, hitsLast:0, reqsLast:0, fetchesLast:0};
+  return { round:0, rng:mulberry32(1337), pops, originLast:0, originTotal:0, prevHit:null, prevOrigin:null };
+}
+
+const catalog    = () => +$('catSlider').value;
+const ttl        = () => +$('ttlSlider').value;
+const coalescing = () => $('coalChk').checked;
+
+function pickObj(){
+  const n = catalog();
+  const hot = Math.max(1, Math.round(n * 0.2));
+  if (S.rng() < 0.8) return Math.floor(S.rng() * hot);            // 80% of traffic → hottest 20%
+  return hot + Math.floor(S.rng() * Math.max(1, n - hot));        // 20% → the long tail
+}
+
+function logLine(cls, msg){
+  const d = document.createElement('div');
+  d.className = 'l ' + cls;
+  d.textContent = msg;
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function explain(html){ $('explain').innerHTML = html; }
+
+function simulate(){
+  S.round++;
+  let totHits = 0, totMisses = 0, totFetches = 0, dupMisses = 0;
+  for (const p of POPS){
+    const st = S.pops[p.key];
+    const missCount = {};
+    let hits = 0;
+    for (let i = 0; i < p.share; i++){
+      const o = pickObj();
+      const exp = st.cache[o];
+      if (exp !== undefined && exp > S.round) hits++;
+      else missCount[o] = (missCount[o] || 0) + 1;
+    }
+    const distinct = Object.keys(missCount);
+    for (const o of distinct) st.cache[o] = S.round + ttl();      // fetched once → cached
+    const misses  = p.share - hits;
+    const fetches = coalescing() ? distinct.length : misses;      // burst is concurrent: no coalescing ⇒ every miss races to origin
+    dupMisses += misses - distinct.length;
+    st.hitsLast = hits; st.reqsLast = p.share; st.fetchesLast = fetches;
+    st.hitsAll += hits; st.reqsAll += p.share;
+    for (const k in st.cache) if (st.cache[k] <= S.round) delete st.cache[k];  // honest "objects cached" count
+    totHits += hits; totMisses += misses; totFetches += fetches;
+  }
+  S.originLast = totFetches; S.originTotal += totFetches;
+
+  const cls = totFetches >= 30 ? 'err' : totFetches >= 10 ? 'warn' : 'ok';
+  let line = `round ${S.round} · 100 reqs → ${totHits} hits (${totHits}%) · ${totMisses} misses → ${totFetches} origin fetches`;
+  if (dupMisses > 0) line += coalescing()
+    ? ` (coalescing collapsed ${dupMisses})`
+    : ` (${dupMisses} were duplicate misses — coalescing would have collapsed them)`;
+  logLine(cls, line);
+
+  let ex = `<b>Hit ${totHits}% ⇒ the origin saw ${totFetches} of 100 requests.</b> `;
+  if (S.prevHit !== null && S.prevOrigin > 0){
+    const d = Math.round((S.originLast - S.prevOrigin) / S.prevOrigin * 100);
+    ex += `Δ vs last round: hits ${S.prevHit}%→${totHits}%, origin ${S.prevOrigin}→${S.originLast} fetches (${d >= 0 ? '+' : ''}${d}%). `;
+  }
+  ex += `The lever is non-linear: at 98% hits the origin gets 2 requests, at 97% it gets 3 — <b>one “point” of hit ratio = +50% origin load</b>.`;
+  explain(ex);
+
+  S.prevHit = totHits; S.prevOrigin = S.originLast;
+  render();
+}
+
+function purge(){
+  let n = 0;
+  for (const p of POPS){ n += Object.keys(S.pops[p.key].cache).length; S.pops[p.key].cache = {}; }
+  logLine('err', `🧹 PURGE ALL — ${n} cached objects dropped across 3 PoPs`);
+  explain(`Caches are empty. The next 100 requests are a <b>miss storm</b> — watch the origin bar spike red.` +
+    (coalescing() ? '' : ' With coalescing OFF, popular objects are fetched multiple times in parallel — count the duplicate misses in the log.') +
+    ' A cold PoP or a careless “purge everything” deploy looks exactly like this.');
+  render();
+}
+
+function render(){
+  let h = '';
+  for (const p of POPS){
+    const st = S.pops[p.key];
+    const cached = Object.keys(st.cache).length;
+    const rPct = st.reqsLast ? Math.round(st.hitsLast / st.reqsLast * 100) : null;
+    const aPct = st.reqsAll ? Math.round(st.hitsAll / st.reqsAll * 100) : null;
+    h += `<div class="node ${rPct !== null && rPct >= 90 ? 'replica' : ''}">
+      <div class="title">📦 ${p.name} <span class="badge">${p.share}% traffic</span></div>
+      <div class="kv"><span class="k">objects cached</span><span>${cached}</span></div>
+      <div class="kv"><span class="k">hits last round</span><span>${rPct === null ? '—' : st.hitsLast + '/' + st.reqsLast + ' (' + rPct + '%)'}</span></div>
+      <div class="kv ${aPct !== null && aPct < 80 ? 'stale' : ''}"><span class="k">hit ratio (all)</span><span>${aPct === null ? '—' : aPct + '%'}</span></div>
+    </div>`;
+  }
+  const hot = S.originLast >= 30;
+  const offload = (() => {
+    let hAll = 0, rAll = 0;
+    for (const p of POPS){ hAll += S.pops[p.key].hitsAll; rAll += S.pops[p.key].reqsAll; }
+    return rAll ? Math.round(hAll / rAll * 100) : null;
+  })();
+  h += `<div class="node primary ${hot ? 'flash-bad' : ''}">
+    <div class="title">🏭 Origin <span class="badge">sees only misses</span></div>
+    <div class="kv ${hot ? 'stale' : ''}"><span class="k">fetches last round</span><span>${S.round ? S.originLast + '/100' : '—'}</span></div>
+    <div class="kv"><span class="k">fetches total</span><span>${S.originTotal}</span></div>
+    <div class="kv"><span class="k">edge offload (all)</span><span>${offload === null ? '—' : offload + '%'}</span></div>
+  </div>`;
+  $('nodes').innerHTML = h;
+
+  const col = S.originLast < 10 ? 'var(--ok)' : S.originLast < 30 ? 'var(--warn)' : 'var(--bad)';
+  $('originBar').innerHTML = `
+    <div class="small muted" style="margin-top:14px">origin load this round — <b style="color:${col}">${S.originLast}</b> of 100 requests reached the origin</div>
+    <div style="height:16px;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:4px">
+      <div style="height:100%;width:${S.originLast}%;background:${col};transition:width .4s"></div>
+    </div>`;
+}
+
+function reset(){
+  S = defaultState();
+  $('log').innerHTML = '';
+  logLine('t', `reset — 3 PoPs (40/40/20 split), catalog=${catalog()} objects, TTL=${ttl()} rounds, coalescing ${coalescing() ? 'ON' : 'OFF'}, seed=1337`);
+  explain('Press <b>▶ Simulate</b> a few times and watch the caches warm up. Then read the origin bar like an SRE: it shows exactly the misses.');
+  render();
+}
+
+$('simBtn').onclick   = simulate;
+$('purgeBtn').onclick = purge;
+$('resetBtn').onclick = reset;
+$('catSlider').oninput  = () => { $('catVal').textContent = catalog(); };
+$('catSlider').onchange = () => { logLine('info', `catalog → ${catalog()} distinct objects (hot set = top 20%; a bigger tail is harder to keep warm)`); };
+$('ttlSlider').oninput  = () => { $('ttlVal').textContent = ttl(); };
+$('ttlSlider').onchange = () => { logLine('info', `TTL → ${ttl()} round${ttl() === 1 ? '' : 's'} (existing entries keep their old expiry)`); };
+$('coalChk').onchange   = () => { logLine('info', 'request coalescing ' + (coalescing() ? 'ON — concurrent misses for one object collapse into a single origin fetch' : 'OFF — every concurrent miss races to the origin independently')); };
+
+reset();
+</script>
+</body>
+</html>

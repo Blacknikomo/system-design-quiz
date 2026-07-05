@@ -165,3 +165,22 @@ pre.code .c{color:var(--muted)}
 .card.scale{border-color:#4a3a6e;background:linear-gradient(180deg,rgba(var(--accent2-rgb),.07),transparent 70px)}
 .card.scale h2{color:var(--accent2)}
 .card.scale .cmd-tbl td:first-child{color:var(--accent2);font-family:inherit;font-size:13px;font-weight:600;white-space:nowrap}
+
+/* ===== Article pages (deep-dive long reads: queues, spanner, clickhouse, …) ===== */
+.art p{font-size:14.5px;line-height:1.75;margin:10px 0}
+.art p.lead{font-size:15.5px;color:var(--txt)}
+.art h2{margin-top:6px}
+.art [id]{scroll-margin-top:14px}
+.rt{display:inline-block;font-size:11px;padding:2px 8px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0}
+.toc a{font-size:12.5px;padding:4px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+.toc a:hover{color:var(--accent);border-color:var(--accent);text-decoration:none}
+/* check-yourself reveal card — pure <details>, no JS needed */
+details.qa{background:var(--panel2);border:1px solid var(--line);border-radius:10px;margin:10px 0}
+details.qa>summary{cursor:pointer;list-style:none;padding:12px 14px;font-weight:600;font-size:13.5px;user-select:none}
+details.qa>summary::-webkit-details-marker{display:none}
+details.qa>summary::before{content:"❓";margin-right:8px}
+details.qa[open]>summary{border-bottom:1px dashed var(--line)}
+details.qa[open]>summary::before{content:"💡"}
+details.qa>.a{padding:10px 14px;font-size:13.5px}
+details.qa>.a p{margin:6px 0;line-height:1.6}
