@@ -106,6 +106,34 @@ Other devices: same paste, no bootstrap.
 
 ---
 
+## Troubleshooting
+
+**`{"Message":"Forbidden…urls-auth.html"}` from curl** — the request was
+rejected by the Function URL layer, it never reached our code (our own auth
+error looks different: `{"error":"bad or missing x-sdq-key"}`). Two causes:
+
+1. Missing resource policy (the console adds it automatically, the CLI does
+   NOT — that's what step 6's `add-permission` is for). Check:
+
+   ```bash
+   aws lambda get-policy --region eu-west-1 --function-name sdq-progress-api
+   ```
+
+   `ResourceNotFoundException` → re-run the `add-permission` command from
+   step 6. If a statement exists but with a different action/condition:
+   `aws lambda remove-permission --region eu-west-1 --function-name sdq-progress-api --statement-id public-url`,
+   then `add-permission` again.
+
+2. URL created with IAM auth. Check `AuthType` in:
+
+   ```bash
+   aws lambda get-function-url-config --region eu-west-1 --function-name sdq-progress-api
+   ```
+
+   If `AWS_IAM` → `aws lambda update-function-url-config --region eu-west-1 --function-name sdq-progress-api --auth-type NONE`.
+
+---
+
 **Updating the Lambda code later** (after editing index.mjs):
 
 ```bash
