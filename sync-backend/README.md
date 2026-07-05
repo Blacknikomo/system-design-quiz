@@ -40,14 +40,12 @@ All requests need header `x-sdq-key: <secret>`.
 
 ## Deploy (once)
 
-```bash
-cd sync-backend
-aws configure            # if not done yet
-./deploy.sh              # REGION=eu-central-1 by default
-```
+Two equivalent options:
 
-Prints the **Endpoint URL** and **Secret**. Re-run safely to update code
-(pass `SECRET=<same>` to keep the secret stable).
+- **Script:** `cd sync-backend && ./deploy.sh` — prints Endpoint + Secret.
+  Re-run safely to update code (pass `SECRET=<same>` to keep the secret stable).
+- **By hand:** step-by-step commands in [`manual-deploy.md`](manual-deploy.md)
+  (uses `iam-trust.json` / `iam-policy.json` from this folder).
 
 ## Per-device setup
 

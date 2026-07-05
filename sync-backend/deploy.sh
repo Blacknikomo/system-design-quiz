@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-REGION="${REGION:-eu-central-1}"
+REGION="${REGION:-eu-west-1}"
 TABLE="${TABLE:-sdq-progress}"
 FN="${FN:-sdq-progress-api}"
 ROLE="${ROLE:-sdq-progress-lambda-role}"

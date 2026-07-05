@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:Query",
+        "dynamodb:UpdateItem",
+        "dynamodb:PutItem",
+        "dynamodb:BatchWriteItem"
+      ],
+      "Resource": "arn:aws:dynamodb:eu-west-1:*:table/sdq-progress"
+    }
+  ]
+}
