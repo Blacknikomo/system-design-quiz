@@ -91,7 +91,8 @@ window.SDQSync = (function(){
 
   // ---------- pull / bootstrap ----------
   function localHasHistory(s){
-    return s && (Object.keys(s.topics||{}).length || (s.sessions||[]).length);
+    return s && (Object.keys(s.topics||{}).length || Object.keys(s.apps||{}).length
+      || Object.keys(s.stepstats||{}).length || (s.sessions||[]).length);
   }
 
   async function pull(){
@@ -204,13 +205,27 @@ window.SDQSync = (function(){
     },
     pushSession(sess){
       if(!ctx) return;
-      const ev = {type:"session", date:sess.date, correct:sess.correct, total:sess.total, topics:sess.topics.slice()};
+      const ev = {type:"session", date:sess.date, correct:sess.correct, total:sess.total,
+                  topics: Array.isArray(sess.topics) ? sess.topics.slice() : []};
+      // optional walkthrough fields (quizzes don't set these; harmless when absent)
+      if(sess.app     != null) ev.app     = sess.app;
+      if(sess.appName != null) ev.appName = sess.appName;
+      if(sess.mode    != null) ev.mode    = sess.mode;
+      if(sess.walked  != null) ev.walked  = sess.walked;
       // engines push the running session after EVERY answer (same date key) —
       // coalesce in the queue so one session = one event, not one per answer
       const q = loadQ();
       const i = q.findIndex(e=>e.type==="session" && e.date===ev.date);
       if(i>=0){ q[i] = ev; saveQ(q); setBadge(); scheduleFlush(); }
       else enqueue(ev);
+    },
+    // walkthrough per-step event: carries the NEW streak so the backend can LWW it
+    pushStep(ev){
+      if(!ctx) return;
+      enqueue({type:"step", app:ev.app, stepIdx:ev.stepIdx, correct:!!ev.correct,
+               streak:ev.streak|0, t:ev.t|0,
+               stage:(ev.stage||"").slice(0,120), decision:(ev.decision||"").slice(0,300),
+               mode:ev.mode||"", ts:Date.now()});
     },
   };
 })();

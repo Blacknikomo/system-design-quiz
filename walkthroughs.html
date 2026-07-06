@@ -204,6 +204,7 @@
 </div>
 
 <script src="walkthroughs-data.js"></script>
+<script src="sync.js"></script>
 <script>
 /* APPS data moved to walkthroughs-data.js (window.APPS) */
 
@@ -262,6 +263,9 @@ function recordStep(a, stepIdx, correct, m){
   runResults[stepIdx] = correct;
   runTotal++; if(correct) runCorrect++;
   saveStore(STORE);
+  // cross-device sync: push this step's NEW streak (backend applies it last-write-wins)
+  window.SDQSync && SDQSync.pushStep({app:a.id, stepIdx, correct, streak:ss.streak, t:ss.t,
+    stage:a.steps[stepIdx].stage, decision:a.steps[stepIdx].decision, mode:m});
 }
 function seenCount(id){ return Object.keys(STORE.seen[id]||{}).length; }
 function stepState(id, i){
@@ -444,6 +448,7 @@ function finish(){
   STORE.sessions.unshift({date:Date.now(), app:a.id, appName:a.name, mode, correct:runCorrect, total:runTotal, walked:a.steps.length});
   STORE.sessions = STORE.sessions.slice(0,50);
   saveStore(STORE);
+  window.SDQSync && SDQSync.pushSession(STORE.sessions[0]);   // cross-device sync
   $("pBar").style.width = "100%";
   let msg;
   if(mode==="quiz"){
@@ -598,12 +603,22 @@ $("dwExportBtn").onclick = ()=>{
   setTimeout(()=>URL.revokeObjectURL(url), 1000);
 };
 $("dwResetBtn").onclick = ()=>{
-  if(confirm("Erase all walkthrough progress and coverage? This can't be undone.")){
+  if(confirm("Erase all walkthrough progress and mastery? This can't be undone.")){
     STORE = defaultStore(); saveStore(STORE); renderStats();
   }
 };
 
 renderPicker();
+
+// ---------- cross-device sync (mirrors the quizzes; store:"walkthroughs") ----------
+window.SDQSync && SDQSync.init({
+  store: "walkthroughs",
+  getStore: ()=>STORE,
+  // remote (server aggregate) is the source of truth; local events are flushed before pull.
+  // defaultStore() supplies apps/modes/missed/seen/stepstats/sessions so remote fills them all.
+  setStore: s=>{ STORE = Object.assign(defaultStore(), s); saveStore(STORE); },
+  onRemoteUpdate: ()=>{ try{ renderStats(); }catch(e){} },   // refresh Progress view after adopting remote
+});
 </script>
 <script src="site.js"></script>
 </body>
