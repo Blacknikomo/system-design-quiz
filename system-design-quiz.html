@@ -95,7 +95,7 @@
     <div>
       <div class="back" data-nav></div>
       <h1>System Design Quiz</h1>
-      <div class="sub">FAANG EM (L6) prep · topic-tagged · tracks weak areas · saves history</div>
+      <div class="sub">FAANG EM (L6) prep · topic-tagged · tracks mastery · saves history</div>
     </div>
     <div class="row">
       <button class="btn sec" id="tab-quiz">Quiz</button>
@@ -111,7 +111,7 @@
       <div class="row">
         <button class="btn ghost" id="selAll">Select all</button>
         <button class="btn ghost" id="selNone">Clear</button>
-        <button class="btn ghost" id="selWeak">Weak topics only</button>
+        <button class="btn ghost" id="selWeak">Needs practice (wrong)</button>
       </div>
     </div>
     <div class="card">
@@ -171,7 +171,7 @@
     </div>
     <div class="row">
       <button class="btn" id="againBtn">New quiz</button>
-      <button class="btn sec" id="retryWeakBtn">Retry weak topics</button>
+      <button class="btn sec" id="retryWeakBtn">Redo weak topics</button>
     </div>
   </div>
 
@@ -184,7 +184,7 @@
     <div class="card">
       <div class="toprow" style="margin-bottom:12px">
         <div class="label" style="margin:0">Mastery by topic</div>
-        <span class="muted" style="font-size:12px">red = weak (&lt;60% &amp; ≥3 answered)</span>
+        <span class="muted" style="font-size:12px">⚠️ / red = weak — answered wrong, redo to re-master</span>
       </div>
       <div id="topicBars"></div>
     </div>
@@ -193,10 +193,10 @@
       <div id="histList"></div>
     </div>
     <div class="row">
-      <button class="btn" id="exportBtn">⬇ Export weak-topics analysis (JSON)</button>
+      <button class="btn" id="exportBtn">⬇ Export mastery analysis (JSON)</button>
       <button class="btn ghost" id="resetBtn">Reset all history</button>
     </div>
-    <p class="small muted" style="margin-top:8px">The JSON captures your weak topics, per-level accuracy, and the exact questions you missed (by id) — designed to feed targeted, more-detailed question generation later.</p>
+    <p class="small muted" style="margin-top:8px">The JSON captures your weak (wrong-answered) topics with each item's streak and reps-to-mastery, plus per-level accuracy and per-topic mastery — designed to feed targeted question generation later.</p>
   </div>
 </div>
 
@@ -306,6 +306,10 @@ function sourceLabel(url){
    STORAGE
    ============================================================ */
 const LS_KEY = "sdq_history_v1";
+// Mastery model: an item is "mastered/strong" only after this many correct answers
+// IN A ROW. A wrong answer resets that item's streak to 0 (back to weak). Bump to 3
+// for a stricter bar.
+const MASTERY_STREAK = 2;
 function loadStore(){
   try{ return JSON.parse(localStorage.getItem(LS_KEY)) || defaultStore(); }
   catch(e){ return defaultStore(); }
@@ -367,9 +371,10 @@ function weightedOrder(pool){
              .sort((a,b)=>b.k-a.k).map(x=>x.q);
 }
 function isWeak(t){
-  const s = STORE.topics[t];
-  if(!s || s.total < 3) return false;
-  return (s.correct/s.total) < 0.6;
+  // Weak = the topic has at least one item answered INCORRECTLY (last answer wrong →
+  // streak reset to 0) and not yet re-mastered. Unanswered items are untracked/neutral
+  // and never make a topic weak; in-progress and mastered items aren't weak either.
+  return topicProgress(t).weakItems > 0;
 }
 function allTopics(){
   return [...new Set(QUESTIONS.map(q=>q.topic))].sort();
@@ -387,13 +392,20 @@ function topicCount(t){ return QUESTIONS.filter(q=>q.topic===t).length; }
    grade = accuracy × coverage (you can't "know" a topic you've barely sampled) */
 function topicProgress(t){
   const qs = QUESTIONS.filter(q=>q.topic===t);
-  let seen = 0;
-  qs.forEach(q=>{ const st = STORE.qstats[q.id]; if(st && st.t>0) seen++; });
+  let seen = 0, mastered = 0, weakItems = 0;
+  qs.forEach(q=>{ const st = STORE.qstats[q.id];
+    if(!st || st.t===0) return;                  // unanswered = untracked / neutral
+    seen++;
+    const streak = st.streak||0;
+    if(streak===0) weakItems++;                  // answered, last answer WRONG → weak
+    else if(streak>=MASTERY_STREAK) mastered++;  // strong / mastered
+    // else: in-progress (correct, but streak below threshold) — neutral
+  });
   const agg = STORE.topics[t];
   const acc = (agg && agg.total>0) ? agg.correct/agg.total : null;
   const score = acc===null ? null : acc * (seen/qs.length);
   const grade = score===null ? null : score>=.7 ? "A" : score>=.5 ? "B" : score>=.3 ? "C" : "D";
-  return {n:qs.length, seen, acc, score, grade};
+  return {n:qs.length, seen, mastered, weakItems, acc, score, grade};
 }
 
 function renderTopicChips(){
@@ -404,13 +416,14 @@ function renderTopicChips(){
     const weak = isWeak(t);
     const p = topicProgress(t);
     const accCol = p.acc===null ? 'var(--muted)' : p.acc>=.8 ? 'var(--ok)' : p.acc>=.6 ? 'var(--warn)' : 'var(--bad)';
+    const masterCol = (p.seen>0 && p.mastered===p.seen) ? 'var(--ok)' : p.mastered===0 ? 'var(--muted)' : 'var(--warn)';
     const stat = p.seen===0
-      ? `<span class="chip-stat" style="opacity:.55">0/${p.n} · not started</span>`
-      : `<span class="chip-stat">${p.seen}/${p.n} · <span style="color:${accCol}">${Math.round(p.acc*100)}%</span> · <b>${p.grade}</b></span>`;
+      ? `<span class="chip-stat" style="opacity:.55">untracked · ${p.n} questions</span>`
+      : `<span class="chip-stat"><span style="color:${masterCol}">${p.mastered}/${p.n} mastered</span>${p.weakItems?` · <span style="color:var(--bad)">${p.weakItems} to redo</span>`:''} · <span style="color:${accCol}">${Math.round(p.acc*100)}%</span> · <b>${p.grade}</b></span>`;
     c.innerHTML = `${weak?'⚠️ ':''}${t}${stat}`;
     c.title = p.seen===0
-      ? `${t}: not attempted yet (${p.n} questions)`
-      : `${t}: tried ${p.seen} of ${p.n} questions · all-time accuracy ${Math.round(p.acc*100)}% · grade ${p.grade} = accuracy × coverage${weak?' · ⚠ weak (<60%)':''}`;
+      ? `${t}: not started — ${p.n} questions untracked (unanswered = neutral)`
+      : `${t}: ${p.mastered} of ${p.n} mastered (${MASTERY_STREAK}× correct in a row) · tried ${p.seen}/${p.n} · accuracy ${Math.round(p.acc*100)}%${p.weakItems?` · ⚠ ${p.weakItems} answered wrong — redo to re-master`:' · ✓ no wrong answers outstanding'}`;
     c.onclick = ()=>{
       if(selectedTopics.has(t)) selectedTopics.delete(t); else selectedTopics.add(t);
       renderTopicChips(); updatePoolInfo();
@@ -424,7 +437,7 @@ document.getElementById("selWeak").onclick = ()=>{
   const weak = allTopics().filter(isWeak);
   selectedTopics.clear();
   if(weak.length){ weak.forEach(t=>selectedTopics.add(t)); }
-  else { allTopics().forEach(t=>selectedTopics.add(t)); alert("No weak topics yet (need ≥3 answers & <60%). Selected all."); }
+  else { allTopics().forEach(t=>selectedTopics.add(t)); alert("Nothing to redo — no wrong answers outstanding. Selected all."); }
   renderTopicChips(); updatePoolInfo();
 };
 
@@ -654,26 +667,39 @@ document.getElementById("resetBtn").onclick = ()=>{
   }
 };
 
-// Build a rich weak-topics analysis object for export
+// Build a rich mastery analysis object for export
 function buildWeakAnalysis(){
   const topicMeta = {}; // topic -> {total questions in bank, levels}
   QUESTIONS.forEach(q=>{ (topicMeta[q.topic]=topicMeta[q.topic]||{bank:0}); topicMeta[q.topic].bank++; });
+  // per-question mastery detail: streak, state, reps remaining to mastery
+  function qDetail(q){
+    const st = STORE.qstats[q.id] || {c:0, t:0, streak:0};
+    const streak = st.streak || 0;
+    const state = st.t===0 ? "untracked" : streak===0 ? "weak" : streak>=MASTERY_STREAK ? "mastered" : "in-progress";
+    return { id:q.id, level:q.level, attempts:st.t||0, streak, repsToMastery: state==="untracked" ? null : Math.max(0, MASTERY_STREAK - streak), state };
+  }
   const byTopic = allTopics().map(t=>{
     const s = STORE.topics[t] || {correct:0,total:0};
     const acc = s.total ? +(s.correct/s.total).toFixed(3) : null;
+    const prog = topicProgress(t);
     return {
       topic:t,
       attempts:s.total, correct:s.correct,
       accuracy:acc,
-      weak:isWeak(t),
-      bankSize:topicMeta[t]?topicMeta[t].bank:0,
+      seen:prog.seen, mastered:prog.mastered, weakItems:prog.weakItems,
+      weak: prog.weakItems>0,       // weak = has at least one wrong-answered item (streak 0)
+      bankSize:topicMeta[t]?topicMeta[t].bank:prog.n,
       source: SOURCES[t] || (B+"in-a-hurry/introduction")
     };
   });
-  const weakTopics = byTopic.filter(x=>x.weak)
-    .sort((a,b)=>(a.accuracy??1)-(b.accuracy??1))
-    .map(x=>({...x, recommendation:`Generate more detailed ${x.topic} questions; current accuracy ${(x.accuracy*100).toFixed(0)}% over ${x.attempts} attempts. Ground new questions in: ${x.source}`}));
-  // also surface "untested" topics (no attempts) as a softer signal
+  const weakTopics = byTopic.filter(x=>x.weakItems>0)
+    .sort((a,b)=> b.weakItems - a.weakItems)
+    .map(x=>({
+      ...x,
+      weakItemsDetail: QUESTIONS.filter(q=>q.topic===x.topic).map(qDetail).filter(d=>d.state==="weak"),
+      recommendation:`${x.weakItems} question(s) answered wrong in ${x.topic}; re-answer correctly ${MASTERY_STREAK}× in a row to re-master. Source: ${x.source}`
+    }));
+  // "untested" = never answered at all (untracked/neutral — NOT weak)
   const untested = byTopic.filter(x=>x.attempts===0).map(x=>x.topic);
   const byLevel = {};
   Object.entries(STORE.levels||{}).forEach(([lv,s])=>{
@@ -690,8 +716,9 @@ function buildWeakAnalysis(){
     }));
   let tot=0,cor=0; Object.values(STORE.topics).forEach(s=>{tot+=s.total;cor+=s.correct;});
   return {
-    schema:"sd-quiz-weak-analysis/v1",
+    schema:"sd-quiz-mastery-analysis/v3",
     exportedAt:new Date().toISOString(),
+    masteryStreak:MASTERY_STREAK,
     summary:{
       totalAnswered:tot, totalCorrect:cor,
       overallAccuracy: tot?+(cor/tot).toFixed(3):null,
@@ -704,7 +731,7 @@ function buildWeakAnalysis(){
     byLevel,
     byTopic,
     missedQuestions:missed,
-    note:"weak = accuracy < 60% over >= 3 attempts. Use weakTopics + missedQuestions (by id) to drive targeted, more-detailed question generation; each entry links its HelloInterview source."
+    note:`weak = answered INCORRECTLY (last answer wrong → streak 0) and not yet re-mastered. Unanswered items are untracked/neutral and never weak. weakTopics[].weakItemsDetail lists the wrong-answered questions with streak and repsToMastery; strong/mastered = ${MASTERY_STREAK} correct in a row.`
   };
 }
 document.getElementById("exportBtn").onclick = ()=>{
@@ -714,7 +741,7 @@ document.getElementById("exportBtn").onclick = ()=>{
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   const stamp = new Date().toISOString().slice(0,10);
-  a.href = url; a.download = `weak-topics-analysis-${stamp}.json`;
+  a.href = url; a.download = `mastery-analysis-${stamp}.json`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 1000);
 };

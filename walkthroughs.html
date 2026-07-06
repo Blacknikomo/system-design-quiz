@@ -72,6 +72,35 @@
   .score{margin-left:auto;font-size:13px;color:var(--muted)}
   .score b{color:var(--txt)}
   .done-banner{background:#15233a;border:1px solid #2c4a6e;border-radius:10px;padding:14px;margin-top:12px;font-size:14px}
+
+  /* self-grade (reveal mode) */
+  .selfgrade{display:inline-flex;gap:8px;align-items:center}
+  .selfgrade .lbl{font-size:12px;color:var(--muted)}
+
+  /* view routing + scroll fix */
+  .hide{display:none!important}
+  #panel{scroll-margin-top:80px}          /* so auto-scroll doesn't tuck the panel under the sticky filter */
+  #view-stats .card{margin-bottom:16px}
+  .label{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px}
+
+  /* stats view — mirrors the quiz stats */
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center}
+  .stat .n{font-size:26px;font-weight:700}
+  .stat .l{font-size:12px;color:var(--muted);margin-top:2px}
+  .bar-row{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+  .bar-row .name{width:210px;font-size:13px;flex:0 0 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar-row .track{flex:1;height:18px;background:var(--panel2);border-radius:5px;overflow:hidden}
+  .bar-row .fill{height:100%;border-radius:5px}
+  .bar-row .pct{width:88px;text-align:right;font-size:12px;color:var(--muted);flex:0 0 auto}
+  .weak{color:var(--bad);font-weight:600}
+  .hist-item{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .hist-item:last-child{border:none}
+  .miss-item{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .miss-item:last-child{border:none}
+  .miss-item .m-dec{color:var(--txt)}
+  .miss-item .m-meta{color:var(--muted);font-size:12px;margin-top:2px}
+  .miss-item .m-n{flex:0 0 auto;color:var(--bad);font-weight:700;font-size:12px}
 </style>
 </head>
 <body>
@@ -82,16 +111,21 @@
       <h1>🧭 Design Walkthroughs</h1>
       <div class="sub">Step through 42 systems one decision at a time and learn <b style="color:var(--txt)">which technology to reach for and when</b>. Each app is a chain of forks — requirements → scale → storage → core mechanic → deep dives. Predict the next move, then reveal — or flip to <b style="color:var(--txt)">Quiz me</b> and pick from options.</div>
     </div>
-    <div class="seg" id="modeSeg">
-      <button data-mode="reveal" class="on">Reveal</button>
-      <button data-mode="quiz">Quiz me</button>
+    <div class="row" style="gap:8px;align-items:center">
+      <div class="seg" id="modeSeg">
+        <button data-mode="reveal" class="on">Reveal</button>
+        <button data-mode="quiz">Quiz me</button>
+      </div>
+      <button class="btn ghost" id="statsBtn">📊 Progress</button>
     </div>
   </div>
 
+  <div id="view-walk">
   <div class="wt-filter">
     <div class="row">
       <input type="text" id="search" placeholder="filter apps by name / tech / tag…" style="flex:1;min-width:180px">
       <span class="small muted" id="count"></span>
+      <button class="btn ghost hide" id="togglePicker">▸ Show systems</button>
     </div>
   </div>
 
@@ -128,6 +162,10 @@
 
       <div class="navrow">
         <button class="btn" id="revealBtn">Reveal decision</button>
+        <span class="selfgrade hide" id="selfgrade"><span class="lbl">Did you predict it?</span>
+          <button class="btn sec" id="gradeGood">Yes ✓</button>
+          <button class="btn sec" id="gradeBad">No ✗</button>
+        </span>
         <button class="btn sec" id="prevBtn">← Prev</button>
         <button class="btn" id="nextBtn">Next →</button>
         <span class="score" id="score"></span>
@@ -138,6 +176,31 @@
   </div>
 
   <p class="small muted" style="margin-top:18px">Runs entirely in your browser. Pairs with the <a href="cheatsheets.html">Cheat Sheets</a> (terse FR/NFR/tech-why) and the per-technology <a href="index.html">simulators</a>.</p>
+  </div><!-- /view-walk -->
+
+  <div id="view-stats" class="hide">
+    <div class="card">
+      <div class="label">Your progress</div>
+      <div class="stat-grid" id="dwAllStats"></div>
+      <p class="small muted" style="margin:12px 0 0">Answer in <b>Quiz me</b>, or self-grade after a <b>Reveal</b>. A system is <span class="weak">weak</span> if any step was answered <b>wrong</b> (and not yet re-mastered); a step is <b>mastered</b> after several correct answers in a row. Unanswered steps are neutral — same rule as the quizzes.</p>
+    </div>
+    <div class="card">
+      <div class="label">By system</div>
+      <div id="dwSystemBars"></div>
+    </div>
+    <div class="card">
+      <div class="label">⚠️ Weak steps — answered wrong, redo to re-master</div>
+      <div id="dwWeakSpots"></div>
+    </div>
+    <div class="card">
+      <div class="label">Recent sessions</div>
+      <div id="dwHist"></div>
+    </div>
+    <div class="row" style="gap:10px">
+      <button class="btn" id="dwExportBtn">⬇ Export mastery analysis (JSON)</button>
+      <button class="btn ghost" id="dwResetBtn">Reset progress</button>
+    </div>
+  </div>
 </div>
 
 <script src="walkthroughs-data.js"></script>
@@ -155,6 +218,66 @@ let shuffledOpts = null;    // quiz: cached options for current step
 
 const $ = id => document.getElementById(id);
 const app = () => APPS.find(a => a.id === curId);
+
+// ---------- progress storage (same principle as the quizzes) ----------
+const LS_KEY = "dw_history_v1";
+// Mastery model: a step is "mastered/strong" only after MASTERY_STREAK correct answers
+// IN A ROW; a wrong answer resets that step's streak to 0 (→ weak). Bump to 3 for stricter.
+const MASTERY_STREAK = 2;
+function defaultStore(){ return {apps:{}, sessions:[], modes:{}, missed:{}, seen:{}, stepstats:{}}; }
+function loadStore(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)) || defaultStore(); }catch(e){ return defaultStore(); } }
+function saveStore(s){ try{ localStorage.setItem(LS_KEY, JSON.stringify(s)); }catch(e){} }
+let STORE = loadStore();
+// defensive migration for older/partial shapes
+if(!STORE.apps) STORE.apps = {}; if(!STORE.sessions) STORE.sessions = [];
+if(!STORE.modes) STORE.modes = {}; if(!STORE.missed) STORE.missed = {};
+if(!STORE.seen) STORE.seen = {};   // {appId:{stepIdx:1}} — distinct steps answered (informational)
+if(!STORE.stepstats) STORE.stepstats = {};   // {"appId:stepIdx":{t,streak}} — per-step mastery
+
+let recordedSteps = new Set();   // per-run guard so prev/next re-renders don't double-count
+let runResults = {};             // stepIdx -> bool, for this run (chain colouring)
+let runCorrect = 0, runTotal = 0;
+
+// record one resolved step (a quiz answer, or a reveal self-grade)
+function recordStep(a, stepIdx, correct, m){
+  const key = a.id+":"+stepIdx+":"+m;
+  if(recordedSteps.has(key)) return;   // count each step-attempt once per run
+  recordedSteps.add(key);
+  const ap = STORE.apps[a.id] || (STORE.apps[a.id] = {correct:0, total:0});
+  ap.total++; if(correct) ap.correct++;
+  const md = STORE.modes[m] || (STORE.modes[m] = {correct:0, total:0});
+  md.total++; if(correct) md.correct++;
+  (STORE.seen[a.id] || (STORE.seen[a.id] = {}))[stepIdx] = 1;   // mark this step answered
+  const sk = a.id+":"+stepIdx;                                  // per-step mastery streak
+  const ss = STORE.stepstats[sk] || (STORE.stepstats[sk] = {t:0, streak:0});
+  ss.t++; if(correct){ ss.streak++; } else { ss.streak = 0; }  // wrong resets streak → weak
+  const mkey = a.id+":"+stepIdx;       // missed-step key = system + step
+  if(!correct){
+    const prev = STORE.missed[mkey];
+    STORE.missed[mkey] = { app:a.id, appName:a.name, stepIdx, stage:a.steps[stepIdx].stage,
+      decision:a.steps[stepIdx].decision, misses:(prev?prev.misses:0)+1, lastMissed:Date.now() };
+  } else if(STORE.missed[mkey]){
+    STORE.missed[mkey].recoveredAt = Date.now();   // got it right later — keep but mark recovered
+  }
+  runResults[stepIdx] = correct;
+  runTotal++; if(correct) runCorrect++;
+  saveStore(STORE);
+}
+function seenCount(id){ return Object.keys(STORE.seen[id]||{}).length; }
+function stepState(id, i){
+  const ss = STORE.stepstats[id+":"+i];
+  if(!ss || ss.t===0) return "untracked";              // not answered → neutral
+  if((ss.streak||0)===0) return "weak";                // answered, last answer WRONG
+  if((ss.streak||0)>=MASTERY_STREAK) return "mastered";
+  return "in-progress";
+}
+function masteredCount(id){ const a=APPS.find(x=>x.id===id); return a? a.steps.reduce((n,_,i)=>n+(stepState(id,i)==="mastered"?1:0),0):0; }
+function weakStepCount(id){ const a=APPS.find(x=>x.id===id); return a? a.steps.reduce((n,_,i)=>n+(stepState(id,i)==="weak"?1:0),0):0; }
+function isWeakApp(id){
+  // weak = the system has at least one step answered INCORRECTLY (last wrong → streak 0)
+  // and not yet re-mastered. Unanswered steps are untracked/neutral and never weak.
+  return weakStepCount(id) > 0;
+}
 
 // ---------- picker ----------
 function renderPicker(filter=""){
@@ -180,7 +303,9 @@ function renderPicker(filter=""){
 function selectApp(id){
   curId = id; idx = 0; revealed = false; shuffledOpts = null;
   Object.keys(answers).forEach(k=>delete answers[k]);
+  recordedSteps = new Set(); runResults = {}; runCorrect = 0; runTotal = 0;   // fresh run
   $("picker").querySelectorAll(".hub-card").forEach(c=>c.classList.toggle("sel", c.dataset.id===id));
+  collapsePicker(true);   // tuck the tall 42-card grid away so the walkthrough sits at the top
   const a = app();
   $("pIcon").textContent = a.icon;
   $("pName").textContent = a.name;
@@ -220,9 +345,14 @@ function renderStep(){
     $("revealBtn").style.display = revealed ? "none" : "inline-block";
     fillReveal(s, true);
     $("revealBox").classList.toggle("show", revealed);
+    // self-grade appears after reveal so reveal-mode progress is tracked too
+    const graded = recordedSteps.has(curId+":"+idx+":reveal");
+    $("selfgrade").classList.toggle("hide", !revealed);
+    $("gradeGood").disabled = graded; $("gradeBad").disabled = graded;
   } else {
     // quiz
     $("revealBtn").style.display = "none";
+    $("selfgrade").classList.add("hide");
     renderOpts(s);
     fillReveal(s, false); // hide alts list in quiz (the wrong opts are shown inline)
     $("revealBox").classList.toggle("show", done);
@@ -251,7 +381,7 @@ function renderChain(){
   let html = "";
   for(let i=0;i<idx;i++){
     const st = a.steps[i];
-    const wrong = mode==="quiz" && answers[i] && !answers[i].correct;
+    const wrong = (answers[i] && !answers[i].correct) || runResults[i]===false;
     html += `<li class="${wrong?"wrong":""}"><div class="cs-stage">${st.stage}</div><div class="cs-dec">${st.decision}</div></li>`;
   }
   c.innerHTML = html;
@@ -292,6 +422,7 @@ function renderOpts(s){
       b.onclick = ()=>{
         const o = shuffledOpts.opts[+b.dataset.i];
         answers[idx] = {chosen:o.t, correct:o.ok};
+        recordStep(app(), idx, o.ok, "quiz");
         renderStep();
       };
     });
@@ -309,6 +440,10 @@ function prev(){
 }
 function finish(){
   const a = app();
+  // persist a session summary (correct/total from graded steps; walked = steps seen)
+  STORE.sessions.unshift({date:Date.now(), app:a.id, appName:a.name, mode, correct:runCorrect, total:runTotal, walked:a.steps.length});
+  STORE.sessions = STORE.sessions.slice(0,50);
+  saveStore(STORE);
   $("pBar").style.width = "100%";
   let msg;
   if(mode==="quiz"){
@@ -335,9 +470,138 @@ $("modeSeg").querySelectorAll("button").forEach(b=>{
   b.onclick = ()=>{
     mode = b.dataset.mode;
     $("modeSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on", x===b));
-    if(curId){ idx=0; revealed=false; shuffledOpts=null; Object.keys(answers).forEach(k=>delete answers[k]); renderStep(); }
+    if(curId){ idx=0; revealed=false; shuffledOpts=null; Object.keys(answers).forEach(k=>delete answers[k]);
+      recordedSteps=new Set(); runResults={}; runCorrect=0; runTotal=0; renderStep(); }
   };
 });
+
+// ---------- reveal-mode self-grade ----------
+$("gradeGood").onclick = ()=>{ recordStep(app(), idx, true,  "reveal"); renderStep(); };
+$("gradeBad").onclick  = ()=>{ recordStep(app(), idx, false, "reveal"); renderStep(); };
+
+// ---------- picker collapse (keeps the tall grid out of the way) ----------
+function collapsePicker(collapsed){
+  $("picker").classList.toggle("hide", collapsed);
+  const t = $("togglePicker");
+  t.classList.toggle("hide", !curId);              // toggle only meaningful once a system is picked
+  t.textContent = collapsed ? "▸ Show systems" : "▾ Hide systems";
+}
+$("togglePicker").onclick = ()=> collapsePicker(!$("picker").classList.contains("hide"));
+$("search").addEventListener("input", ()=>{ if($("picker").classList.contains("hide")) collapsePicker(false); });
+
+// ---------- view routing (walk <-> progress) ----------
+function showView(v){
+  $("view-walk").classList.toggle("hide", v!=="walk");
+  $("view-stats").classList.toggle("hide", v!=="stats");
+  $("statsBtn").textContent = v==="stats" ? "← Walkthroughs" : "📊 Progress";
+  $("modeSeg").classList.toggle("hide", v==="stats");
+  if(v==="stats") renderStats();
+}
+$("statsBtn").onclick = ()=> showView($("view-stats").classList.contains("hide") ? "stats" : "walk");
+
+// ---------- stats view ----------
+function renderStats(){
+  let tot=0, cor=0;
+  Object.values(STORE.apps).forEach(s=>{ tot+=s.total; cor+=s.correct; });
+  const weakCount = APPS.filter(a=>isWeakApp(a.id)).length;
+  const pct = tot ? Math.round(cor/tot*100) : 0;
+  const col = p => p>=80?'var(--ok)':p>=60?'var(--warn)':'var(--bad)';
+  $("dwAllStats").innerHTML = `
+    <div class="stat"><div class="n">${tot}</div><div class="l">Steps answered</div></div>
+    <div class="stat"><div class="n" style="color:${tot?col(pct):'var(--muted)'}">${tot?pct+'%':'—'}</div><div class="l">Accuracy</div></div>
+    <div class="stat"><div class="n">${STORE.sessions.length}</div><div class="l">Sessions</div></div>
+    <div class="stat"><div class="n" style="color:${weakCount?'var(--bad)':'var(--ok)'}">${weakCount}</div><div class="l">Weak systems</div></div>`;
+
+  // per-system bars (all systems, attempted first, weakest at top)
+  const bars = APPS.map(a=>{
+    const s = STORE.apps[a.id] || {correct:0,total:0};
+    const p = s.total ? Math.round(s.correct/s.total*100) : 0;
+    return {a, s, p, weak:isWeakApp(a.id)};
+  }).sort((x,y)=>{
+    if(x.s.total===0 && y.s.total>0) return 1;
+    if(y.s.total===0 && x.s.total>0) return -1;
+    return x.p - y.p;
+  }).map(({a,s,p,weak})=>{
+    const c = s.total===0 ? 'var(--line)' : col(p);
+    return `<div class="bar-row">
+      <div class="name ${weak?'weak':''}" title="${a.name}">${weak?'⚠️ ':''}${a.icon} ${a.name}</div>
+      <div class="track"><div class="fill" style="width:${s.total?p:0}%;background:${c}"></div></div>
+      <div class="pct">${s.total? s.correct+'/'+s.total+' · '+p+'%' : '—'}</div></div>`;
+  }).join("");
+  $("dwSystemBars").innerHTML = bars;
+
+  // weak steps — steps answered WRONG (streak reset to 0), not yet re-mastered
+  const weakSteps = [];
+  APPS.forEach(a=>{ a.steps.forEach((st,i)=>{ if(stepState(a.id,i)==="weak")
+    weakSteps.push({appName:a.name, stage:st.stage, decision:st.decision, stepIdx:i}); }); });
+  $("dwWeakSpots").innerHTML = weakSteps.length ? weakSteps.map(g=>`
+    <div class="miss-item">
+      <div><div class="m-dec">${g.decision}</div><div class="m-meta">${g.appName} · ${g.stage} · step ${g.stepIdx+1}</div></div>
+      <div class="m-n">redo · ${MASTERY_STREAK}× to master</div>
+    </div>`).join("")
+    : '<span class="small muted">No weak steps — nothing you answered wrong is outstanding. A step you get wrong shows here until you re-answer it correctly ' + MASTERY_STREAK + '× in a row. (Unanswered steps are neutral, not listed.)</span>';
+
+  // history
+  $("dwHist").innerHTML = STORE.sessions.length ? STORE.sessions.map(se=>{
+    const d = new Date(se.date);
+    const graded = se.total>0;
+    const p = graded ? Math.round(se.correct/se.total*100) : 0;
+    const right = graded
+      ? `<span style="color:${col(p)};font-weight:600">${se.correct}/${se.total} · ${p}%</span>`
+      : `<span class="muted">walked ${se.walked} steps</span>`;
+    return `<div class="hist-item">
+      <span>${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
+        <span class="muted">· ${se.appName} · ${se.mode}</span></span>${right}</div>`;
+  }).join("") : '<span class="small muted">No sessions yet.</span>';
+}
+
+// mastery export (same idea as the quizzes' mastery export)
+function buildWeakAnalysis(){
+  const bySystem = APPS.map(a=>{
+    const s = STORE.apps[a.id] || {correct:0,total:0};
+    const weakItems = weakStepCount(a.id), mastered = masteredCount(a.id);
+    return { system:a.id, name:a.name, attempts:s.total, correct:s.correct,
+      accuracy: s.total ? +(s.correct/s.total).toFixed(3) : null,
+      seen:seenCount(a.id), mastered, weakItems, weak: weakItems>0, steps:a.steps.length };
+  });
+  const weakSystems = bySystem.filter(x=>x.weakItems>0)
+    .sort((a,b)=> b.weakItems - a.weakItems)
+    .map(x=>({...x, recommendation:`${x.weakItems} step(s) answered wrong in ${x.name}; re-answer correctly ${MASTERY_STREAK}× in a row to re-master.`}));
+  const untested = bySystem.filter(x=>x.seen===0).map(x=>x.system);
+  // step-level weak items: steps answered wrong (streak 0), not yet re-mastered
+  const weakSteps = [];
+  APPS.forEach(a=>{ a.steps.forEach((st,i)=>{ if(stepState(a.id,i)==="weak"){
+    const ss = STORE.stepstats[a.id+":"+i] || {t:0,streak:0};
+    weakSteps.push({system:a.id, name:a.name, stepIndex:i, stage:st.stage, decision:st.decision, streak:ss.streak||0, attempts:ss.t||0, repsToMastery:MASTERY_STREAK}); } }); });
+  const byMode = {};
+  Object.entries(STORE.modes).forEach(([m,s])=>{ byMode[m] = {attempts:s.total, correct:s.correct, accuracy:s.total?+(s.correct/s.total).toFixed(3):null}; });
+  const missedSteps = Object.values(STORE.missed).sort((a,b)=>b.misses-a.misses).map(m=>({
+    system:m.app, name:m.appName, stepIndex:m.stepIdx, stage:m.stage, decision:m.decision,
+    misses:m.misses, recovered:!!m.recoveredAt }));
+  let tot=0, cor=0; Object.values(STORE.apps).forEach(s=>{ tot+=s.total; cor+=s.correct; });
+  return {
+    schema:"dw-mastery-analysis/v3", exportedAt:new Date().toISOString(), masteryStreak:MASTERY_STREAK,
+    summary:{ totalAnswered:tot, totalCorrect:cor, overallAccuracy: tot?+(cor/tot).toFixed(3):null,
+      sessions:STORE.sessions.length, weakSystemCount:weakSystems.length, systemCount:APPS.length },
+    weakSystems, untestedSystems:untested, weakSteps, byMode, bySystem, missedSteps,
+    note:`weak = answered INCORRECTLY (last answer wrong → streak 0) and not yet re-mastered. Unanswered steps are untracked/neutral and never weak. weakSteps lists the wrong-answered steps with streak/repsToMastery; strong/mastered = ${MASTERY_STREAK} correct in a row.`
+  };
+}
+$("dwExportBtn").onclick = ()=>{
+  const data = buildWeakAnalysis();
+  if(data.summary.totalAnswered===0){ alert("No progress yet — answer some steps first, then export."); return; }
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `dw-mastery-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+};
+$("dwResetBtn").onclick = ()=>{
+  if(confirm("Erase all walkthrough progress and coverage? This can't be undone.")){
+    STORE = defaultStore(); saveStore(STORE); renderStats();
+  }
+};
 
 renderPicker();
 </script>
