@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Real-World Systems — Resource Library</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .cs{border:1px solid var(--line);border-radius:12px;margin-bottom:12px;overflow:hidden;background:var(--panel)}
+  .cs-head{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;user-select:none}
+  .cs-head:hover{background:var(--panel2)}
+  .cs-head .ic{font-size:20px;flex:0 0 auto}
+  .cs-head .nm{font-weight:700;font-size:16px}
+  .cs-head .scope{color:var(--muted);font-size:13px}
+  .cs-head .ct{margin-left:auto;color:var(--muted);font-size:12px;flex:0 0 auto;margin-right:8px}
+  .cs-head .chev{color:var(--muted);transition:transform .2s;flex:0 0 auto}
+  .cs.open .cs-head .chev{transform:rotate(90deg)}
+  .cs-body{display:none;padding:4px 16px 14px;border-top:1px solid var(--line)}
+  .cs.open .cs-body{display:block}
+  .cs-tags{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px}
+  .res{list-style:none;margin:0;padding:0}
+  .res li{padding:8px 0;border-bottom:1px solid var(--line);font-size:13.5px;line-height:1.5}
+  .res li:last-child{border-bottom:none}
+  .res a{font-weight:600}
+  .res .why{color:var(--muted)}
+  .toolbar{position:sticky;top:0;z-index:10;background:var(--bg);padding:10px 0;margin-bottom:6px;border-bottom:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🌐 Real-World Systems — Resource Library</h1>
+      <div class="sub">Curated, <b>verified-live</b> sources on how real production systems are built, scaled, and broken — architecture writeups, migrations, postmortems, foundational papers, and talks. Deliberately <i>not</i> interview drills. Every link was checked to resolve. Same content as <code>real-world-systems-reading.md</code> / <code>.pdf</code>, made searchable.</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="row">
+      <input type="text" id="search" placeholder="filter by company / topic / source (e.g. kafka, postmortem, netflix)…" style="flex:1;min-width:200px">
+      <button class="btn sec" id="expandAll">Expand all</button>
+      <button class="btn sec" id="collapseAll">Collapse all</button>
+    </div>
+    <div class="small muted" id="count" style="margin-top:6px"></div>
+  </div>
+
+  <div id="list"></div>
+
+  <p class="small muted" style="margin-top:16px">Links open in a new tab. Verified July 2026; a few company deep-dive posts may rotate off their landing page over time — the blog roots are the stable entry points. Prep-adjacent sources (ByteByteGo) are flagged as such: use them to preview, then go to the primary source.</p>
+</div>
+
+<script>
+const CARDS = [
+  {icon:"🏢", name:"Engineering blogs", scope:"where real teams document real decisions", tags:["blogs"],
+   items:[
+     ['https://netflixtechblog.com/','Netflix TechBlog','Microservices, chaos engineering, edge caching, streaming-scale ML — the canonical "operate huge distributed systems in the cloud."'],
+     ['https://www.uber.com/en-US/blog/engineering/','Uber Engineering','Geospatial matching, real-time data, and large infra migrations; candid about physical-world-scale trade-offs.'],
+     ['https://blog.cloudflare.com/','Cloudflare Blog','Networking, edge compute, reliability at rare technical depth — and the best public-postmortem publisher.'],
+     ['https://discord.com/blog','Discord Blog','Real-time messaging/voice at massive concurrency. Standout: <a href="https://discord.com/blog/how-discord-stores-trillions-of-messages" target="_blank" rel="noopener">How Discord Stores Trillions of Messages</a> (Cassandra→ScyllaDB).'],
+     ['https://stripe.com/blog/engineering','Stripe Engineering','Payments correctness, idempotency, and API design where money and consistency can\'t be hand-waved.'],
+     ['https://engineering.fb.com/','Engineering at Meta','Core infra, data infrastructure, networking at hyperscale. Standout: <a href="https://engineering.fb.com/2026/05/12/data-infrastructure/migrating-data-ingestion-systems-at-meta-scale/" target="_blank" rel="noopener">Migrating Data Ingestion Systems at Meta Scale</a>.'],
+     ['https://dropbox.tech/','Dropbox Tech Blog','Storage, sync, and the famous move off AWS onto their own infra; strong on cost/scale engineering.'],
+     ['https://slack.engineering/','Slack Engineering','Real-time fan-out, presence, and scaling a stateful product; good on incremental re-architecture.'],
+     ['https://www.canva.dev/blog/engineering/','Canva Engineering','Frontend-at-scale, media processing, and backend platform work for a very large creative app.'],
+   ]},
+  {icon:"🧗", name:"Scaling / migration / re-architecture", scope:"\"how we scaled/migrated/rebuilt X\"", tags:["scaling","migration"],
+   items:[
+     ['https://discord.com/blog/how-discord-stores-trillions-of-messages','Discord — Trillions of Messages','Leaving Cassandra for ScyllaDB, hot-partition pain, and a live multi-trillion-row migration.'],
+     ['https://engineering.fb.com/2026/05/12/data-infrastructure/migrating-data-ingestion-systems-at-meta-scale/','Meta — Migrating Data Ingestion at Scale','Cutting over a critical pipeline with zero data loss; migration strategy under real constraints.'],
+     ['https://www.uber.com/en-US/blog/modernizing-artifact-storage/','Uber — Modernizing Artifact Storage','Re-architecting a foundational storage system that everything else depends on.'],
+     ['https://blog.cloudflare.com/our-unified-data-platform/','Cloudflare — Building the data platform','A unified analytics platform ("Town Lake") built from the ground up.'],
+     ['https://highscalability.com/stack-overflow-architecture/','High Scalability — Stack Overflow Architecture','A classic: a top-tier site on a strikingly small, well-tuned footprint (scale-up vs. scale-out).'],
+     ['https://github.com/ashishps1/awesome-engineering-articles','awesome-engineering-articles','Curated index of 300+ real eng-blog deep-dives (Airbnb, DoorDash, LinkedIn, Pinterest…) — a launchpad.'],
+   ]},
+  {icon:"💥", name:"Postmortems & incident writeups", scope:"real failures and the lessons", tags:["postmortem","reliability"],
+   items:[
+     ['https://github.com/danluu/post-mortems','danluu/post-mortems','The definitive curated collection of public postmortems, grouped by failure class.'],
+     ['https://blog.cloudflare.com/details-of-the-cloudflare-outage-on-july-2-2019/','Cloudflare — July 2, 2019 outage','One bad regex → global CPU exhaustion; deploy-safety and canary lessons in one page.'],
+     ['https://about.gitlab.com/blog/postmortem-of-database-outage-of-january-31/','GitLab — database outage of Jan 31','Accidental rm of the primary DB, five broken backups, 6h of data lost; radically transparent.'],
+     ['https://aws.amazon.com/message/41926/','AWS — S3 disruption in US-EAST-1 (Feb 2017)','A fat-fingered command took out S3 and much of the internet; blast-radius/control-plane lessons.'],
+     ['https://aws.amazon.com/premiumsupport/technology/pes/','AWS Post-Event Summaries','AWS\'s index of official incident writeups — primary-source cloud failure analysis.'],
+     ['https://blog.cloudflare.com/hyper-bug/','Cloudflare — bug in the hyper HTTP library','Debugging-story genre: chasing a subtle bug through a widely-used OSS dependency.'],
+   ]},
+  {icon:"📄", name:"Foundational papers", scope:"the primary sources the systems descend from", tags:["papers"],
+   items:[
+     ['https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf','Dynamo (2007) — PDF','Consistent hashing, quorums, vector clocks, eventual consistency; ancestor of most modern KV stores.'],
+     ['https://research.google.com/archive/gfs.html','The Google File System (2003)','Append-heavy, failure-as-normal distributed storage; the design behind HDFS and much else.'],
+     ['https://research.google.com/archive/mapreduce.html','MapReduce (2004)','The batch-processing model that launched the big-data era.'],
+     ['https://research.google.com/archive/bigtable.html','Bigtable (2006)','Wide-column storage over GFS; parent of the HBase/Cassandra data models.'],
+     ['https://research.google.com/archive/chubby-osdi06.pdf','Chubby Lock Service (2006) — PDF','Distributed locking/coordination via Paxos; the idea ZooKeeper/etcd generalize.'],
+     ['https://research.google.com/archive/spanner-osdi2012.pdf','Spanner (2012) — PDF','TrueTime and externally-consistent global transactions; where physics meets consistency.'],
+     ['https://raft.github.io/raft.pdf','Raft (2014) — PDF','Consensus you can actually understand and implement; foundation of etcd/Consul.'],
+     ['https://kafka.apache.org/community/books_and_papers/','Kafka — Apache "Books & Papers"','Links the original NetDB\'11 paper; pairs with the <a href="https://kafka.apache.org/documentation/#design" target="_blank" rel="noopener">Kafka design docs</a> (the log as source of truth).'],
+   ]},
+  {icon:"📰", name:"Aggregators & newsletters", scope:"where to keep finding real material", tags:["ongoing"],
+   items:[
+     ['https://highscalability.com/','High Scalability','Long-running blog of real architecture breakdowns and "stuff the internet says on scalability."'],
+     ['https://blog.acolyer.org/','The Morning Paper (archive)','Adrian Colyer\'s plain-English walkthroughs of CS papers. Not updated, but the archive is a goldmine.'],
+     ['https://www.infoq.com/architecture/','InfoQ — Software Architecture','Conference-grade talks and articles on distributed systems, from practitioners.'],
+     ['https://newsletter.pragmaticengineer.com/','The Pragmatic Engineer','Gergely Orosz on Big-Tech engineering, org design, and incident/scaling deep-dives — most EM-relevant.'],
+     ['https://blog.bytebytego.com/','ByteByteGo Blog','<i>Prep-adjacent:</i> clean diagrammed summaries — an index into primary sources, not the source itself.'],
+   ]},
+  {icon:"📚", name:"Books", scope:"genuinely real-world", tags:["books"],
+   items:[
+     ['https://dataintensive.net/','Designing Data-Intensive Applications (DDIA) — Kleppmann','The best bridge from the papers to practice: replication, partitioning, consistency, streaming. Non-negotiable.'],
+     ['https://sre.google/books/','Google — Site Reliability Engineering (free online)','How Google runs production: SLOs, error budgets, on-call, incidents. Incl. SRE Workbook and Building Secure & Reliable Systems.'],
+   ]},
+  {icon:"🎙️", name:"Podcasts", scope:"long-form, for commute/gym depth", tags:["podcast","audio"],
+   items:[
+     ['https://newsletter.pragmaticengineer.com/podcast','The Pragmatic Engineer Podcast','Gergely Orosz interviews Big-Tech engineers/leaders on real systems, incidents, and org design.'],
+     ['https://signalsandthreads.com/','Signals and Threads (Jane Street)','Ron Minsky goes deep with engineers on clocks, build systems, multicast — unusually technical and candid.'],
+     ['https://corecursive.com/','CoRecursive: Coding Stories','The story behind a piece of software or a hard bug, told by the person who lived it.'],
+     ['https://softwareengineeringdaily.com/','Software Engineering Daily','Near-daily practitioner interviews across infra, databases, and distributed systems — a wide firehose.'],
+   ]},
+  {icon:"🎥", name:"Conference talks & video lectures", scope:"the visual complement to the papers", tags:["video","talks","lectures"],
+   items:[
+     ['https://www.youtube.com/gotoconferences','GOTO Conferences (YouTube)','Senior-engineer talks on architecture, distributed systems, and scaling war-stories; high signal.'],
+     ['https://www.infoq.com/qcon/presentations/','QCon / InfoQ Presentations','Curated senior-level conference talks (Netflix, Stripe, Spotify…) with real production lessons + transcripts.'],
+     ['https://www.youtube.com/@6.824','MIT 6.824 / 6.5840 — Distributed Systems','The canonical grad course: RPC, replication, Raft, GFS, Spanner. Pairs with the <a href="https://pdos.csail.mit.edu/6.824/" target="_blank" rel="noopener">course site</a>.'],
+     ['https://www.youtube.com/playlist?list=PLeKd45zvjcDFUEv_ohr_HdUFe97RItdiB','Kleppmann — Distributed Systems (Cambridge)','8 tight lectures (clocks, broadcast, consensus, replication) from the DDIA author; fastest intuition builder.'],
+     ['https://paperswelove.org/','Papers We Love','Community talks that walk through influential CS papers (<a href="https://www.youtube.com/channel/UCoj4eQh_dZR37lL78ymC6XA" target="_blank" rel="noopener">YouTube</a>); a friendly on-ramp to primary sources.'],
+     ['https://www.youtube.com/ByteByteGo','ByteByteGo (YouTube)','<i>Prep-adjacent:</i> short animated explainers of real system designs; preview a topic, then hit the primary source.'],
+   ]},
+];
+
+const listEl = document.getElementById("list");
+const total = CARDS.reduce((n,c)=>n+c.items.length,0);
+function itemHtml(it){
+  return `<li><a href="${it[0]}" target="_blank" rel="noopener">${it[1]}</a> <span class="why">— ${it[2]}</span></li>`;
+}
+function render(filter=""){
+  const f = filter.trim().toLowerCase();
+  let shownCards=0, shownItems=0;
+  listEl.innerHTML = CARDS.map((d,idx)=>{
+    const items = d.items.filter(it=>{
+      if(!f) return true;
+      return (it[0]+" "+it[1]+" "+it[2]+" "+d.name+" "+d.tags.join(" ")).toLowerCase().includes(f);
+    });
+    if(items.length===0) return "";
+    shownCards++; shownItems += items.length;
+    return `<div class="cs${f?' open':''}" data-i="${idx}">
+      <div class="cs-head">
+        <span class="ic">${d.icon}</span>
+        <div><div class="nm">${d.name}</div><div class="scope">${d.scope}</div></div>
+        <span class="ct">${items.length}</span>
+        <span class="chev">▶</span>
+      </div>
+      <div class="cs-body">
+        <div class="cs-tags">${d.tags.map(t=>`<span class="tag accent">${t}</span>`).join("")}</div>
+        <ul class="res">${items.map(itemHtml).join("")}</ul>
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("count").textContent = f
+    ? `${shownItems} link${shownItems!==1?'s':''} in ${shownCards} categor${shownCards!==1?'ies':'y'}`
+    : `${CARDS.length} categories · ${total} resources`;
+  wire();
+}
+function wire(){ document.querySelectorAll(".cs-head").forEach(h=>{ h.onclick=()=>h.parentElement.classList.toggle("open"); }); }
+document.getElementById("search").oninput = e => render(e.target.value);
+document.getElementById("expandAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.add("open"));
+document.getElementById("collapseAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.remove("open"));
+render();
+</script>
+<script src="site.js"></script>
+</body>
+</html>
