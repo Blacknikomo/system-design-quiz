@@ -23,6 +23,8 @@
   .blk.nfr h4{color:var(--warn)}
   .blk.tech h4{color:var(--ok)}
   .blk.got h4{color:var(--bad)}
+  .blk.oos h4{color:var(--muted)}
+  .blk.oos li{color:var(--muted)}
   .blk ul{margin:0;padding-left:18px}
   .blk li{margin:3px 0;font-size:13.5px}
   .blk .why{color:var(--muted)}
@@ -30,6 +32,30 @@
   .recall-hint{display:none;color:var(--muted);font-size:12.5px;font-style:italic;padding:0 16px 14px}
   body.recall .cs:not(.open) .recall-hint{display:block}
   .toolbar{position:sticky;top:0;z-index:10;background:var(--bg);padding:10px 0;margin-bottom:6px;border-bottom:1px solid var(--line)}
+
+  /* ---- architecture diagram ---- */
+  .blk.archb h4{color:var(--accent2)}
+  .arch-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--panel2);padding:6px}
+  .arch-wrap svg{display:block}
+  .an{cursor:pointer}
+  .an rect{fill:var(--panel);stroke-width:1.5;transition:opacity .15s}
+  .an text{fill:var(--txt);font-size:11.5px;font-weight:600;pointer-events:none}
+  .an.sel rect{stroke-width:3;filter:drop-shadow(0 0 6px rgba(var(--accent-rgb),.45))}
+  .ae{cursor:pointer}
+  .ae .vis{fill:none;stroke:var(--muted);stroke-width:1.4;opacity:.75;transition:opacity .15s,stroke .15s}
+  .ae .hit{fill:none;stroke:transparent;stroke-width:14}
+  .ae text{fill:var(--muted);font-size:10px;pointer-events:none}
+  .ae.sel .vis,.ae.hl .vis{stroke:var(--accent);opacity:1;stroke-width:2}
+  .ae.sel text,.ae.hl text{fill:var(--accent)}
+  svg.has-sel .an:not(.sel):not(.adj) rect,svg.has-sel .an:not(.sel):not(.adj) text{opacity:.35}
+  svg.has-sel .ae:not(.sel):not(.hl) .vis,svg.has-sel .ae:not(.sel):not(.hl) text{opacity:.18}
+  .arch-info{margin-top:8px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);font-size:13px;min-height:20px}
+  .arch-info .k{display:inline-block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;border:1px solid;border-radius:5px;padding:1px 6px;margin-right:8px;vertical-align:1px}
+  .arch-info b{margin-right:6px}
+  .arch-info .d{color:var(--muted)}
+  .arch-legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:11px;color:var(--muted)}
+  .arch-legend span{display:flex;align-items:center;gap:5px}
+  .arch-legend i{width:10px;height:10px;border-radius:3px;border:1.5px solid;display:inline-block}
 </style>
 </head>
 <body>
@@ -38,7 +64,7 @@
     <div>
       <div class="back" data-nav></div>
       <h1>🧠 System Cheat Sheets</h1>
-      <div class="sub">Terse recall cards for the HelloInterview design problems — functional &amp; non-functional requirements, tech choices and <i>why</i>, and the "great" moves. Built for active recall: see the name, recall the design, then reveal to check.</div>
+      <div class="sub">Terse recall cards for 30 classic design problems — functional / non-functional / <b>out-of-scope</b> requirements, tech choices and <i>why</i>, the "great" moves, and an <b>interactive architecture diagram</b> (click a module or an arrow). Built for active recall: see the name, reconstruct the design, then reveal to check.</div>
     </div>
   </div>
 
@@ -53,105 +79,132 @@
   </div>
 
   <div id="list"></div>
-  <p class="small muted" style="margin-top:18px">Tip: in <b>Recall mode</b>, cards stay collapsed — try to reconstruct the design out loud, then click to reveal. Pairs with the quiz and the per-technology simulators.</p>
+  <p class="small muted" style="margin-top:18px">Tip: in <b>Recall mode</b>, cards stay collapsed — try to reconstruct the design out loud (including the diagram!), then click to reveal. Pairs with the quiz, the walkthroughs and the per-technology simulators.</p>
 </div>
 
+<script src="cheatsheets-data.js"></script>
 <script>
-const DESIGNS = [
-  {icon:"🔗", name:"URL Shortener (Bitly)", scope:"shorten + redirect, read-heavy", tags:["KV","cache","counter"],
-   fr:["Shorten a long URL (optional custom alias, expiry)","Redirect short code → long URL"],
-   nfr:["Availability > consistency","Redirect < 100ms","~1B URLs, read:write ≈ 1000:1"],
-   api:"POST /urls {long,alias?,exp?} · GET /{code} → 302",
-   tech:[["Any DB (Postgres/Dynamo)","write load tiny (~1/s); choice barely matters"],["Redis atomic counter + batching","unique code gen; Base62 encode; grab ~1000 ids/server"],["Redis / CDN cache","fast redirects; reads dominate"]],
-   got:["302 (not 301) → keep control + analytics","UNIQUE constraint as collision safety net","Predictable ids are enumerable → don't shorten private URLs","Multi-region = disjoint counter ranges"]},
-
-  {icon:"📦", name:"File Storage / Sync (Dropbox)", scope:"upload, sync, share large files", tags:["blob","CDN","chunking"],
-   fr:["Upload / download / share files","Auto-sync across a user's devices"],
-   nfr:["Availability > consistency","Files up to ~50GB","Durable, recoverable"],
-   api:"presigned PUT to S3 · GET via CDN signed URL · /files/changes?since=",
-   tech:[["S3 (blob) + metadata DB","bytes in S3, only URL/refs in DB"],["Presigned URLs","client uploads/downloads direct to S3, bypassing app servers"],["CDN signed URLs","fast global download"]],
-   got:["Chunk on the CLIENT + S3 multipart (resumable)","SHA-256 fingerprint → dedup + resume (not filename)","Content-defined chunking (rolling hash) for delta sync","Version vectors → keep both as conflicted copies (LWW silently loses edits); short-lived signed URLs"]},
-
-  {icon:"🎫", name:"Ticketmaster", scope:"browse + book, no double-booking", tags:["ACID","lock","search"],
-   fr:["View + search events","Book tickets without double-booking"],
-   nfr:["Availability for view/search; STRONG consistency for booking","10M users on one event; search < 500ms"],
-   api:"GET /events/:id · GET /events/search · POST /bookings/:eventId (reserve→confirm)",
-   tech:[["PostgreSQL (ACID)","the real no-double-book guarantee"],["Elasticsearch","full-text search (LIKE = full scan)"],["Redis lock + TTL","seat hold ~10min, auto-release on abandon"],["Stripe tokenization + idempotent webhook","payment"]],
-   got:["Lock is for UX; the ACID write is the guarantee","Virtual waiting queue for huge on-sales (staff move)","Cache + horizontal scale for hammered event pages"]},
-
-  {icon:"📰", name:"News Feed", scope:"posts, follows, reverse-chron feed", tags:["fan-out","cache","GSI"],
-   fr:["Create posts; follow users","View reverse-chron feed; paginate"],
-   nfr:["Availability > consistency (~1min stale ok)","< 500ms; 2B users; unlimited follows"],
-   api:"POST /posts · PUT /users/:id/follow · GET /feed?cursor=ts",
-   tech:[["DynamoDB posts + Follow table w/ GSI","reverse lookups"],["Fan-out-on-write workers + precomputed feed","push post-id to each follower's feed; cap each feed at ~hundreds of entries. Cost scales with follower count → hybrid for celebrities"],["Feed + post cache","hot reads"]],
-   got:["Hybrid fan-out: push normal users, pull celebrities, merge","Redundant cache for hot posts (Dynamo hates hot keys)","Cursor (timestamp) pagination; don't support 100-pages-deep"]},
-
-  {icon:"💬", name:"WhatsApp / Chat", scope:"realtime messaging, offline delivery", tags:["WebSocket","pub/sub","inbox"],
-   fr:["Group chats (≤100); send/receive","Offline delivery (~30d); media"],
-   nfr:["< 500ms; guaranteed deliverability","Billions of users"],
-   api:"WebSocket (TLS): sendMessage, newMessage, ack; L4 LB",
-   tech:[["WebSocket servers + L4 LB","persistent conns; L4 suffices"],["Redis Pub/Sub (topic per user)","route to the server holding the recipient"],["Inbox table","undelivered messages, delete on ack, TTL"]],
-   got:["Pub/Sub at-most-once → Inbox + acks + per-chat seq numbers (gap detect)","App-level heartbeats (TCP keepalive too slow)","NTP server-receipt timestamps for order; client sorts","Per-user channels; switch per-chat for big groups"]},
-
-  {icon:"🚗", name:"Uber / Ride-sharing", scope:"location, matching, dispatch", tags:["geospatial","lock","durable-exec"],
-   fr:["Fare estimate; request ride","Match nearby driver; accept/decline"],
-   nfr:["Match < 1min; STRONG consistency in matching","100k requests in one location"],
-   api:"POST /fare · POST /rides{fareId} · POST /drivers/location · PATCH /rides/:id",
-   tech:[["Redis geohashing (in-memory)","~2M loc writes/s; DynamoDB too costly; B-tree can't do 2D"],["Matching svc + Redis lock TTL","no double-dispatch (~10s to accept)"],["Maps/ETA API; APNs/FCM","fares + notifications"]],
-   got:["Durable execution (Temporal/Cadence) for driver-timeout flow","Adaptive client location-update intervals","Never trust client (userId/fare/ts from server/session)","Geo-sharding + read replicas to scale"]},
-
-  {icon:"📊", name:"Ad Click Aggregator", scope:"near-realtime analytics over clicks", tags:["stream","Flink","OLAP","lambda"],
-   fr:["Click → redirect to advertiser","Advertisers query metrics ≥1-min granularity"],
-   nfr:["10k clicks/s peak; sub-second queries","No data loss; idempotent tracking"],
-   api:"GET /click → server-side redirect",
-   tech:[["Kafka/Kinesis → Flink → OLAP (ClickHouse/Druid)","stream-aggregate; not one DB for ingest+query"],["S3 data lake + nightly Spark","batch source of truth (Lambda arch) (or Kappa: reprocess from the Kafka log, skipping a separate batch layer)"]],
-   got:["Hot ad → random suffix on partition key (aggregator SUMs)","Reconcile stream (speed) vs batch (truth)","Unique impression id for dedup","Pre-aggregate rollups for fast queries"]},
-
-  {icon:"🕷️", name:"Web Crawler", scope:"crawl + extract text at scale", tags:["SQS","S3","politeness"],
-   fr:["Crawl from seed URLs","Extract + store page text"],
-   nfr:["Fault tolerant (resume); polite (robots.txt)","10B pages < 5 days"],
-   api:"frontier queue → fetch → S3 → extract",
-   tech:[["SQS frontier","visibility timeout → backoff + DLQ; store URL ptr, not HTML"],["Fetch/extract workers + S3","raw HTML / text"],["Metadata DB + DNS cache","dedup; DNS is a bottleneck"]],
-   got:["~1 req/s per domain (Redis SET NX) + jitter; respect Crawl-delay","DNS ~70% of thread time → cache + multiple providers","Content-hash dedup (not just URL); max depth ~15–20"]},
-
-  {icon:"🔥", name:"Top-K (YouTube)", scope:"top-K most-viewed in a window", tags:["stream","CMS","shard+merge"],
-   fr:["Ingest VideoID view stream","Query top-K (hour/day/month/all)"],
-   nfr:["Tumbling windows; K ~1k","Precise unless explicitly relaxed"],
-   api:"ingest views → query top-K per window",
-   tech:[["Kafka ingest + sharded counters","700k TPS exceeds one DB"],["OLAP / cache for top-K","precompute per window (cron)"]],
-   got:["Shard counts + merge per-shard top-K = exact","Count-Min Sketch when approximate is allowed","Tumbling (not sliding) keeps aggregation tractable"]},
-
-  {icon:"🚦", name:"Distributed Rate Limiter", scope:"limit requests per client", tags:["token-bucket","Redis","gateway"],
-   fr:["Limit requests per user/IP/API-key","Return 429 when over limit"],
-   nfr:["< 10ms overhead; eventual consistency ok","1M req/s"],
-   api:"isAllowed(clientId,rule) → {pass, remaining, reset}",
-   tech:[["Token bucket","allows bursts up to bucket size"],["Centralized Redis (sharded by client)","per-instance counters fail (LB spreads traffic)"]],
-   got:["Atomic check/refill via MULTI or Lua; EXPIRE avoids leak","Fail-closed for social (failures coincide with spikes)","Fixed-window has 2× burst at the boundary"]},
-
-  {icon:"📝", name:"Google Docs", scope:"realtime collaborative editing", tags:["WebSocket","OT","Cassandra","ZooKeeper"],
-   fr:["Concurrent multi-user edit; realtime view","Cursors / presence"],
-   nfr:["Eventually consistent; < 100ms","≤ 100 concurrent editors/doc (extras read-only)"],
-   api:"WebSocket: send edits as operations (insert/delete @pos)",
-   tech:[["WebSocket doc servers","persistent edit channel"],["Operational Transformation (OT)","converge concurrent edits (CRDT = P2P/larger)"],["Cassandra ops store; ZooKeeper hash ring","append-only ops; route editors of a doc to one server"]],
-   got:["Send ops, not the whole doc","Consistent hashing by documentId","Snapshot/compact operations to bound storage/join cost"]},
-
-  {icon:"💳", name:"Payment System (Stripe)", scope:"charge cards, durable + auditable", tags:["idempotency","event-sourcing","PCI"],
-   fr:["Merchant initiates charge; user pays by card","Merchant views status (pending/success/failed)"],
-   nfr:["Highly secure; durable/auditable (never lose data)","Transaction-safe over async networks; 10k+ TPS"],
-   api:"POST /payment-intents · POST /…/transactions · GET /…/:id",
-   tech:[["API gateway (API keys + request signing)","secure entry"],["Payment-intent svc + DB; transaction svc → networks","HSMs, ISO 8583, PCI"],["Kafka event log (event sourcing)","append-only audit trail"]],
-   got:["Idempotency keys + reconciliation (timeout ≠ failure)","Event sourcing for audit / chargebacks","Tokenize card data (raw PAN never hits backend)","Webhooks: idempotent, exactly-once"]},
-];
-
+const DESIGNS = window.DESIGNS;
 const listEl = document.getElementById("list");
 const li = a => a.map(x=>`<li>${x}</li>`).join("");
 const techli = a => a.map(([t,why])=>`<li><b>${t}</b> <span class="why">— ${why}</span></li>`).join("");
 
+/* ================= architecture diagram ================= */
+const KINDS = {
+  cl:   {name:"client",   color:"var(--muted)"},
+  svc:  {name:"service",  color:"var(--accent)"},
+  db:   {name:"datastore",color:"var(--ok)"},
+  q:    {name:"queue/stream", color:"var(--accent2)"},
+  cache:{name:"cache",    color:"var(--warn)"},
+  ext:  {name:"external", color:"var(--muted)"}
+};
+const NW=168, NH=46, CW=196, RH=88, PAD=16;
+const SVGNS="http://www.w3.org/2000/svg";
+const el=(t,at)=>{const e=document.createElementNS(SVGNS,t);for(const k in at)e.setAttribute(k,at[k]);return e;};
+
+function nodeXY(n){ return {x:PAD+n[3]*CW, y:PAD+n[4]*RH}; }
+
+function wrapLabel(txt){
+  if(txt.length<=20) return [txt];
+  const words=txt.split(" ");let a="",b="";
+  for(const w of words){ if(b===""&&(a+" "+w).trim().length<=Math.ceil(txt.length/2)) a=(a+" "+w).trim(); else b=(b+" "+w).trim(); }
+  return b?[a,b]:[a];
+}
+
+function edgePath(s,t){
+  let x1,y1,x2,y2;
+  const S=nodeXY(s), T=nodeXY(t);
+  if(t[3]>s[3]){ // forward
+    x1=S.x+NW; y1=S.y+NH/2; x2=T.x; y2=T.y+NH/2;
+    const dx=Math.max(30,(x2-x1)/2);
+    return {d:`M${x1},${y1} C${x1+dx},${y1} ${x2-dx},${y2} ${x2},${y2}`, mx:(x1+x2)/2, my:(y1+y2)/2-6};
+  }
+  if(t[3]<s[3]){ // backward — route below
+    x1=S.x; y1=S.y+NH/2; x2=T.x+NW; y2=T.y+NH/2;
+    const dy=Math.max(y1,y2)+RH*0.42;
+    return {d:`M${x1},${y1} C${x1-46},${dy} ${x2+46},${dy} ${x2},${y2}`, mx:(x1+x2)/2, my:dy-5, back:true};
+  }
+  // same column — vertical
+  if(t[4]>s[4]){ x1=S.x+NW/2; y1=S.y+NH; x2=T.x+NW/2; y2=T.y; }
+  else { x1=S.x+NW/2; y1=S.y; x2=T.x+NW/2; y2=T.y+NH; }
+  const mo=(y1+y2)/2;
+  return {d:`M${x1},${y1} C${x1},${mo} ${x2},${mo} ${x2},${y2}`, mx:x1+6, my:mo, vert:true};
+}
+
+function buildArch(d, mount, info){
+  const A=d.arch; if(!A) return;
+  const byId={}; A.nodes.forEach(n=>byId[n[0]]=n);
+  const maxC=Math.max(...A.nodes.map(n=>n[3])), maxR=Math.max(...A.nodes.map(n=>n[4]));
+  const hasBack=A.edges.some(e=>byId[e[1]]&&byId[e[0]]&&byId[e[1]][3]<byId[e[0]][3]);
+  const W=PAD*2+maxC*CW+NW, H=PAD*2+maxR*RH+NH+(hasBack?RH*0.55:0);
+  const svg=el("svg",{viewBox:`0 0 ${W} ${H}`,width:W,height:H});
+  const defs=el("defs",{});
+  const marker=el("marker",{id:`arr-${d._i}`,viewBox:"0 0 10 10",refX:"9",refY:"5",markerWidth:"7",markerHeight:"7",orient:"auto-start-reverse"});
+  marker.appendChild(el("path",{d:"M0,0L10,5L0,10z",fill:"context-stroke"}));
+  defs.appendChild(marker); svg.appendChild(defs);
+
+  const setInfo=(kind,label,desc)=>{
+    info.innerHTML="";
+    if(kind){const k=document.createElement("span");k.className="k";k.style.color=KINDS[kind].color;k.style.borderColor=KINDS[kind].color;k.textContent=KINDS[kind].name;info.appendChild(k);}
+    const b=document.createElement("b");b.textContent=label;info.appendChild(b);
+    const s=document.createElement("span");s.className="d";s.textContent=desc||"";info.appendChild(s);
+  };
+  const clear=()=>{
+    svg.classList.remove("has-sel");
+    svg.querySelectorAll(".sel,.hl,.adj").forEach(x=>x.classList.remove("sel","hl","adj"));
+    setInfo(null,"","Click a module or an arrow to see what it does.");
+  };
+
+  // edges first (drawn under nodes)
+  const edgeEls=[];
+  A.edges.forEach(e=>{
+    const s=byId[e[0]], t=byId[e[1]]; if(!s||!t) return;
+    const p=edgePath(s,t);
+    const g=el("g",{class:"ae"}); g.dataset.from=e[0]; g.dataset.to=e[1];
+    g.appendChild(el("path",{class:"vis",d:p.d,"marker-end":`url(#arr-${d._i})`}));
+    g.appendChild(el("path",{class:"hit",d:p.d}));
+    if(e[2]){
+      const tx=el("text",{x:p.mx,y:p.my,"text-anchor":p.vert?"start":"middle"});
+      tx.textContent=e[2]; g.appendChild(tx);
+    }
+    g.addEventListener("click",ev=>{ev.stopPropagation();clear();svg.classList.add("has-sel");g.classList.add("sel");
+      svg.querySelectorAll(".an").forEach(n=>{if(n.dataset.id===e[0]||n.dataset.id===e[1])n.classList.add("adj");});
+      setInfo(null,`${s[1]} → ${t[1]}${e[2]?` (${e[2]})`:""}`, e[3]||"");});
+    svg.appendChild(g); edgeEls.push(g);
+  });
+
+  // nodes
+  A.nodes.forEach(n=>{
+    const {x,y}=nodeXY(n);
+    const g=el("g",{class:"an"}); g.dataset.id=n[0];
+    const r=el("rect",{x,y,width:NW,height:NH,rx:9,stroke:KINDS[n[2]].color});
+    if(n[2]==="ext") r.setAttribute("stroke-dasharray","5 4");
+    g.appendChild(r);
+    const lines=wrapLabel(n[1]);
+    const tx=el("text",{x:x+NW/2,y:y+NH/2+(lines.length>1?-1:4),"text-anchor":"middle"});
+    lines.forEach((ln,ix)=>{const ts=el("tspan",{x:x+NW/2,dy:ix===0?0:13});ts.textContent=ln;tx.appendChild(ts);});
+    g.appendChild(tx);
+    g.addEventListener("click",ev=>{ev.stopPropagation();clear();svg.classList.add("has-sel");g.classList.add("sel");
+      edgeEls.forEach(eg=>{if(eg.dataset.from===n[0]||eg.dataset.to===n[0])eg.classList.add("hl");});
+      svg.querySelectorAll(".an").forEach(o=>{ if(o===g) return;
+        const id=o.dataset.id;
+        if(A.edges.some(e=>(e[0]===n[0]&&e[1]===id)||(e[1]===n[0]&&e[0]===id))) o.classList.add("adj");});
+      setInfo(n[2],n[1],n[5]);});
+    svg.appendChild(g);
+  });
+
+  svg.addEventListener("click",clear);
+  mount.appendChild(svg);
+  clear();
+}
+
+/* ================= cards ================= */
 function render(filter=""){
   const f = filter.trim().toLowerCase();
   let shown=0;
   listEl.innerHTML = DESIGNS.map((d,idx)=>{
-    const hay = (d.name+" "+d.scope+" "+d.tags.join(" ")+" "+d.tech.map(t=>t[0]).join(" ")+" "+[...d.fr,...d.nfr,...d.got].join(" ")).toLowerCase();
+    d._i=idx;
+    const hay = (d.name+" "+d.scope+" "+d.tags.join(" ")+" "+d.tech.map(t=>t[0]).join(" ")+" "+[...d.fr,...d.nfr,...(d.oos||[]),...d.got].join(" ")).toLowerCase();
     if(f && !hay.includes(f)) return "";
     shown++;
     return `<div class="cs" data-i="${idx}">
@@ -160,29 +213,48 @@ function render(filter=""){
         <div><div class="nm">${d.name}</div><div class="scope">${d.scope}</div></div>
         <span class="chev">▶</span>
       </div>
-      <div class="recall-hint">Recall: functional + non-functional reqs, tech &amp; why, the "great" moves… then click to reveal.</div>
+      <div class="recall-hint">Recall: functional + non-functional reqs, what's OUT of scope, tech &amp; why, the "great" moves, the diagram… then click to reveal.</div>
       <div class="cs-body">
         <div class="cs-tags">${d.tags.map(t=>`<span class="tag accent">${t}</span>`).join("")}</div>
         <div class="grid2">
           <div class="blk"><h4>Functional</h4><ul>${li(d.fr)}</ul></div>
           <div class="blk nfr"><h4>Non-functional</h4><ul>${li(d.nfr)}</ul></div>
         </div>
+        ${d.oos?`<div class="blk oos"><h4>Out of scope — say it, then skip it</h4><ul>${li(d.oos)}</ul></div>`:""}
         <div class="blk"><h4>Core API</h4><span class="api">${d.api}</span></div>
         <div class="blk tech"><h4>Tech &amp; why</h4><ul>${techli(d.tech)}</ul></div>
         <div class="blk got"><h4>Deep dives / "great" moves</h4><ul>${li(d.got)}</ul></div>
+        ${d.arch?`<div class="blk archb"><h4>Architecture — click a module or an arrow</h4>
+          <div class="arch-wrap" data-arch="${idx}"></div>
+          <div class="arch-info" data-info="${idx}"></div>
+          <div class="arch-legend">
+            <span><i style="border-color:var(--muted)"></i>client</span>
+            <span><i style="border-color:var(--accent)"></i>service</span>
+            <span><i style="border-color:var(--ok)"></i>datastore</span>
+            <span><i style="border-color:var(--accent2)"></i>queue/stream</span>
+            <span><i style="border-color:var(--warn)"></i>cache</span>
+            <span><i style="border-color:var(--muted);border-style:dashed"></i>external</span>
+          </div></div>`:""}
       </div>
     </div>`;
   }).join("");
   document.getElementById("count").textContent = `${shown} of ${DESIGNS.length} systems`;
   wire();
 }
+function ensureArch(card){
+  const mount=card.querySelector("[data-arch]");
+  if(!mount||mount.dataset.built) return;
+  mount.dataset.built="1";
+  const idx=+mount.dataset.arch;
+  buildArch(DESIGNS[idx], mount, card.querySelector("[data-info]"));
+}
 function wire(){
   document.querySelectorAll(".cs-head").forEach(h=>{
-    h.onclick=()=>h.parentElement.classList.toggle("open");
+    h.onclick=()=>{const c=h.parentElement;c.classList.toggle("open");if(c.classList.contains("open"))ensureArch(c);};
   });
 }
 document.getElementById("search").oninput = e => render(e.target.value);
-document.getElementById("expandAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.add("open"));
+document.getElementById("expandAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>{c.classList.add("open");ensureArch(c);});
 document.getElementById("collapseAll").onclick = ()=>document.querySelectorAll(".cs").forEach(c=>c.classList.remove("open"));
 document.getElementById("recallChk").onchange = e=>{
   document.body.classList.toggle("recall", e.target.checked);
