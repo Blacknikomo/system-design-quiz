@@ -27,6 +27,16 @@
   .wrow .sc{color:var(--muted);width:30px;text-align:right}
   .wrow.cut{opacity:.4}
   .wrow.win .id{color:var(--ok);font-weight:700}
+  /* segment-merge simulator */
+  .mlane{display:flex;align-items:center;gap:8px;margin:6px 0}
+  .mlab{width:130px;flex:none;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);text-align:right}
+  .mtrack{flex:1;display:flex;flex-wrap:wrap;gap:6px;border:1px dashed var(--line);border-radius:8px;padding:6px;min-height:34px;align-items:center}
+  .mseg{position:relative;overflow:hidden;border:1px solid var(--ok);border-radius:6px;background:var(--okbg);padding:3px 7px;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;white-space:nowrap}
+  .mseg .mdel{position:absolute;left:0;bottom:0;top:0;background:rgba(var(--bad-rgb),.25);pointer-events:none}
+  .mseg.sel{outline:2px solid var(--warn)}
+  .mseg.big{border-color:var(--warn);background:transparent}
+  .mseg.new{outline:2px solid var(--accent)}
+  @media(max-width:720px){.mlab{width:76px}}
 </style>
 </head>
 <body>
@@ -284,6 +294,63 @@
           <li data-step="2"><b>Delete</b> flips the doc's bit in <b>liveDocs</b> (<code>.liv</code> tombstone) — filtered from results, still on disk.</li>
           <li data-step="3"><b>Searches</b> read segments but skip docs absent from liveDocs (the deleted count grows).</li>
           <li data-step="4"><b>Merge</b> rewrites only live docs into a new segment and drops the old ones — space reclaimed.</li>
+        </ol>
+      </div>
+    </div>
+      </div>
+  </details>
+
+  <!-- ===== SEGMENT MERGE (NEW) ===== -->
+  <details class="fold" open>
+    <summary>🧬 Interactive · segment merge — how TieredMergePolicy keeps a shard fast <span class="fold-hint">click to collapse</span></summary>
+      <div class="fold-body">
+
+    <div class="card">
+      <div class="row" style="gap:8px">
+        <span class="tag accent">refresh → tiny segments</span>
+        <span class="tag">merge by size tier</span>
+        <span class="tag">tombstones purged</span>
+        <span class="tag">5 GB ceiling</span>
+      </div>
+      <p class="small" style="margin-bottom:6px">Every <b>refresh</b> (default 1 s) seals the in-memory buffer into a new immutable segment — so a busy shard breeds tiny segments non-stop, and <b>every search must visit every segment</b>. Lucene's default <b>TieredMergePolicy</b> keeps the count bounded: it buckets segments into <b>size tiers</b> and, whenever a tier holds more than <code>segments_per_tier</code> (default <b>10</b>), merges <b>similar-sized</b> segments into one bigger (≤ <code>max_merge_at_once</code>, default 10). Merging equals-with-equals is the trick: each doc is rewritten only <b>O(log N)</b> times over its life, so write amplification stays low. The ladder tops out at <code>max_merged_segment</code> = <b>5 GB</b>. Merges run on background threads (ConcurrentMergeScheduler) with auto-throttled I/O; a merge also <b>rewrites only live docs</b>, so it's when tombstones are physically purged — segments over <code>deletes_pct_allowed</code> (~20% deleted; 33% in older versions) get rewritten even when their tier is under budget.</p>
+      <div class="note gotcha"><b>The gotchas:</b> (1) <code>_forcemerge</code> to 1 segment on an actively-written index creates a mega-segment <b>above the 5 GB ceiling</b> that background merging will never touch — its tombstones linger indefinitely. Force-merge only <b>read-only</b> indices (e.g. after ILM rollover). (2) Merging is heavy sequential I/O — if indexing outruns merging, ES <b>throttles indexing</b> to let merges catch up ("merge debt"). (3) Heavy update churn = every update is delete+reindex → tombstones everywhere → constant merge pressure and disk usage well above live data.</div>
+    </div>
+
+    <div class="card">
+      <h3>Drive the merge policy</h3>
+      <div class="row">
+        <label class="fld">segments_per_tier <span class="small muted">(demo; real default 10)</span>
+          <select id="mSpt"><option>2</option><option>3</option><option selected>4</option><option>5</option></select>
+        </label>
+        <button class="btn" id="mRefreshBtn">🔄 Refresh ×1</button>
+        <button class="btn" id="mBurstBtn">⚡ Ingest burst ×5</button>
+        <button class="btn sec" id="mTickBtn">🧹 Merge tick</button>
+        <button class="btn sec" id="mStableBtn">▶ Run until stable</button>
+        <button class="btn warn" id="mChurnBtn">✏️ Update churn</button>
+        <button class="btn bad" id="mForceBtn">🧨 Force-merge to 1</button>
+        <button class="btn ghost" id="mResetBtn">↺ Reset</button>
+      </div>
+      <div class="small muted" style="margin-top:6px">One shard. <b>Refresh</b> adds a tiny segment; <b>Merge tick</b> runs one round of the policy (over-budget tier → merge similar sizes; else a &gt;20%-deleted segment gets rewritten alone); <b>Update churn</b> tombstones old doc versions. Red fill inside a segment = deleted fraction.</div>
+    </div>
+
+    <div class="card">
+      <div class="stage" id="mstage">
+        <div id="mlanes"></div>
+        <div style="margin-top:12px" id="mstats" class="small muted"></div>
+      </div>
+      <div class="explain" id="mexplain">Click <b>Ingest burst</b> a couple of times, then <b>Merge tick</b> — watch tier 0 overflow and collapse into a tier-1 segment.</div>
+    </div>
+
+    <div class="cols">
+      <div class="card"><h3>Command log</h3><div class="log" id="mlog"></div></div>
+      <div class="card">
+        <h3>What you're seeing</h3>
+        <ol class="steps small" id="msteps">
+          <li data-step="1"><b>Refresh</b> seals the buffer into a new small segment (~every 1 s under load) — segments accumulate constantly.</li>
+          <li data-step="2"><b>Segment count = search overhead</b>: every query visits all segments of the shard, so the count must stay bounded.</li>
+          <li data-step="3"><b>TieredMergePolicy</b>: when a size tier exceeds <code>segments_per_tier</code>, ~equal-sized segments merge into one bigger.</li>
+          <li data-step="4"><b>Merge rewrites live docs only</b> — tombstones purged, result climbs a tier — until <code>max_merged_segment</code> (5 GB).</li>
+          <li data-step="5"><b>Deletes &gt; ~20%</b> trigger a solo rewrite; <code>_forcemerge</code> to 1 is for <b>read-only</b> indices only.</li>
         </ol>
       </div>
     </div>
@@ -996,6 +1063,158 @@ reset();
   $('dDelBtn').onclick=del;
   $('dMergeBtn').onclick=merge;
   $('dResetBtn').onclick=reset;
+  reset();
+})();
+</script>
+
+<script>
+/* ===== Segment-merge simulator (TieredMergePolicy) — self-contained (IIFE) ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  const MAXMB=5120, FLOOR=2, DEL_PCT=0.20;
+  let segs, nextId, busy=false, rng;
+  function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+  const spt=()=>parseInt($('mSpt').value,10);
+  function log(c,m){const e=$('mlog');e.innerHTML+=`<div class="l"><span class="t">${new Date().toLocaleTimeString()}</span> <span class="${c}">${m}</span></div>`;e.scrollTop=e.scrollHeight;}
+  function explain(h){$('mexplain').innerHTML=h;}
+  function step(n){document.querySelectorAll('#msteps li').forEach(li=>{const s=+li.dataset.step;li.classList.toggle('done',s<n);li.classList.toggle('current',s===n);});}
+
+  const TIERS=['tier 0 · 2–20 MB','tier 1 · 20–200 MB','tier 2 · 0.2–2 GB','tier 3 · 2–5 GB','>5 GB · excluded'];
+  function tierOf(mb){ if(mb>MAXMB)return 4; if(mb>=2000)return 3; if(mb>=200)return 2; if(mb>=20)return 1; return 0; }
+  function fmt(mb){ return mb>=1024 ? (mb/1024).toFixed(1)+' GB' : Math.round(mb)+' MB'; }
+  function segW(mb){ return Math.round(46+34*Math.log10(Math.max(mb,FLOOR)/FLOOR)); }
+  function liveMB(s){ return s.mb*(1-s.del); }
+
+  function render(sel,neu){
+    sel=sel||new Set(); neu=neu||new Set();
+    $('mlanes').innerHTML=TIERS.map((name,ti)=>{
+      const items=segs.filter(s=>tierOf(s.mb)===ti).sort((a,b)=>a.mb-b.mb);
+      const over=ti<4&&items.length>spt();
+      const blocks=items.map(s=>{
+        const cls='mseg'+(ti===4?' big':'')+(sel.has(s.id)?' sel':'')+(neu.has(s.id)?' new':'');
+        const dp=Math.round(s.del*100);
+        return `<div class="${cls}" style="min-width:${segW(s.mb)}px"><span class="mdel" style="width:${dp}%"></span>s${s.id} · ${fmt(s.mb)}${dp?` · <span style="color:var(--bad)">${dp}%✗</span>`:''}</div>`;
+      }).join('');
+      return `<div class="mlane"><div class="mlab"${over?' style="color:var(--warn)"':''}>${name}${ti<4?` · ${items.length}/${spt()}`:''}</div><div class="mtrack"${over?' style="border-color:var(--warn)"':''}>${blocks||'<span class="small muted">—</span>'}</div></div>`;
+    }).join('');
+    const disk=segs.reduce((a,s)=>a+s.mb,0), live=segs.reduce((a,s)=>a+liveMB(s),0);
+    $('mstats').innerHTML=`<b>${segs.length}</b> segment(s) · on disk <b>${fmt(disk)}</b> · live <b style="color:var(--ok)">${fmt(live)}</b> · tombstoned <b style="color:var(--bad)">${fmt(disk-live)}</b> — every search on this shard visits <b>all ${segs.length}</b> segment(s)`;
+  }
+
+  function addSeg(mb,del){ const s={id:nextId++,mb:mb,del:del||0}; segs.push(s); return s; }
+
+  function refresh(n){
+    if(busy)return;
+    const made=[];
+    for(let i=0;i<n;i++) made.push(addSeg(2+rng()*6));
+    step(n>1?2:1);
+    log('cmd', n>1?`> …indexing… + POST /products/_refresh ×${n}`:'> POST /products/_refresh');
+    log('ok', `${n} new segment(s): ${made.map(s=>`s${s.id} (${fmt(s.mb)})`).join(', ')} — searchable, but each adds per-query work`);
+    render(null,new Set(made.map(s=>s.id)));
+    const t0=segs.filter(s=>tierOf(s.mb)===0).length;
+    explain(`🔄 <b>Refresh</b> sealed the in-memory buffer into ${n} tiny immutable segment(s). Tier 0 now holds <b>${t0}</b>/${spt()} — ${t0>spt()?'<b style="color:var(--warn)">over budget</b>: the merge policy will collapse it. Hit <b>Merge tick</b>.':'still under budget; keep ingesting.'}`);
+  }
+
+  function pickMerge(){
+    for(let ti=0;ti<4;ti++){
+      const items=segs.filter(s=>tierOf(s.mb)===ti);
+      if(items.length>spt()){
+        const cand=items.slice().sort((a,b)=>a.mb-b.mb);
+        const take=[]; let sum=0;
+        for(const s of cand){ if(take.length>=spt())break; if(sum+liveMB(s)>MAXMB)break; take.push(s); sum+=liveMB(s); }
+        if(take.length>=2) return {type:'tier',tier:ti,take:take,sum:sum};
+      }
+    }
+    const dirty=segs.filter(s=>s.del>=DEL_PCT&&s.mb<=MAXMB).sort((a,b)=>b.del-a.del);
+    if(dirty.length) return {type:'expunge',take:[dirty[0]],sum:liveMB(dirty[0])};
+    return null;
+  }
+
+  async function doTick(){
+    const m=pickMerge();
+    if(!m){
+      log('info','merge policy: every tier ≤ segments_per_tier and deletes < 20% everywhere — nothing to merge');
+      explain('✅ <b>Stable.</b> No tier exceeds <code>segments_per_tier</code> and no segment crosses <code>deletes_pct_allowed</code> — the policy stays idle. This is the steady state a healthy shard hovers around.');
+      return false;
+    }
+    step(m.type==='tier'?3:5);
+    render(new Set(m.take.map(s=>s.id)));
+    const purged=m.take.reduce((a,s)=>a+(s.mb-liveMB(s)),0);
+    if(m.type==='tier') log('warn',`tier ${m.tier} over budget → merging ${m.take.length} similar-sized segments: ${m.take.map(s=>'s'+s.id).join(' + ')}`);
+    else log('warn',`s${m.take[0].id} is ${Math.round(m.take[0].del*100)}% deleted (> deletes_pct_allowed ~20%) → solo rewrite to expunge tombstones`);
+    await sleep(600);
+    const ids=new Set(m.take.map(s=>s.id));
+    segs=segs.filter(s=>!ids.has(s.id));
+    const merged=addSeg(m.sum);
+    step(4);
+    render(null,new Set([merged.id]));
+    log('ok',`merge done → s${merged.id} (${fmt(merged.mb)}, tier ${tierOf(merged.mb)})${purged>0.5?` · purged ${fmt(purged)} of tombstones`:''} · old segments deleted`);
+    explain(m.type==='tier'
+      ? `🧹 <b>Tiered merge</b>: ${m.take.length} tier-${m.tier} segments were rewritten into <b>s${merged.id}</b> (${fmt(merged.mb)})${purged>0.5?`, physically purging <b>${fmt(purged)}</b> of deleted docs`:''}. Merging <b>similar sizes</b> is deliberate — it keeps write amplification at O(log N) rewrites per doc. The result ${tierOf(merged.mb)>m.tier?'<b>climbed to tier '+tierOf(merged.mb)+'</b>':'stayed in tier '+m.tier} and will merge again only with peers its own size — never above <code>max_merged_segment</code> = 5 GB.`
+      : `🧽 <b>Expunge-deletes merge</b>: s${m.take[0].id} carried too many tombstones, so it was rewritten alone into <b>s${merged.id}</b>, dropping <b>${fmt(purged)}</b>. This is how update-heavy indices reclaim disk without waiting for a tier to overflow.`);
+    return true;
+  }
+  async function tick(){ if(busy)return; busy=true; await doTick(); busy=false; }
+  async function stable(){
+    if(busy)return; busy=true;
+    let rounds=0;
+    while(await doTick()){ rounds++; await sleep(450); if(rounds>30)break; }
+    if(rounds) log('info',`scheduler idle after ${rounds} merge(s) — like ConcurrentMergeScheduler draining its queue (I/O auto-throttled in real ES)`);
+    busy=false;
+  }
+
+  function churn(){
+    if(busy)return;
+    const cand=segs.filter(s=>s.mb<=MAXMB);
+    if(!cand.length)return;
+    const n=Math.min(cand.length,2+Math.floor(rng()*2)), hit=[];
+    for(let i=0;i<n;i++){
+      const s=cand[Math.floor(rng()*cand.length)];
+      if(hit.includes(s))continue;
+      s.del=Math.min(0.45,s.del+0.10+rng()*0.15); hit.push(s);
+    }
+    step(5);
+    log('cmd','> POST /_bulk  (updates: delete old version + reindex new)');
+    log('warn',`update churn: old doc versions tombstoned in ${hit.map(s=>`s${s.id} (now ${Math.round(s.del*100)}%✗)`).join(', ')}`);
+    render(new Set(hit.map(s=>s.id)));
+    explain('✏️ <b>Updates are delete + reindex</b> — every updated doc leaves a tombstone in its old segment (red fill) while the new version lands in a fresh tier-0 segment. Disk usage grows past live data until merges purge the tombstones. A segment crossing <b>~20% deleted</b> becomes a merge candidate on its own.');
+  }
+
+  async function force(){
+    if(busy)return; busy=true;
+    step(5);
+    render(new Set(segs.map(s=>s.id)));
+    const live=segs.reduce((a,s)=>a+liveMB(s),0), purged=segs.reduce((a,s)=>a+s.mb,0)-live, n=segs.length;
+    log('cmd','> POST /products/_forcemerge?max_num_segments=1');
+    await sleep(600);
+    segs=[]; const one=addSeg(live);
+    render(null,new Set([one.id]));
+    log('ok',`force-merged ${n} segments → s${one.id} (${fmt(one.mb)})${purged>0.5?` · purged ${fmt(purged)}`:''}`);
+    explain(one.mb>MAXMB
+      ? `🧨 <b>Force-merge</b> collapsed the shard to one <b>${fmt(one.mb)}</b> segment — <b>above the 5 GB ceiling</b>, so background merging will <b>never touch it again</b>: future tombstones in it linger indefinitely. Fine for a <b>read-only</b> index (post-rollover ILM); a mistake on a live one. Try <b>Update churn</b> now — the tombstones have nowhere to go.`
+      : `🧨 <b>Force-merge</b> collapsed the shard to one <b>${fmt(one.mb)}</b> segment. Cheapest possible searches — but only do this on <b>read-only</b> indices: on a live index new refreshes immediately restart the segment ladder, and a merged segment past 5 GB would be excluded from future merges.`);
+    busy=false;
+  }
+
+  function reset(){
+    busy=false; nextId=0; rng=mulberry32(42);
+    segs=[]; addSeg(1400); addSeg(260,0.12); addSeg(45); addSeg(38); addSeg(6); addSeg(4); addSeg(3);
+    $('mlog').innerHTML='';
+    document.querySelectorAll('#msteps li').forEach(li=>li.classList.remove('done','current'));
+    render();
+    explain('Click <b>Ingest burst</b> a couple of times, then <b>Merge tick</b> — watch tier 0 overflow and collapse into a tier-1 segment. Then add <b>Update churn</b> and see tombstones get purged by the next merge.');
+    log('info',`1 shard · ${segs.length} segments seeded · segments_per_tier(demo)=${spt()} (real default 10) · max_merged_segment=5 GB`);
+  }
+
+  $('mRefreshBtn').onclick=()=>refresh(1);
+  $('mBurstBtn').onclick=()=>refresh(5);
+  $('mTickBtn').onclick=tick;
+  $('mStableBtn').onclick=stable;
+  $('mChurnBtn').onclick=churn;
+  $('mForceBtn').onclick=force;
+  $('mResetBtn').onclick=reset;
+  $('mSpt').onchange=()=>{ if(!busy) render(); };
   reset();
 })();
 </script>
