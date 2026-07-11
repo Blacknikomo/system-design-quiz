@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Review — the reviewer's protocol</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .pass-tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    padding:2px 8px;border-radius:999px;margin-right:8px;vertical-align:middle}
+  .pass-0{background:rgba(var(--accent2-rgb),.15);color:var(--accent2);border:1px solid var(--accent2)}
+  .pass-1{background:rgba(var(--accent-rgb),.15);color:var(--accent);border:1px solid var(--accent)}
+  .pass-2{background:rgba(var(--ok-rgb),.15);color:var(--ok);border:1px solid var(--ok)}
+  .sev{font-weight:700}
+  .sev.p0{color:var(--bad)} .sev.p1{color:var(--warn)} .sev.p2{color:var(--muted)}
+  .cmd-tbl td:first-child{white-space:normal}
+  .phr{border-left:3px solid var(--line);padding:6px 12px;margin:8px 0;font-size:13.5px}
+  .phr.good{border-color:var(--ok)} .phr.bad-p{border-color:var(--bad)}
+  .phr .lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+  .phr.good .lbl{color:var(--ok)} .phr.bad-p .lbl{color:var(--bad)}
+  .timeline{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+  .tl-step{flex:1;min-width:130px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel)}
+  .tl-step .t{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .tl-step .n{font-weight:700;font-size:14px;margin:2px 0}
+  .tl-step .d{font-size:12.5px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>🔍 Code Review — the reviewer's protocol</h1>
+      <div class="sub">A repeatable multi-pass protocol for the Code Comprehension round: what to check, in what order, and how to say it. Pairs with the <code>code_review_practice/</code> examples.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag accent">Code Comprehension</span>
+    <span class="tag">60 min</span>
+    <span class="tag">JS / TS focus</span>
+    <p>In this round you're handed unfamiliar code (often with tests) and asked to review it as if a teammate sent you a PR. The signal is <b>not</b> "found N bugs" — it's <b>how you read code</b>: intent first, severity-ranked findings, questions instead of verdicts, and noticing design and contract issues, not just syntax.</p>
+    <div class="note info"><b>In the interview:</b> think aloud the whole time. Narrate which pass you're on ("first I want to understand what this is <i>supposed</i> to do, then I'll check whether it does") — the structure itself is a Staff-level signal.</div>
+  </div>
+
+  <div class="card">
+    <h3>⏱ Suggested 60-minute shape</h3>
+    <div class="timeline">
+      <div class="tl-step"><div class="t">~5 min</div><div class="n">Pass 0 — Intent</div><div class="d">Requirements, contract, tests-as-spec, clarifying questions.</div></div>
+      <div class="tl-step"><div class="t">~20 min</div><div class="n">Pass 1 — Correctness</div><div class="d">Does it do what it claims? Errors, boundaries, naming.</div></div>
+      <div class="tl-step"><div class="t">~20 min</div><div class="n">Pass 2 — Quality</div><div class="d">Performance, concurrency, design, tests, consistency.</div></div>
+      <div class="tl-step"><div class="t">~10 min</div><div class="n">Wrap-up</div><div class="d">Summarize by severity; state what you'd block on vs approve-with-nits.</div></div>
+    </div>
+    <p class="small muted">Timebox loosely — if a P0 shows up in Pass 1, chase it. But always leave time to summarize: a review with no verdict is unfinished.</p>
+  </div>
+
+  <div class="card">
+    <h3><span class="pass-tag pass-0">Pass 0</span>Understand before you judge</h3>
+    <p>Never comment on line 1 before you know what the code is <b>for</b>. Cheapest sources of intent, in order:</p>
+    <table class="cmd-tbl">
+      <tr><th>Read</th><th>What it tells you</th></tr>
+      <tr><td>Function / class / file <b>names</b></td><td>The claimed purpose. Mismatch between name and behavior is itself a finding.</td></tr>
+      <tr><td><b>Docstrings & type signatures</b></td><td>The contract: inputs, outputs, errors. Note what's <i>unspecified</i> (null? empty? negative?).</td></tr>
+      <tr><td><b>Tests</b></td><td>The executable spec. What cases exist tells you the author's mental model; what's <i>missing</i> tells you where bugs hide.</td></tr>
+      <tr><td><b>Callers / usage</b> (if shown)</td><td>Real expectations — e.g. is the return value checked? Are errors caught?</td></tr>
+    </table>
+    <p>Then ask the author (interviewer) contract questions <b>before</b> asserting bugs:</p>
+    <div class="phr good"><span class="lbl">Ask</span><br>"What should happen for an empty input — return 0, or is that a caller error?" · "Is this called concurrently?" · "How large can this collection get in production?" · "Who consumes this error — a user or another service?"</div>
+    <div class="note gotcha"><b>Gotcha:</b> skipping Pass 0 is the #1 way to fail this round — you'll "fix" intentional behavior and miss the real spec violations. Understanding the requirements <i>is</i> part of the review.</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="pass-tag pass-1">Pass 1</span>Correctness sweep — does it do what it claims?</h3>
+    <table class="cmd-tbl">
+      <tr><th>Check</th><th>What to look for</th></tr>
+      <tr><td><b>Correctness vs intent</b></td><td>Walk the happy path line-by-line against the contract from Pass 0. Trace one concrete input through by hand. Watch for name/behavior mismatches (<code>getUser</code> that mutates), inverted conditions, wrong operator (<code>&lt;</code> vs <code>&lt;=</code>, <code>&amp;&amp;</code> vs <code>||</code>).</td></tr>
+      <tr><td><b>Boundary conditions</b></td><td>Empty / single-element / max-size collections; 0, -1, negative numbers; first and last iteration of every loop (off-by-one); integer overflow &amp; float precision (<code>0.1+0.2</code>); very long strings; unicode; <code>null</code>/<code>undefined</code>/<code>NaN</code> at every entry point.</td></tr>
+      <tr><td><b>Error handling</b></td><td>Are errors swallowed (<code>catch {}</code>), logged-and-ignored, or propagated? Does a failure leave state half-mutated (no rollback / no atomicity)? Are error messages actionable and free of sensitive data? Is the error <i>type</i> part of the contract or a stringly-typed surprise?</td></tr>
+      <tr><td><b>Input validation &amp; trust</b></td><td>Where does the data come from? User input needs validation at the boundary: injection into queries/HTML, path traversal, prototype pollution (JS), unbounded sizes. Internal calls can trust more — say which boundary this is.</td></tr>
+      <tr><td><b>Resource handling</b></td><td>Files / connections / timers / listeners closed on <i>all</i> paths, including the error path (<code>finally</code>). Unbounded growth: caches without eviction, arrays that only ever push, recursion without a base-case guard.</td></tr>
+      <tr><td><b>Naming &amp; readability</b></td><td>Do names tell the truth? Booleans read as predicates (<code>isEmpty</code>, not <code>flag</code>)? Magic numbers named? Dead code, misleading comments, functions doing more than the name promises.</td></tr>
+    </table>
+    <div class="note info"><b>Technique:</b> for any loop or index arithmetic, run the smallest interesting example (n=0, n=1, n=2) in your head <i>out loud</i>. Most planted bugs in this round are boundary bugs and are found exactly this way.</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="pass-tag pass-2">Pass 2</span>Quality sweep — is it good code?</h3>
+    <table class="cmd-tbl">
+      <tr><th>Check</th><th>What to look for</th></tr>
+      <tr><td><b>Performance</b></td><td>Accidental O(n²): <code>includes</code>/<code>indexOf</code> inside a loop, repeated string concat, nested scans that a Set/Map would fix. Work done per-call that could be hoisted or cached. N+1 queries / IO in a loop. <i>But:</i> ask about real data size first — don't optimize a 10-element list.</td></tr>
+      <tr><td><b>Better approach</b></td><td>Is there a simpler or standard solution — a library call, a well-known data structure, removing a whole layer? Frame it as a question of trade-offs, not a rewrite demand; the author may have context you don't.</td></tr>
+      <tr><td><b>Concurrency / async</b></td><td>JS-specific: un-<code>await</code>ed promises (floating rejections), <code>await</code> inside <code>forEach</code>, check-then-act races on shared state across an <code>await</code> gap, missing idempotency for retried operations. Multithreaded langs: shared mutable state, lock ordering, atomicity of compound ops.</td></tr>
+      <tr><td><b>Class / API design</b></td><td>Single responsibility; leaking internals (returning a mutable private array); constructor doing IO; inheritance where composition fits; parameters that always travel together (introduce a type). Is the public surface minimal? Would this API be hard to change later — is it backward-compatible to evolve?</td></tr>
+      <tr><td><b>Unit tests</b></td><td>Review tests as code too. Do they cover the boundaries from Pass 1, the error paths, not just the happy path? Do they assert <i>behavior</i> or mirror the implementation (change-detector tests)? Any test interdependence, hidden shared state, time/randomness flakiness? What test would <i>you</i> add?</td></tr>
+      <tr><td><b>Comments &amp; docs</b></td><td>Comments should say <i>why</i>, not narrate <i>what</i>. Stale comments that contradict code are P1 — worse than none. Public API without docs on error behavior and edge-case semantics.</td></tr>
+      <tr><td><b>Consistency</b></td><td>Does the change follow the patterns of the surrounding codebase (error style, naming scheme, layering)? A locally-fine pattern that fights the codebase's conventions raises everyone's maintenance cost. Style-guide nits (Google TS style) are P2 — mention, don't dwell.</td></tr>
+      <tr><td><b>Observability</b></td><td>Would you be able to debug this in prod at 3am? Key decisions logged with context, failures distinguishable, metrics for the interesting counters. No noisy log-per-iteration, no secrets in logs.</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>🎯 Severity — rank everything you say</h3>
+    <p>Interviewers listen for whether you weight findings. A review that leads with a semicolon nit while a data-loss bug sits on line 12 fails on judgment, not knowledge.</p>
+    <table class="cmd-tbl">
+      <tr><th>Level</th><th>Meaning</th><th>Examples</th></tr>
+      <tr><td><span class="sev p0">P0 — blocker</span></td><td>Wrong result, crash, data loss, security hole. Must fix before merge.</td><td>Off-by-one drops last element; swallowed error corrupts state; SQL injection; race on shared counter.</td></tr>
+      <tr><td><span class="sev p1">P1 — important</span></td><td>Works today but will hurt: perf cliff, missing error path, fragile design, missing key test.</td><td>O(n²) on a growing dataset; no timeout on network call; API leaks mutable internals; stale comment.</td></tr>
+      <tr><td><span class="sev p2">P2 — nit</span></td><td>Style, naming, polish. Batch them, prefix with "nit:", never block on them.</td><td>Naming convention, magic number, comment phrasing, import order.</td></tr>
+    </table>
+    <div class="note gotcha"><b>Gotcha:</b> severity depends on context you may not have — that's why you asked the scale/concurrency questions in Pass 0. "This is O(n²) — is n bounded here?" turns a guess into a calibrated finding.</div>
+  </div>
+
+  <div class="card">
+    <h3>💬 How to say it — questions over verdicts</h3>
+    <p>Google's own review guidance: be kind, explain <i>why</i>, comment on the code not the author, and distinguish "must fix" from "consider". In the interview this doubles as a collaboration signal.</p>
+    <div class="phr bad-p"><span class="lbl">Weak</span><br>"This is wrong." · "Why would you do it this way?" · "You should use a Map."</div>
+    <div class="phr good"><span class="lbl">Strong</span><br>"I think this drops the last element when the array length is even — walking through n=2: … Am I reading that right?" · "This lookup is O(n) inside the loop; if n can reach ~10⁵, a Set would take it to O(n) total. How large does this get?" · "nit: <code>data2</code> → maybe <code>sortedUsers</code>, so the invariant is visible at the call site."</div>
+    <p class="small muted">Pattern: <b>observation → evidence (concrete trace) → severity → question or suggestion</b>. Praise good parts too — noticing a well-chosen structure is also reading comprehension.</p>
+  </div>
+
+  <details class="fold">
+    <summary>⚡ JS/TS bug hotspots — quick scan list <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <table class="cmd-tbl">
+          <tr><th>Hotspot</th><th>The bug</th></tr>
+          <tr><td><code>==</code> vs <code>===</code>, truthiness</td><td><code>if (!value)</code> rejects legit <code>0</code> / <code>""</code>; <code>== null</code> vs <code>=== undefined</code> confusion.</td></tr>
+          <tr><td><code>await</code> in <code>forEach</code>/<code>map</code></td><td><code>forEach</code> ignores promises — body runs unawaited; <code>map</code> without <code>Promise.all</code> returns pending promises.</td></tr>
+          <tr><td>Floating promise</td><td>Async call without <code>await</code>/<code>.catch</code> → unhandled rejection, silent failure, out-of-order effects.</td></tr>
+          <tr><td>Mutating arguments</td><td><code>arr.sort()</code>, <code>splice</code>, object assignment mutate the caller's data — hidden action at a distance.</td></tr>
+          <tr><td>Shallow copy</td><td><code>{...obj}</code> / <code>slice()</code> copy one level; nested objects still shared.</td></tr>
+          <tr><td>Closure over loop var / stale state</td><td>Callbacks capturing a variable that changes before they run; state read before an <code>await</code>, used after.</td></tr>
+          <tr><td>Number pitfalls</td><td>Float money math; <code>parseInt</code> without radix; <code>&gt; Number.MAX_SAFE_INTEGER</code> ids losing precision; <code>NaN !== NaN</code>.</td></tr>
+          <tr><td>Date / timezone</td><td>Local-time parsing of date strings; DST-crossing arithmetic; comparing Dates with <code>==</code>.</td></tr>
+          <tr><td><code>sort()</code> default</td><td>Lexicographic by default: <code>[10, 9, 1].sort()</code> → <code>[1, 10, 9]</code>. Needs a comparator for numbers.</td></tr>
+          <tr><td>TS <code>any</code> / assertions</td><td><code>as X</code> and <code>any</code> silence the checker exactly where the bug is; <code>!</code> non-null assertion on a value that can be null.</td></tr>
+          <tr><td>Error in async callback</td><td><code>try/catch</code> around <code>setTimeout</code>/event handler catches nothing — the throw happens later, elsewhere.</td></tr>
+          <tr><td>Object keys are strings</td><td><code>obj[1]</code> and <code>obj["1"]</code> collide; Map vs object choice; missing <code>hasOwnProperty</code> / prototype pollution.</td></tr>
+        </table>
+      </div>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🧪 Reviewing the tests — a checklist of missing cases <span class="fold-hint">click to expand</span></summary>
+    <div class="fold-body">
+      <div class="card">
+        <p>"What test is missing?" is a guaranteed question. Generate candidates mechanically from the contract:</p>
+        <table class="cmd-tbl">
+          <tr><th>Axis</th><th>Cases to propose</th></tr>
+          <tr><td>Size</td><td>empty, one element, two, many, at-the-limit, over-the-limit</td></tr>
+          <tr><td>Values</td><td>0, negative, min/max, duplicates, already-sorted / reverse-sorted, unicode &amp; empty string</td></tr>
+          <tr><td>Nullness</td><td><code>null</code>, <code>undefined</code>, missing property, <code>NaN</code></td></tr>
+          <tr><td>Errors</td><td>each failure path actually asserted (thrown type/message), not just "doesn't crash"</td></tr>
+          <tr><td>State</td><td>call twice (idempotency), interleave operations, state after a <i>failed</i> operation</td></tr>
+          <tr><td>Async</td><td>concurrent calls, rejection path, timeout, ordering guarantees</td></tr>
+        </table>
+        <p class="small muted">Also flag test <i>smells</i>: asserting internals instead of behavior, shared mutable fixtures, sleeps instead of awaits, one giant test instead of one-behavior-per-test.</p>
+      </div>
+    </div>
+  </details>
+
+  <div class="card">
+    <h3>🧾 Wrap-up script</h3>
+    <p>Close the review the way a senior reviewer closes a PR:</p>
+    <ol class="steps small">
+      <li>"Summary: the code intends to X. I found <b>one P0</b> — …, <b>two P1s</b> — …, and a few nits I'd batch."</li>
+      <li>"I'd <b>block on the P0</b>; the P1s I'd want fixed or ticketed with the author's input; nits are take-or-leave."</li>
+      <li>"Missing tests I'd ask for: … (from the axes above)."</li>
+      <li>"Things I liked: …" — one genuine positive, it's a real signal, not politeness.</li>
+      <li>Open questions you'd take to the author rather than assume.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3>✅ Check yourself</h3>
+    <details class="qa"><summary>Why read the tests before the implementation?</summary><div>Tests are the executable spec: they reveal the author's intended contract and mental model faster than the code does, and the <i>gaps</i> in them predict where bugs live. Reviewing code against inferred intent (Pass 0) is what separates "found a typo" from "found a spec violation".</div></details>
+    <details class="qa"><summary>The code has an O(n²) loop. Is that a P0, P1, or P2?</summary><div>Depends on n — which is why it's a question first: "how large does this collection get?" Bounded small n → P2/not-a-finding; user-growable or hot-path n → P1; if it can hang the service at production scale → effectively P0. Calibrating severity with a context question is the Staff-level move.</div></details>
+    <details class="qa"><summary>Name three places JS async code goes wrong that a sync-minded reviewer misses.</summary><div>(1) <code>await</code> inside <code>forEach</code> — promises fire-and-forget; (2) floating promises with no <code>.catch</code> — silent unhandled rejections; (3) check-then-act across an <code>await</code>: state read before the await may be stale after it, a single-threaded race.</div></details>
+    <details class="qa"><summary>What belongs in the wrap-up besides the list of bugs?</summary><div>A severity-ranked summary, an explicit merge verdict (block vs approve-with-comments), the missing test cases you'd require, at least one genuine positive, and the questions you'd take to the author instead of assuming answers.</div></details>
+    <details class="qa"><summary>The function is named <code>getActiveUsers</code> but also deactivates expired ones. Severity, and how do you phrase it?</summary><div>At least P1 — a name/behavior mismatch is a contract bug: callers will invoke it "read-only" and mutate state by surprise. Phrase as observation + question: "The name suggests a pure read, but line 14 mutates status — is the side effect intended? If so I'd split it or rename to make the write visible."</div></details>
+  </div>
+
+  <p class="small muted">Sources: Google Engineering Practices — <i>How to do a code review</i> (google.github.io/eng-practices), Google TypeScript Style Guide, <code>code_review_practice/README.md</code> conventions (OBS/Q markers, P0–P2).</p>
+</div>
+<script src="site.js"></script>
+</body>
+</html>
