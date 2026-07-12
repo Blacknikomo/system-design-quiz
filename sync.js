@@ -2,12 +2,15 @@
    Backend: sync-backend/ (Lambda Function URL + DynamoDB, event-delta design).
 
    Contract with a quiz engine (see system-design-quiz.html bottom):
-     SDQSync.init({ store,            // "sd" | "behavioral"
+     SDQSync.init({ store,            // "sd" | "behavioral" | "walkthroughs"
                     getStore,         // () => STORE
                     setStore,         // s  => { STORE = s; saveStore(STORE); }
+                    clearStore,       // () => { STORE = defaultStore(); saveStore(STORE); }  (hard reset)
                     onRemoteUpdate }) // () => re-render after adopting remote state
      SDQSync.pushAnswer(q, correct)   // call right after recordAnswer+saveStore
      SDQSync.pushSession(sess)        // call right after the session summary is saved
+     SDQSync.resetEverywhere()        // wipe progress on ALL devices (cloud reset epoch)
+     SDQSync.isConfigured()           // is sync set up on this device?
 
    Behavior:
    - Endpoint URL + secret are entered ONCE per device (☁ badge, top-right) and
@@ -37,6 +40,10 @@ window.SDQSync = (function(){
   const qKey    = () => "sdq_sync_queue_" + ctx.store;
   const loadQ   = () => { try{ return JSON.parse(lsGet(qKey())) || []; }catch(e){ return []; } };
   const saveQ   = q => lsSet(qKey(), JSON.stringify(q));
+  // per-store reset epoch this device knows about (see forceClear / resetEverywhere)
+  const genKey  = () => "sdq_sync_gen_" + ctx.store;
+  const loadGen = () => { const v = parseInt(lsGet(genKey()) || "0", 10); return Number.isFinite(v) ? v : 0; };
+  const saveGen = n => lsSet(genKey(), String(n|0));
 
   // ---------- http ----------
   async function api(method, path, body){
@@ -77,7 +84,9 @@ window.SDQSync = (function(){
     flushing = true;
     const batch = q.slice(0, MAX_BATCH);
     try{
-      await api("POST", "/events", {store: ctx.store, events: batch});
+      const r = await api("POST", "/events", {store: ctx.store, events: batch, gen: loadGen()});
+      // a reset happened elsewhere while we were away: our whole (pre-reset) queue is void
+      if(r && typeof r.resetGen === "number" && r.resetGen > loadGen()){ forceClear(r.resetGen); return; }
       const rest = loadQ().slice(batch.length);   // keep events enqueued during the await
       saveQ(rest);
       setBadge();
@@ -95,9 +104,23 @@ window.SDQSync = (function(){
       || Object.keys(s.stepstats||{}).length || (s.sessions||[]).length);
   }
 
+  // A reset happened elsewhere: this device is a generation behind. Drop the pre-reset
+  // queued events, hard-clear the local store to its OWN empty default, adopt the new
+  // gen, re-render. This is how an OFFLINE device gets wiped when it reconnects.
+  function forceClear(serverGen){
+    saveQ([]);                                   // pre-reset events are void — discard them
+    saveGen(serverGen|0);
+    if(ctx.clearStore) ctx.clearStore();         // each UI resets to its own defaultStore()
+    else if(ctx.setStore) ctx.setStore({});      // fallback (older UI without clearStore)
+    ctx.onRemoteUpdate && ctx.onRemoteUpdate();
+    setBadge();
+  }
+
   async function pull(){
     try{
       const remote = await api("GET", "/state?store=" + ctx.store);
+      const serverGen = (remote._meta && remote._meta.resetGen) || 0;
+      if(serverGen > loadGen()){ forceClear(serverGen); return; }   // catch up to a remote reset
       const hasRemote = remote._meta && (remote._meta.bootstrapped || remote._meta.items > 0);
       if(hasRemote){
         delete remote._meta;
@@ -231,6 +254,24 @@ window.SDQSync = (function(){
                streak:ev.streak|0, t:ev.t|0,
                stage:(ev.stage||"").slice(0,120), decision:(ev.decision||"").slice(0,300),
                mode:ev.mode||"", ts:Date.now()});
+    },
+    // is cross-device sync configured on THIS device? (UI uses this to decide whether
+    // a "reset everywhere" is even possible)
+    isConfigured(){ return !!loadCfg(); },
+    // Force a reset across ALL devices: bump the server reset epoch + wipe every progress
+    // row, then clear locally. Offline devices pick up the new epoch on their next sync
+    // (see forceClear). Throws on network/auth failure so the UI can report it.
+    async resetEverywhere(){
+      if(!ctx) return {ok:false, reason:"no-context"};
+      if(!loadCfg()) return {ok:false, reason:"not-configured"};
+      const r = await api("POST", "/reset", {store: ctx.store});
+      const gen = (r && typeof r.gen === "number") ? r.gen : (loadGen() + 1);
+      saveQ([]);                                 // discard any locally-queued (now-void) events
+      saveGen(gen);
+      if(ctx.clearStore) ctx.clearStore();
+      ctx.onRemoteUpdate && ctx.onRemoteUpdate();
+      setBadge();
+      return {ok:true, gen};
     },
   };
 })();

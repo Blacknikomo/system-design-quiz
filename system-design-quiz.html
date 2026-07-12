@@ -195,6 +195,7 @@
     <div class="row">
       <button class="btn" id="exportBtn">⬇ Export mastery analysis (JSON)</button>
       <button class="btn ghost" id="resetBtn">Reset all history</button>
+      <button class="btn ghost" id="resetAllBtn" style="border-color:var(--bad);color:var(--bad)" title="Wipe progress on every device (requires sync)">⚠ Reset ALL devices</button>
     </div>
     <p class="small muted" style="margin-top:8px">The JSON captures your weak (wrong-answered) topics with each item's streak and reps-to-mastery, plus per-level accuracy and per-topic mastery — designed to feed targeted question generation later.</p>
   </div>
@@ -676,9 +677,32 @@ function renderStats(){
   document.getElementById("histList").innerHTML = h;
 }
 document.getElementById("resetBtn").onclick = ()=>{
-  if(confirm("Erase ALL history and topic stats? This can't be undone.")){
+  if(confirm("Erase ALL history and topic stats? This can't be undone.\n(This clears THIS device only.)")){
     STORE = defaultStore(); saveStore(STORE);
     renderStats(); renderTopicChips();
+  }
+};
+document.getElementById("resetAllBtn").onclick = async ()=>{
+  const synced = window.SDQSync && SDQSync.isConfigured && SDQSync.isConfigured();
+  if(!synced){
+    alert("Cross-device sync isn't set up on this device, so there's nothing to reset remotely.\n\nUse “Reset all history” to clear just THIS device, or set up sync (the ☁ badge, top-right) first to reset every device.");
+    return;
+  }
+  if(!confirm("⚠ Reset progress on ALL devices?\n\nThis wipes quiz progress everywhere — topics, per-question mastery, missed questions and session history — on every device, including ones that are offline right now (they clear on their next sync).\n\nThis is IRREVERSIBLE.")) return;
+  const btn = document.getElementById("resetAllBtn"), old = btn.textContent;
+  btn.disabled = true; btn.textContent = "Resetting…";
+  try{
+    const r = await SDQSync.resetEverywhere();   // clears local store + bumps epoch on success
+    if(r && r.ok){
+      renderStats(); renderTopicChips(); updatePoolInfo();
+      alert("Done — all devices reset (epoch "+r.gen+"). Offline devices clear on their next sync.");
+    } else {
+      alert("Couldn't reset: " + ((r && r.reason) || "unknown") + ".");
+    }
+  }catch(e){
+    alert("Reset failed: " + (e && e.message ? e.message : e) + "\nOther devices were not changed.");
+  }finally{
+    btn.disabled = false; btn.textContent = old;
   }
 };
 
@@ -789,6 +813,7 @@ show("setup");
 window.SDQSync && SDQSync.init({
   store: "sd",
   getStore: ()=>STORE,
+  clearStore: ()=>{ STORE = defaultStore(); saveStore(STORE); },   // hard reset for cross-device wipe
   setStore: s=>{ const prev = STORE; STORE = Object.assign(defaultStore(), s);
     STORE.qstats = mergeQstats(prev.qstats, s.qstats);   // per-question LWW; if server lacks qstats, local mastery is kept (not reset)
     saveStore(STORE); },

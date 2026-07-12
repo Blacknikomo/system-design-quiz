@@ -199,6 +199,7 @@
     <div class="row" style="gap:10px">
       <button class="btn" id="dwExportBtn">⬇ Export mastery analysis (JSON)</button>
       <button class="btn ghost" id="dwResetBtn">Reset progress</button>
+      <button class="btn ghost" id="dwResetAllBtn" style="border-color:var(--bad);color:var(--bad)" title="Wipe walkthrough progress on every device (requires sync)">⚠ Reset ALL devices</button>
     </div>
   </div>
 </div>
@@ -603,8 +604,31 @@ $("dwExportBtn").onclick = ()=>{
   setTimeout(()=>URL.revokeObjectURL(url), 1000);
 };
 $("dwResetBtn").onclick = ()=>{
-  if(confirm("Erase all walkthrough progress and mastery? This can't be undone.")){
+  if(confirm("Erase all walkthrough progress and mastery? This can't be undone.\n(This clears THIS device only.)")){
     STORE = defaultStore(); saveStore(STORE); renderStats();
+  }
+};
+$("dwResetAllBtn").onclick = async ()=>{
+  const synced = window.SDQSync && SDQSync.isConfigured && SDQSync.isConfigured();
+  if(!synced){
+    alert("Cross-device sync isn't set up on this device, so there's nothing to reset remotely.\n\nUse “Reset progress” to clear just THIS device, or set up sync (the ☁ badge, top-right) first to reset every device.");
+    return;
+  }
+  if(!confirm("⚠ Reset walkthrough progress on ALL devices?\n\nThis wipes every device's walkthrough progress — per-step mastery, seen steps, missed steps and session history — everywhere, including devices that are offline right now (they clear on their next sync).\n\nThis is IRREVERSIBLE.")) return;
+  const btn = $("dwResetAllBtn"), old = btn.textContent;
+  btn.disabled = true; btn.textContent = "Resetting…";
+  try{
+    const r = await SDQSync.resetEverywhere();   // clears local store + bumps epoch on success
+    if(r && r.ok){
+      renderStats();
+      alert("Done — all devices reset (epoch "+r.gen+"). Offline devices clear on their next sync.");
+    } else {
+      alert("Couldn't reset: " + ((r && r.reason) || "unknown") + ".");
+    }
+  }catch(e){
+    alert("Reset failed: " + (e && e.message ? e.message : e) + "\nOther devices were not changed.");
+  }finally{
+    btn.disabled = false; btn.textContent = old;
   }
 };
 
@@ -614,6 +638,7 @@ renderPicker();
 window.SDQSync && SDQSync.init({
   store: "walkthroughs",
   getStore: ()=>STORE,
+  clearStore: ()=>{ STORE = defaultStore(); saveStore(STORE); },   // hard reset for cross-device wipe
   // remote (server aggregate) is the source of truth; local events are flushed before pull.
   // defaultStore() supplies apps/modes/missed/seen/stepstats/sessions so remote fills them all.
   setStore: s=>{ STORE = Object.assign(defaultStore(), s); saveStore(STORE); },
