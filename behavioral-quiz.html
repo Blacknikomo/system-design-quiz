@@ -319,6 +319,21 @@ if(!STORE.levels) STORE.levels = {};
 if(!STORE.missed) STORE.missed = {};
 if(!STORE.qstats) STORE.qstats = {};
 
+/* merge remote qstats into local by per-question Last-Write-Wins (newer `last` wins).
+   Server LWW state is the source of truth on pull, but a local answer that hasn't
+   flushed yet (newer `last`) is preserved rather than clobbered. Normalizes every
+   entry to {c,t,streak,last} so post-pull recordAnswer never hits an undefined field. */
+function mergeQstats(localQ, remoteQ){
+  const norm = e => ({c:(e&&e.c)|0, t:(e&&e.t)|0, streak:(e&&e.streak)|0, last:(e&&e.last)|0});
+  const out = {};
+  for(const [id,e] of Object.entries(remoteQ||{})) out[id] = norm(e);
+  for(const [id,e] of Object.entries(localQ||{})){
+    const l = norm(e);
+    if(!out[id] || l.last > out[id].last) out[id] = l;   // keep newer local (unflushed) entry
+  }
+  return out;
+}
+
 function topicStat(t){
   if(!STORE.topics[t]) STORE.topics[t] = {correct:0, total:0};
   return STORE.topics[t];
@@ -564,7 +579,7 @@ document.getElementById("checkBtn").onclick = ()=>{
   s.rec.total++; if(isCorrect) s.rec.correct++;
   if(!s.rec.topics.includes(q.topic)) s.rec.topics.push(q.topic);
   saveStore(STORE);
-  window.SDQSync && SDQSync.pushAnswer(q, isCorrect);
+  window.SDQSync && SDQSync.pushAnswer(q, isCorrect, STORE.qstats[q.id]);  // pass mastery snapshot (streak/t) so it syncs
   window.SDQSync && SDQSync.pushSession(s.rec);   // same date key -> idempotent overwrite
   renderQ();
 };
@@ -771,7 +786,9 @@ show("setup");
 window.SDQSync && SDQSync.init({
   store: "behavioral",
   getStore: ()=>STORE,
-  setStore: s=>{ STORE = Object.assign(defaultStore(), s); saveStore(STORE); },  // normalize: old server code may lack qstats
+  setStore: s=>{ const prev = STORE; STORE = Object.assign(defaultStore(), s);
+    STORE.qstats = mergeQstats(prev.qstats, s.qstats);   // per-question LWW; if server lacks qstats, local mastery is kept (not reset)
+    saveStore(STORE); },
   onRemoteUpdate: ()=>{ renderTopicChips(); updatePoolInfo(); },
 });
 </script>

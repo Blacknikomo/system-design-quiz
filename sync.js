@@ -198,10 +198,15 @@ window.SDQSync = (function(){
       window.addEventListener("online", ()=>{ flush(); });
       if(loadCfg()){ flush().then(pull); }
     },
-    pushAnswer(q, correct){
+    pushAnswer(q, correct, qs){
       if(!ctx) return;
-      enqueue({type:"answer", qid:q.id, topic:q.topic, level:q.level||"Unknown",
-               question:(q.q||"").slice(0,300), correct:!!correct, ts:Date.now()});
+      const ev = {type:"answer", qid:q.id, topic:q.topic, level:q.level||"Unknown",
+                  question:(q.q||"").slice(0,300), correct:!!correct, ts:Date.now()};
+      // per-question mastery snapshot (optional 3rd arg = STORE.qstats[q.id]) so streak/t
+      // survive a cross-device pull. Old callers omit it -> backend treats it as a legacy
+      // answer event (aggregates + missed only), so this stays backward-compatible.
+      if(qs){ ev.streak = qs.streak|0; ev.t = qs.t|0; ev.c = qs.c|0; }
+      enqueue(ev);
     },
     pushSession(sess){
       if(!ctx) return;
