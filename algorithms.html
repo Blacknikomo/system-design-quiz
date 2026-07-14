@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Algorithms in JS — canonical implementations &amp; how they get broken</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .sev{font-weight:700}
+  .sev.p0{color:var(--bad)} .sev.p1{color:var(--warn)} .sev.p2{color:var(--muted)}
+  .bug-tbl td:nth-child(3){white-space:nowrap}
+  .algo h3 .tag{margin-left:8px}
+  pre.code .hot{color:var(--warn)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="back" data-nav></div>
+      <h1>📐 Algorithms in JS — canonical forms &amp; how they get broken</h1>
+      <div class="sub">The reference implementations you should know cold, each followed by the ways it's typically mis-implemented. Built for the Code Comprehension round — most planted bugs are one-line deviations from these templates.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag accent">Code Comprehension</span>
+    <span class="tag">JS focus</span>
+    <span class="tag">16 algorithms</span>
+    <p>How to use this page: read each canonical form until you could write it from memory, then study its bug table. In the interview you won't implement these — you'll <b>diff unfamiliar code against the canonical shape in your head</b>. If a binary search says <code>while (lo &lt; hi)</code> with inclusive bounds, you don't need to trace it — you already know the failure mode, and you trace only to confirm.</p>
+    <div class="note info"><b>Severity column:</b> uses the same P0–P2 scale as the <a href="code-review.html">Code Review Protocol</a>. P0 = wrong result / hang / data loss; P1 = works-but-will-hurt; P2 = nit. When you spot one of these in review, name the severity out loud.</div>
+  </div>
+
+  <details class="fold" open>
+    <summary>🔎 Searching &amp; sorting <span class="fold-hint">binary search · merge · partition</span></summary>
+    <div class="fold-body">
+
+      <div class="card algo">
+        <h3>Binary search — exact match <span class="tag">O(log n)</span></h3>
+        <p>The classic <b>inclusive-bounds</b> template. Its three load-bearing choices — <code>lo &lt;= hi</code>, <code>mid ± 1</code>, inclusive <code>hi</code> — must agree with each other; mixing templates is the #1 planted bug.</p>
+        <pre class="code">function binarySearch(arr, target) {          <span class="c">// arr must be sorted ascending</span>
+  let lo = 0, hi = arr.length - 1;            <span class="c">// INCLUSIVE bounds</span>
+  while (lo &lt;= hi) {                          <span class="c">// &lt;= : a 1-element range is still searchable</span>
+    const mid = (lo + hi) &gt;&gt; 1;               <span class="c">// floor — plain /2 gives a fractional index in JS</span>
+    if (arr[mid] === target) return mid;
+    if (arr[mid] &lt; target) lo = mid + 1;      <span class="c">// ±1: mid is already ruled out</span>
+    else hi = mid - 1;
+  }
+  return -1;
+}</pre>
+        <p>The <b>lower-bound</b> variant (first index with <code>arr[i] &gt;= target</code> — i.e. the insertion point) uses the <i>other</i> template. Know both; never mix them:</p>
+        <pre class="code">function lowerBound(arr, target) {
+  let lo = 0, hi = arr.length;                <span class="c">// hi is EXCLUSIVE here</span>
+  while (lo &lt; hi) {                           <span class="c">// strict &lt;</span>
+    const mid = (lo + hi) &gt;&gt; 1;
+    if (arr[mid] &lt; target) lo = mid + 1;
+    else hi = mid;                            <span class="c">// keep mid — it may BE the answer</span>
+  }
+  return lo;                                  <span class="c">// may equal arr.length (insert at end)</span>
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td><code>while (lo &lt; hi)</code> with inclusive <code>hi = length - 1</code></td><td>The final 1-element range is never tested — misses the target when it sits at the last narrowed position.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td><code>hi = mid</code> (or <code>lo = mid</code>) in the exact-match template</td><td>Range stops shrinking when <code>lo === hi</code> (or on 2 elements) → <b>infinite loop</b>. In the lower-bound template <code>hi = mid</code> is correct — that's why mixing templates is deadly.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td><code>const mid = (lo + hi) / 2</code></td><td>Fractional index → <code>arr[1.5]</code> is <code>undefined</code>, all comparisons false → loop runs to a wrong answer or forever.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>No check that input is sorted (or sorted by the <i>same</i> comparator)</td><td>Silently wrong results on unsorted data. In review: ask "who guarantees the ordering — and is it the same key we search by?"</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Searching objects with <code>===</code></td><td>Reference equality never matches a structurally-equal object; needs a key extractor / comparator.</td><td><span class="sev p0">P0</span></td></tr>
+        </table>
+        <p class="small muted">Note: the famous <code>(lo + hi)</code> integer overflow from Java/C doesn't bite in JS until 2⁵³ — but mentioning "in Java this would need <code>lo + (hi - lo) / 2</code>" is a free signal.</p>
+      </div>
+
+      <div class="card algo">
+        <h3>Merge two sorted arrays <span class="tag">O(n + m)</span></h3>
+        <p>The heart of merge sort and of every "combine two sorted streams" task (log merging, sorted pagination). Two cursors, one output.</p>
+        <pre class="code">function merge(a, b) {
+  const out = [];
+  let i = 0, j = 0;
+  while (i &lt; a.length &amp;&amp; j &lt; b.length) {
+    if (a[i] &lt;= b[j]) out.push(a[i++]);       <span class="c">// &lt;= keeps the merge STABLE (a wins ties)</span>
+    else out.push(b[j++]);
+  }
+  while (i &lt; a.length) out.push(a[i++]);      <span class="c">// drain the tails —</span>
+  while (j &lt; b.length) out.push(b[j++]);      <span class="c">// exactly one array has leftovers</span>
+  return out;
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td>Missing tail drains</td><td>Everything after one array is exhausted is <b>silently dropped</b>. Test that catches it: arrays of different lengths.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Reading <code>a[i]</code> / <code>b[j]</code> without bounds check in a single combined loop</td><td><code>undefined</code> enters the comparison; <code>undefined &lt;= x</code> is always false, so one side gets drained in the wrong order.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td><code>&lt;</code> instead of <code>&lt;=</code></td><td>Merge still sorts, but becomes <b>unstable</b> — equal elements from <code>b</code> jump ahead. Matters when elements carry payloads (sort by ts, keep insertion order).</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Comparator via subtraction on non-numbers</td><td><code>a - b</code> on strings/Dates coerces or yields <code>NaN</code>; <code>NaN</code> makes the comparison false every time → arbitrary order.</td><td><span class="sev p0">P0</span></td></tr>
+        </table>
+      </div>
+
+      <div class="card algo">
+        <h3>Quicksort — Lomuto partition <span class="tag">O(n log n) avg · O(n²) worst</span></h3>
+        <p>What matters in review: the base case, <b>excluding the pivot from recursion</b>, and knowing when the O(n²) worst case is reachable.</p>
+        <pre class="code">function quicksort(arr, lo = 0, hi = arr.length - 1) {
+  if (lo &gt;= hi) return arr;                   <span class="c">// base case: 0 or 1 elements</span>
+  const p = partition(arr, lo, hi);
+  quicksort(arr, lo, p - 1);                  <span class="c">// EXCLUDE the pivot: it's final.</span>
+  quicksort(arr, p + 1, hi);                  <span class="c">// include it → infinite recursion on duplicates</span>
+  return arr;                                 <span class="c">// sorts IN PLACE — callers must know</span>
+}
+
+function partition(arr, lo, hi) {
+  const pivot = arr[hi];                      <span class="c">// last element as pivot</span>
+  let i = lo;                                 <span class="c">// boundary of the "&lt; pivot" zone</span>
+  for (let j = lo; j &lt; hi; j++) {             <span class="c">// j &lt; hi: don't touch the pivot itself</span>
+    if (arr[j] &lt; pivot) {
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+      i++;
+    }
+  }
+  [arr[i], arr[hi]] = [arr[hi], arr[i]];      <span class="c">// drop pivot into its final slot</span>
+  return i;
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td>Recursing on <code>(lo, p)</code> and <code>(p, hi)</code> — pivot included</td><td>On arrays with duplicates (or even without), a partition that doesn't shrink → <b>stack overflow</b>.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Missing / wrong base case (<code>lo &gt; hi</code> only, not <code>&gt;=</code>)</td><td>Usually still terminates, but 1-element calls do useless partitions; combined with the bug above it hangs.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Last-element pivot on already-sorted input</td><td>Every partition splits n → (n−1, 0): O(n²) time <i>and</i> O(n) recursion depth → stack overflow around n ≈ 10⁴. Fix: random pivot or median-of-three. Ask: "can prod data arrive pre-sorted?" — it usually can.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>In-place mutation not surfaced in the API</td><td><code>sortUsers(users)</code> silently reorders the caller's array — action at a distance. Name it (<code>sortInPlace</code>) or copy first.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Falling back to <code>arr.sort()</code> with no comparator</td><td>Default sort is <b>lexicographic</b>: <code>[10, 9, 1].sort()</code> → <code>[1, 10, 9]</code>. Needs <code>(a, b) =&gt; a - b</code> for numbers.</td><td><span class="sev p0">P0</span></td></tr>
+        </table>
+        <p class="small muted">Also know: quicksort is <b>not stable</b>; JS's built-in <code>Array.prototype.sort</code> is required to be stable (since ES2019) and is O(n log n) — in real code, "why not just <code>sort()</code> with a comparator?" is a legitimate review question.</p>
+      </div>
+
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🕸️ Graphs <span class="fold-hint">BFS · DFS · topological sort · Dijkstra</span></summary>
+    <div class="fold-body">
+
+      <div class="card algo">
+        <h3>BFS — breadth-first search <span class="tag">O(V + E)</span></h3>
+        <p>THE algorithm for <b>shortest path in an unweighted graph</b>. Two invariants carry it: mark visited <b>when enqueuing</b>, and use a real O(1) queue.</p>
+        <pre class="code">function bfs(adj, start) {                    <span class="c">// adj: Map node → [neighbors]</span>
+  const dist = new Map([[start, 0]]);         <span class="c">// doubles as the "visited" set</span>
+  const queue = [start];
+  let head = 0;                               <span class="c">// index-based queue: shift() is O(n)</span>
+  while (head &lt; queue.length) {
+    const node = queue[head++];
+    for (const next of adj.get(node) ?? []) {
+      if (!dist.has(next)) {                  <span class="c">// mark when ENQUEUED, not when dequeued</span>
+        dist.set(next, dist.get(node) + 1);
+        queue.push(next);
+      }
+    }
+  }
+  return dist;                                <span class="c">// unreachable nodes are simply absent</span>
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td>Marking visited on <b>dequeue</b> instead of enqueue</td><td>The same node gets enqueued via multiple neighbors before it's ever processed — queue blows up exponentially on dense graphs. Answers stay correct, runtime doesn't.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td><code>queue.shift()</code></td><td>O(n) per dequeue → O(n²) total. Fine at n=100, a hang at n=10⁶. The head-index trick (or a deque) fixes it.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Using a <b>stack</b> (<code>pop()</code>) but calling it BFS</td><td>It's DFS now — traversal still visits everything, but "shortest path" results are wrong. Name/behavior mismatch: check push/pop ends match the claimed order.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Grid BFS: bounds check <i>after</i> reading the cell</td><td><code>grid[r][c]</code> with r out of range throws (or yields <code>undefined</code> and poisons logic). Check bounds first, then visited, then value.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Assuming one BFS covers the whole graph</td><td>Disconnected components are never visited. If the task is "process every node", loop over all nodes and BFS from each unvisited one.</td><td><span class="sev p1">P1</span></td></tr>
+        </table>
+      </div>
+
+      <div class="card algo">
+        <h3>DFS — recursive &amp; iterative <span class="tag">O(V + E)</span></h3>
+        <pre class="code">function dfs(adj, node, visited = new Set()) {
+  visited.add(node);                          <span class="c">// mark BEFORE recursing — or cycles recurse forever</span>
+  for (const next of adj.get(node) ?? []) {
+    if (!visited.has(next)) dfs(adj, next, visited);
+  }
+  return visited;
+}
+
+<span class="c">// Iterative — for deep graphs (JS call stack dies around ~10⁴ frames)</span>
+function dfsIterative(adj, start) {
+  const visited = new Set();
+  const stack = [start];
+  while (stack.length) {
+    const node = stack.pop();
+    if (visited.has(node)) continue;          <span class="c">// a node can sit in the stack twice — dedupe on pop</span>
+    visited.add(node);
+    for (const next of adj.get(node) ?? []) {
+      if (!visited.has(next)) stack.push(next);
+    }
+  }
+  return visited;
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td>Marking visited <i>after</i> the recursive calls</td><td>On any cycle the recursion never bottoms out → stack overflow. The mark must precede exploration.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Recursive DFS on user-sized input</td><td>~10⁴+ deep chain (linked-list-shaped graph, deep file tree) → <code>RangeError: Maximum call stack size exceeded</code>. Review question: "how deep can this get in prod?"</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Cycle <i>detection</i> in a directed graph with a single visited set</td><td>A visited node reached again isn't necessarily a cycle — it may be a diamond (A→B→D, A→C→D). Directed cycle detection needs three states: unvisited / <b>in current path</b> / done. One boolean gives false positives.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Iterative version without the dedupe-on-pop check</td><td>Same node processed multiple times; with side effects per node (writes, sends) that's duplicated work or corrupted state.</td><td><span class="sev p1">P1</span></td></tr>
+        </table>
+      </div>
+
+      <div class="card algo">
+        <h3>Topological sort — Kahn's algorithm <span class="tag">O(V + E)</span></h3>
+        <p>Ordering with dependencies: build systems, task schedulers, migration runners. The one check everyone forgets is the <b>cycle check at the end</b>.</p>
+        <pre class="code">function topoSort(n, edges) {                 <span class="c">// edges: [from, to] = "from must precede to"</span>
+  const adj = Array.from({ length: n }, () =&gt; []);
+  const indeg = new Array(n).fill(0);
+  for (const [u, v] of edges) {
+    adj[u].push(v);
+    indeg[v]++;                               <span class="c">// count incoming edges</span>
+  }
+  const queue = [];
+  for (let v = 0; v &lt; n; v++) if (indeg[v] === 0) queue.push(v);
+  const order = [];
+  let head = 0;
+  while (head &lt; queue.length) {
+    const u = queue[head++];
+    order.push(u);
+    for (const v of adj[u]) {
+      if (--indeg[v] === 0) queue.push(v);    <span class="c">// v becomes free only when ALL prereqs done</span>
+    }
+  }
+  return order.length === n ? order : null;   <span class="c">// &lt; n ⇒ cycle. NEVER skip this check</span>
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td>No <code>order.length === n</code> check</td><td>On a cyclic input the function returns a <b>silent partial order</b> — the scheduler just never runs some tasks. Worst kind of bug: no error, missing work.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Edge direction flipped (<code>adj[v].push(u)</code> / <code>indeg[u]++</code>)</td><td>Produces the reverse topological order — tests with symmetric fixtures won't catch it. Trace one concrete edge: "install deps before app".</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Pushing a node when <code>indeg &gt; 0</code> (e.g. <code>if (indeg[v] &lt;= 1)</code>)</td><td>Nodes run before all their prerequisites complete. In a migration runner that's data corruption.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Nodes that appear only in <code>edges</code>, with n derived from edges</td><td>Isolated nodes (no edges at all) vanish from the order. Ask where n comes from.</td><td><span class="sev p1">P1</span></td></tr>
+        </table>
+      </div>
+
+      <div class="card algo">
+        <h3>Dijkstra — shortest paths with weights <span class="tag">O((V + E) log V)</span></h3>
+        <p>BFS's weighted sibling. The canonical JS version uses a min-heap with <b>lazy deletion</b>: push duplicates, skip stale ones on pop.</p>
+        <pre class="code">function dijkstra(adj, src) {                 <span class="c">// adj: Map node → [[next, weight], ...]</span>
+  const dist = new Map([[src, 0]]);
+  const pq = new MinHeap((a, b) =&gt; a[0] - b[0]);  <span class="c">// entries: [dist, node] — comparator, see Heap below</span>
+  pq.push([0, src]);
+  while (pq.size) {
+    const [d, u] = pq.pop();
+    if (d &gt; (dist.get(u) ?? Infinity)) continue;  <span class="c">// STALE entry — a shorter path already won. Skip.</span>
+    for (const [v, w] of adj.get(u) ?? []) {
+      const nd = d + w;
+      if (nd &lt; (dist.get(v) ?? Infinity)) {
+        dist.set(v, nd);
+        pq.push([nd, v]);                     <span class="c">// lazy deletion: just push again, don't decrease-key</span>
+      }
+    }
+  }
+  return dist;
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td>Plain BFS / FIFO queue on a weighted graph</td><td>Fewest <i>hops</i> ≠ shortest <i>distance</i>. Classic when someone "extends" existing BFS code with weights.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>No stale-entry skip, node finalized on first <i>push</i></td><td>Marking a node "done" when first discovered (BFS habit) finalizes a non-optimal distance. The skip-on-pop line is what makes lazy deletion correct.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Negative edge weights</td><td>Dijkstra's greedy invariant breaks silently — wrong distances, no error. Review question: "can this weight be negative (refunds, penalties, time offsets)?" If yes → Bellman-Ford.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td><code>if (!dist.get(v))</code> instead of <code>ndist &lt; (dist.get(v) ?? Infinity)</code></td><td>Truthiness treats a legitimate distance of <b>0</b> (the source!) as "unset" and re-relaxes it. The <code>?? Infinity</code> pattern dodges both this and <code>undefined</code> comparisons.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Sorted array instead of a heap, re-sorted every push</td><td>O(n log n) per operation → O(n² log n) total. Works in the demo, dies at scale — a P1 with a "how big is V?" question attached.</td><td><span class="sev p1">P1</span></td></tr>
+        </table>
+      </div>
+
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🪟 Windows &amp; pointers <span class="fold-hint">sliding window · two pointers</span></summary>
+    <div class="fold-body">
+
+      <div class="card algo">
+        <h3>Sliding window — longest substring without repeats <span class="tag">O(n)</span></h3>
+        <p>The variable-size window pattern: <code>right</code> expands every iteration, <code>left</code> jumps forward on violation, answer recorded <b>after the window is valid again</b>.</p>
+        <pre class="code">function longestUnique(s) {
+  const last = new Map();                     <span class="c">// char → last index seen</span>
+  let best = 0, left = 0;
+  for (let right = 0; right &lt; s.length; right++) {
+    const c = s[right];
+    if (last.has(c) &amp;&amp; last.get(c) &gt;= left) { <span class="c">// duplicate INSIDE the current window?</span>
+      left = last.get(c) + 1;                 <span class="c">// jump PAST it — not left++</span>
+    }
+    last.set(c, right);
+    best = Math.max(best, right - left + 1);  <span class="c">// +1: window [left..right] is inclusive</span>
+  }
+  return best;
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td><code>right - left</code> without <code>+1</code></td><td>Every answer off by one. The single most-planted bug in window code — check it first, takes 2 seconds.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Missing the <code>&gt;= left</code> guard</td><td>A duplicate <i>behind</i> the window drags <code>left</code> <b>backwards</b> — window grows illegally, answers too large. Trace <code>"abba"</code>: at the final <code>a</code>, the stale <code>a@0</code> must be ignored.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td><code>left++</code> instead of jumping past the duplicate (in this Map variant)</td><td>Window still contains the duplicate → invariant broken, wrong answers. (In the <i>while-shrink</i> variant <code>left++</code> in a loop is correct — know which variant you're reading.)</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Recording <code>best</code> before restoring validity (in while-shrink variants: <code>if</code> instead of <code>while</code>)</td><td>An invalid window gets counted as a candidate answer. Rule: expand → restore invariant → record.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Iterating with <code>s[right]</code> on unicode beyond BMP</td><td>Emoji / rare CJK are surrogate <i>pairs</i>: indexing splits them. Usually fine for interview strings — but noticing is a P2 that scores.</td><td><span class="sev p2">P2</span></td></tr>
+        </table>
+      </div>
+
+      <div class="card algo">
+        <h3>Two pointers — pair sum in a sorted array <span class="tag">O(n)</span></h3>
+        <pre class="code">function pairSum(arr, target) {               <span class="c">// arr sorted ascending</span>
+  let i = 0, j = arr.length - 1;
+  while (i &lt; j) {                             <span class="c">// STRICT &lt; : an element can't pair with itself</span>
+    const sum = arr[i] + arr[j];
+    if (sum === target) return [i, j];
+    if (sum &lt; target) i++;                    <span class="c">// too small → only the left move can help</span>
+    else j--;
+  }
+  return null;
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td><code>i &lt;= j</code></td><td>When pointers meet, <code>arr[i] + arr[i]</code> pairs an element with itself — <code>[3]</code> "finds" 6. Contract question: is reusing an element allowed?</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Running it on an <b>unsorted</b> array</td><td>The move-the-pointer logic relies entirely on sortedness; unsorted input gives arbitrary misses. If the code sorts first, indexes returned now point into the <i>sorted</i> copy — a second, subtler bug.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Moving <b>both</b> pointers on a match while collecting <i>all</i> pairs with duplicates present</td><td>Either misses duplicate pairs or double-counts them; needs explicit duplicate-skipping loops (<code>while (arr[i] === arr[i+1]) i++</code>) — which themselves need bounds checks.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Overflow habits from other languages</td><td><code>a + b</code> can't overflow to negative in JS, but <b>precision</b> silently degrades past 2⁵³ (IDs!). <code>Number.isSafeInteger</code> is the check.</td><td><span class="sev p2">P2</span></td></tr>
+        </table>
+      </div>
+
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🏗️ Structures in code <span class="fold-hint">binary heap · LRU cache</span></summary>
+    <div class="fold-body">
+
+      <div class="card algo">
+        <h3>Binary min-heap <span class="tag">push/pop O(log n) · peek O(1)</span></h3>
+        <p>Array-backed complete tree. All the bugs live in the index arithmetic and in <code>pop()</code>'s edge cases. 0-based math: parent <code>(i-1)&gt;&gt;1</code>, children <code>2i+1</code>, <code>2i+2</code>.</p>
+        <pre class="code">class MinHeap {
+  constructor(cmp = (a, b) =&gt; a - b) {        <span class="c">// comparator: NEVER rely on &lt; for objects/arrays</span>
+    this.a = [];
+    this.cmp = cmp;
+  }
+  get size() { return this.a.length; }
+  peek() { return this.a[0]; }
+
+  push(x) {
+    const a = this.a;
+    a.push(x);
+    let i = a.length - 1;
+    while (i &gt; 0) {                           <span class="c">// sift UP</span>
+      const p = (i - 1) &gt;&gt; 1;                 <span class="c">// 0-based parent</span>
+      if (this.cmp(a[p], a[i]) &lt;= 0) break;
+      [a[p], a[i]] = [a[i], a[p]];
+      i = p;
+    }
+  }
+
+  pop() {
+    const a = this.a;
+    if (a.length === 0) return undefined;
+    const top = a[0];
+    const last = a.pop();                     <span class="c">// also handles the 1-element heap</span>
+    if (a.length &gt; 0) {
+      a[0] = last;                            <span class="c">// move LAST to root, then sink it</span>
+      let i = 0;
+      while (true) {                          <span class="c">// sift DOWN</span>
+        const l = 2 * i + 1, r = 2 * i + 2;
+        let m = i;
+        if (l &lt; a.length &amp;&amp; this.cmp(a[l], a[m]) &lt; 0) m = l;
+        if (r &lt; a.length &amp;&amp; this.cmp(a[r], a[m]) &lt; 0) m = r;  <span class="c">// compare BOTH children</span>
+        if (m === i) break;
+        [a[m], a[i]] = [a[i], a[m]];
+        i = m;
+      }
+    }
+    return top;
+  }
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td>1-based index math (<code>2i</code>, <code>2i+1</code>, parent <code>i&gt;&gt;1</code>) on a 0-based array</td><td>Heap property silently violated near the root; pop returns non-minimums <i>sometimes</i> — flaky, data-dependent, awful to debug. Verify the math against the storage convention first thing.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Sift-down comparing only the left child</td><td>When the right child is the smaller one, it never bubbles up → wrong pop order. Test: push <code>[2, 3, 1]</code>.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Comparing with <code>&lt;</code> instead of a comparator</td><td>For numbers fine; for arrays/objects JS coerces to <b>strings</b>: <code>[10] &lt; [2]</code> is <code>true</code>. A heap of <code>[dist, node]</code> pairs sorts lexicographically — Dijkstra quietly wrong.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td><code>pop()</code> ignoring the empty / 1-element cases</td><td><code>a[0] = a.pop()</code> on a 1-element heap re-inserts the element it just removed — heap never empties, consumer loops forever.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Top-K via full sort instead of a size-K heap</td><td>O(n log n) + O(n) memory vs O(n log k). Legit at small n — ask about n before flagging. Streaming input makes the heap mandatory.</td><td><span class="sev p1">P1</span></td></tr>
+        </table>
+      </div>
+
+      <div class="card algo">
+        <h3>LRU cache — Map-based <span class="tag">get/put O(1)</span></h3>
+        <p>In JS the doubly-linked-list + hashmap classic collapses into a <code>Map</code>, because <b>Map preserves insertion order</b> and re-inserting moves a key to the back. The recency bookkeeping is where all bugs live.</p>
+        <pre class="code">class LRUCache {
+  constructor(capacity) {
+    this.cap = capacity;
+    this.m = new Map();                       <span class="c">// oldest = first key in iteration order</span>
+  }
+  get(key) {
+    if (!this.m.has(key)) return undefined;
+    const v = this.m.get(key);
+    this.m.delete(key);
+    this.m.set(key, v);                       <span class="c">// refresh recency ON READ — this is the "U" in LRU</span>
+    return v;
+  }
+  put(key, value) {
+    if (this.m.has(key)) this.m.delete(key);  <span class="c">// set() on an existing key KEEPS its old position</span>
+    this.m.set(key, value);
+    if (this.m.size &gt; this.cap) {
+      const oldest = this.m.keys().next().value;
+      this.m.delete(oldest);                  <span class="c">// evict least-recently-used</span>
+    }
+  }
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td><code>get()</code> doesn't refresh recency</td><td>The cache is silently <b>FIFO</b>, not LRU — hot keys get evicted while cold recent writes survive. Functionally "works", hit rate quietly tanks. Name/behavior mismatch.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td><code>put()</code> on existing key without delete-first</td><td><code>Map.set</code> updates the value but <b>keeps the original position</b> — the key's recency never updates on overwrite.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Evicting <i>before</i> checking whether the key already exists</td><td>Updating an existing key on a full cache wrongly evicts someone — capacity shrinks by one victim per update.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td><code>if (!this.m.get(key))</code> for the existence check</td><td>Stored <code>0</code>, <code>""</code>, <code>false</code>, <code>null</code> all read as "miss" → permanent re-fetch of legitimately-falsy values. Use <code>has()</code>.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Plain object <code>{}</code> as the store</td><td>No insertion-order guarantee for numeric-like keys (integer keys iterate first, sorted!), keys coerced to strings (<code>1</code> vs <code>"1"</code> collide), prototype pollution via <code>"__proto__"</code>. Map exists for this.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>No TTL / no size bound in a "cache" that only ever grows</td><td>Not this class — but in review, any hand-rolled <code>cache = {}</code> without eviction is a slow memory leak. Standard P1 finding.</td><td><span class="sev p1">P1</span></td></tr>
+        </table>
+      </div>
+
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>🧠 Recursion &amp; memoization <span class="fold-hint">memo caches · DP shape</span></summary>
+    <div class="fold-body">
+
+      <div class="card algo">
+        <h3>Memoization <span class="tag">O(n) from O(2ⁿ)</span></h3>
+        <p>The pattern matters more than fib itself: <b>where the cache lives</b>, <b>how keys are built</b>, and <b>what counts as a hit</b> are the three bug farms.</p>
+        <pre class="code">function makeFib() {
+  const memo = new Map([[0, 0], [1, 1]]);     <span class="c">// cache OUTSIDE the recursive fn, INSIDE the closure</span>
+  return function fib(n) {
+    if (memo.has(n)) return memo.get(n);      <span class="c">// has(), not truthiness — fib(0) is 0, a falsy hit</span>
+    const val = fib(n - 1) + fib(n - 2);
+    memo.set(n, val);                         <span class="c">// write BEFORE returning</span>
+    return val;
+  };
+}
+const fib = makeFib();
+
+<span class="c">// Generic memoize for a single-primitive-arg pure function</span>
+function memoize(fn) {
+  const cache = new Map();
+  return (x) =&gt; {
+    if (!cache.has(x)) cache.set(x, fn(x));
+    return cache.get(x);
+  };
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td><code>if (memo[n]) return memo[n]</code></td><td>Cached <b>falsy</b> results (0, "", false, null) are recomputed forever — correctness survives, the exponential blowup returns. With fib the cached 0 makes it O(2ⁿ) again.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Cache declared <i>inside</i> the recursive function's own body / recreated per top-level call</td><td>Each outer call starts cold; cross-call reuse — the entire point — never happens. Look at where <code>const memo</code> sits relative to the returned function.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Multi-arg key via <code>args.join(",")</code></td><td>Collisions: <code>f("a,b")</code> vs <code>f("a", "b")</code> share a key; objects join as <code>"[object Object]"</code> — <b>every</b> object hits the same entry. Use <code>JSON.stringify</code> deliberately, or nested Maps.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Plain object as cache with hostile keys</td><td><code>memo["constructor"]</code> / <code>memo["__proto__"]</code> exist before you set them — truthy garbage hits. Map again.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Memoizing an <b>impure</b> function (reads config, Date.now, DB)</td><td>First call's answer is frozen forever; staleness masquerades as caching. Review question: "is this referentially transparent?"</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Async memoization caching the <i>value</i>, not the <i>promise</i></td><td>Concurrent first calls all miss (cache fills only after await) → thundering herd of N identical requests. Cache the promise itself; delete the entry on rejection or failures get cached forever.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Unbounded memo on user-driven keys</td><td>A cache keyed by request input grows monotonically — memory leak in a long-lived process. Bound it (LRU above) or scope its lifetime.</td><td><span class="sev p1">P1</span></td></tr>
+        </table>
+        <p class="small muted">Bottom-up DP variant of the same bugs: array sized <code>n</code> instead of <code>n + 1</code> (read past the end → <code>undefined</code> → <code>NaN</code> cascades), and base cases at the wrong indices. <code>NaN</code> anywhere in a DP table means a base-case or sizing bug — say so out loud.</p>
+      </div>
+
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>⚡ JS-specific <span class="fold-hint">debounce/throttle · promise pool · deep clone · event loop</span></summary>
+    <div class="fold-body">
+
+      <div class="card algo">
+        <h3>Debounce &amp; throttle</h3>
+        <p><b>Debounce</b> = act after the burst goes quiet (search-as-you-type). <b>Throttle</b> = act at most once per interval during the burst (scroll handlers). Confusing them is itself the classic bug.</p>
+        <pre class="code">function debounce(fn, ms) {
+  let timer;
+  return function (...args) {                 <span class="c">// function, not arrow: preserve caller's `this`</span>
+    clearTimeout(timer);                      <span class="c">// forget this line = no debounce at all</span>
+    timer = setTimeout(() =&gt; fn.apply(this, args), ms);
+  };
+}
+
+function throttle(fn, ms) {                   <span class="c">// leading + trailing edges</span>
+  let last = 0, timer = null, lastArgs;
+  return function (...args) {
+    lastArgs = args;                          <span class="c">// always remember the LATEST args</span>
+    const now = Date.now();
+    if (now - last &gt;= ms) {
+      last = now;
+      fn.apply(this, args);                   <span class="c">// leading call: fire immediately</span>
+    } else if (!timer) {
+      timer = setTimeout(() =&gt; {              <span class="c">// trailing call: don't lose the final event</span>
+        timer = null;
+        last = Date.now();
+        fn.apply(this, lastArgs);
+      }, ms - (now - last));
+    }
+  };
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td>Missing <code>clearTimeout</code> in debounce</td><td>Every keystroke schedules its own call — you get N delayed calls instead of 1. The name says debounce; the behavior is "delay everything".</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Throttle without a trailing call</td><td>The <b>last</b> event of a burst is dropped — final scroll position never rendered, last keystroke never searched. Ask which edges the caller needs: leading, trailing, or both.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Arrow function as the returned wrapper</td><td><code>this</code> is captured from the definition site, not the call site — methods debounced on a class lose their instance. (Arrow <i>inside</i> setTimeout is correct — that one should inherit.)</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Capturing the <i>first</i> burst's args for the trailing call</td><td>Trailing invocation replays a stale event — UI updates to an old scroll position. <code>lastArgs</code> must be overwritten on every call.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Debounced async fn — responses racing</td><td>Debounce limits <i>starts</i>, not <i>completions</i>: an older slow response can overwrite a newer fast one. Needs a request token / AbortController — the bug lives one level above the debounce.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Never cancelled on teardown</td><td>The pending timer fires after unmount/dispose and touches dead state. Expose a <code>.cancel()</code>; call it in cleanup.</td><td><span class="sev p1">P1</span></td></tr>
+        </table>
+      </div>
+
+      <div class="card algo">
+        <h3>Promise pool — run N tasks, at most K in flight <span class="tag">concurrency limiter</span></h3>
+        <p>The pattern behind every "fetch 10 000 URLs politely". Key insight: tasks must be <b>factories</b> (<code>() =&gt; Promise</code>) — a Promise starts running the moment it's created.</p>
+        <pre class="code">async function promisePool(tasks, limit) {    <span class="c">// tasks: Array&lt;() =&gt; Promise&gt;</span>
+  const results = new Array(tasks.length);
+  let next = 0;
+  async function worker() {
+    while (next &lt; tasks.length) {
+      const i = next++;                       <span class="c">// claim an index BEFORE the await —</span>
+      results[i] = await tasks[i]();          <span class="c">// sync code between awaits is atomic in JS</span>
+    }
+  }
+  const workers = Array.from(
+    { length: Math.min(limit, tasks.length) },
+    () =&gt; worker()
+  );
+  await Promise.all(workers);                 <span class="c">// one rejection rejects the pool — wrap tasks</span>
+  return results;                             <span class="c">// results in ORIGINAL order, not completion order</span>
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td><code>tasks.map(t =&gt; t())</code> anywhere before pooling</td><td>All N promises are created — and therefore <b>already running</b> — at once. The "pool" then politely awaits an avalanche it already unleashed. This is THE bug to scan for.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td><code>await</code> inside <code>forEach</code></td><td><code>forEach</code> ignores the returned promises: nothing is awaited, errors are unhandled rejections, "done" fires before any work completes. Use <code>for..of</code> or collect promises for <code>Promise.all</code>.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Claiming the index <i>after</i> an await (<code>results[next] = await …; next++</code>)</td><td>Two workers read the same <code>next</code> across the await gap — duplicated work, skipped tasks. Single-threaded JS still has interleaving races at every <code>await</code>.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Sequential <code>for..of await</code> sold as "parallel"</td><td>Correct but K=1: 10 000 sequential fetches. Performance finding — pair it with "what's the acceptable wall time and the downstream rate limit?"</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>No per-task error handling</td><td>First rejection rejects <code>Promise.all</code>; in-flight work keeps running with no observer. Decide: fail-fast or <code>Promise.allSettled</code> semantics — and make the choice visible in the API.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Assuming results arrive in completion order</td><td>Anything keyed by "push as they finish" reorders under load. Index-addressed writes (as above) keep input order.</td><td><span class="sev p1">P1</span></td></tr>
+        </table>
+      </div>
+
+      <div class="card algo">
+        <h3>Deep clone</h3>
+        <p>First ask <b>why</b> the code clones at all — the best finding is often "this clone hides a design problem". When a real deep clone is needed, the platform now provides one.</p>
+        <pre class="code"><span class="c">// The right default since 2022 — handles cycles, Dates, Maps, Sets, typed arrays:</span>
+const copy = structuredClone(value);
+<span class="c">// Limits: throws on functions and DOM nodes; drops property getters; loses class prototypes.</span>
+
+<span class="c">// Hand-rolled (what you'll actually review) — the checklist version:</span>
+function deepClone(value, seen = new WeakMap()) {
+  if (value === null || typeof value !== "object") return value;  <span class="c">// primitives (and functions) pass through</span>
+  if (seen.has(value)) return seen.get(value);                    <span class="c">// CYCLES — without this: infinite recursion</span>
+  if (value instanceof Date) return new Date(value);
+  if (value instanceof Map)
+    return new Map([...value].map(([k, v]) =&gt; [k, deepClone(v, seen)]));
+  if (value instanceof Set)
+    return new Set([...value].map((v) =&gt; deepClone(v, seen)));
+  const out = Array.isArray(value) ? [] : {};
+  seen.set(value, out);                       <span class="c">// register BEFORE recursing (cycles again)</span>
+  for (const k of Object.keys(value)) out[k] = deepClone(value[k], seen);
+  return out;
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td><code>{...obj}</code> / <code>Object.assign</code> / <code>arr.slice()</code> as a "deep" copy</td><td>One level only — nested objects are still <b>shared</b>; a later mutation reaches through the "copy". The classic shows up as "sometimes the original changes too".</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td><code>JSON.parse(JSON.stringify(x))</code></td><td>Drops <code>undefined</code>, functions and symbol keys; <code>Date</code> → string; <code>Map</code>/<code>Set</code> → <code>{}</code>; <code>NaN</code>/<code>Infinity</code> → <code>null</code>; <b>throws</b> on cycles and BigInt. Acceptable only for known-plain JSON data — say that precisely.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>No cycle handling in a hand-rolled clone</td><td>Any back-reference (child.parent) → stack overflow. The <code>WeakMap</code> must be populated <i>before</i> recursing into children.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Cloning class instances as plain objects</td><td>Methods and <code>instanceof</code> silently vanish; the "copy" walks and quacks differently. Ask whether identity/prototype matters here.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Cloning defensively on every call in hot paths</td><td>O(size) per call where a reader could share immutably. The deeper finding: mutation-happy design forcing copies everywhere.</td><td><span class="sev p1">P1</span></td></tr>
+        </table>
+      </div>
+
+      <div class="card algo">
+        <h3>Event-loop ordering — sync → microtasks → macrotasks</h3>
+        <p>Not an algorithm, but the mental model every JS async bug reduces to. One queue drains <b>completely</b> before the other gets a turn.</p>
+        <pre class="code">console.log("1: sync");
+setTimeout(() =&gt; console.log("4: macrotask (timer)"), 0);
+Promise.resolve().then(() =&gt; console.log("3: microtask"));
+console.log("2: sync");
+<span class="c">// Order: 1, 2, 3, 4 — ALL microtasks drain before the next macrotask.</span>
+
+async function f() {
+  console.log("A: runs synchronously");       <span class="c">// code before the first await is SYNC</span>
+  await something;
+  console.log("B: a microtask continuation"); <span class="c">// everything after await is deferred</span>
+}</pre>
+        <table class="cmd-tbl bug-tbl">
+          <tr><th>Common bug</th><th>What breaks</th><th>Sev</th></tr>
+          <tr><td>Assuming <code>setTimeout(fn, 0)</code> runs "immediately" / before pending promises</td><td>All queued microtasks run first; timers also clamp (≥4ms nested, throttled in background tabs). Ordering-dependent logic built on timers is flaky by construction.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td>Check-then-act across an <code>await</code></td><td><code>if (!this.cache[k]) { this.cache[k] = await fetch… }</code> — two callers pass the check before either writes. Single-threaded ≠ race-free: every <code>await</code> is a yield point where state can change under you.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Floating promise — call without <code>await</code>/<code>.catch</code>/<code>void</code></td><td>Rejections become unhandled (crash in Node by default); completion unordered relative to following code. If concurrency is intended, say it: <code>void doAsync()</code> or collect for later await.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td><code>try/catch</code> around a callback-scheduling call</td><td><code>try { setTimeout(() =&gt; { throw x; }) } catch {}</code> catches nothing — the throw happens on a later tick, in a different stack. Errors must be caught <i>inside</i> the callback or via promise chains.</td><td><span class="sev p0">P0</span></td></tr>
+          <tr><td>Endless microtask chain (recursive <code>.then</code> / resolved-promise loop)</td><td>Microtasks starve rendering and timers completely — the tab hangs harder than a <code>while(true)</code> with awaits. Recursive <code>setTimeout</code> yields; recursive microtasks don't.</td><td><span class="sev p1">P1</span></td></tr>
+          <tr><td><code>await</code> in a loop for independent work</td><td>Serializes what could run concurrently — N round-trips of latency instead of ~1. The fix is <code>Promise.all</code> (bounded by the pool above if N is big).</td><td><span class="sev p1">P1</span></td></tr>
+        </table>
+      </div>
+
+    </div>
+  </details>
+
+  <div class="card">
+    <h3>✅ Check yourself</h3>
+    <details class="qa"><summary>Binary search: the code has <code>hi = arr.length - 1</code> and <code>while (lo &lt; hi)</code>. What's the bug and what input exposes it?</summary><div>Inclusive upper bound needs <code>lo &lt;= hi</code> — with strict <code>&lt;</code> the loop exits when the range narrows to one element without testing it. Exposed by any target that sits where the range converges — simplest: a 1-element array <code>[42]</code>, target 42 → returns -1. Severity P0.</div></details>
+    <details class="qa"><summary>A BFS marks nodes visited when they're <i>dequeued</i>. Is the answer wrong, or something else?</summary><div>Distances/reachability stay correct — the first dequeue of a node still happens at the right layer. What breaks is performance: the same node is enqueued once per incoming edge before its first dequeue, so the queue can grow toward O(E) duplicates and revisit work explodes on dense graphs. It's a P0-at-scale masquerading as "works on my tests".</div></details>
+    <details class="qa"><summary>Why must promise-pool tasks be functions returning promises, not promises?</summary><div>A Promise represents work <b>already started</b> — by the time you have an array of promises, all N requests are in flight and no pool can un-start them. Factories let the pool control the start moment. Scan for <code>tasks.map(t =&gt; t())</code> or an array built with <code>fetch(...)</code> calls directly.</div></details>
+    <details class="qa"><summary>An LRU cache's <code>get()</code> is just <code>return this.m.get(key)</code>. What's the finding and how do you phrase it?</summary><div>Recency never updates on reads, so eviction order is insertion order — it's a FIFO cache wearing an LRU name. Phrase as observation + trace + question: "If a key is read constantly but written once, it's still evicted first — walking capacity=2 with get-heavy traffic: … Is FIFO acceptable here, or should get() refresh recency?" That's a P0 on hit-rate-sensitive paths.</div></details>
+    <details class="qa"><summary>What does <code>if (memo[n]) return memo[n]</code> get wrong, and why is it worse than it looks?</summary><div>Falsy cached values (0, "", false, null) never hit — they're recomputed on every call. For fib it reintroduces exponential time because fib(0)=0 sits on every recursion path. It looks like a style nit but it's a complexity-class regression: P0. The fix is <code>has()</code> on a Map (or <code>key in obj</code>).</div></details>
+    <details class="qa"><summary>Single-threaded JS can't have races — true?</summary><div>False in the way that matters: every <code>await</code> is a yield point. Check-then-act across an await (cache fill, balance check, "is there already a request in flight?") interleaves exactly like a race. The fixes are single-flight patterns: cache the promise itself, claim state synchronously before awaiting, or queue mutations.</div></details>
+  </div>
+
+  <p class="small muted">Pairs with the <a href="code-review.html">Code Review Protocol</a> (severity scale, pass structure) and the <code>code_review_practice/</code> examples. Data-structure internals: see the <a href="index.html">DS visualizers</a> (heaps, LRU/LFU, graphs, tries).</p>
+</div>
+<script src="site.js"></script>
+</body>
+</html>

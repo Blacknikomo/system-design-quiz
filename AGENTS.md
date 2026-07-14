@@ -37,6 +37,10 @@ interactive/
 ├── flink.html
 ├── zookeeper.html
 ├── api-gateway.html
+├── algorithms.html      # REFERENCE: 16 canonical JS algorithm implementations (search/sort/graphs/
+│                        # windows/heap/LRU/memoization + JS-specific: debounce, promise pool, deep
+│                        # clone, event loop), each with a severity-ranked common-bugs table (P0–P2,
+│                        # same scale as code-review.html). For the Code Comprehension round.
 ├── ds-*.html            # 15 data-structure visualizers (arrays, linked-lists,
 │                        # stacks, queues, hash-tables, heaps, sorted-sets,
 │                        # skip-lists, tries, btrees, graphs, union-find,
