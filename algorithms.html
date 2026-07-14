@@ -11,6 +11,46 @@
   .bug-tbl td:nth-child(3){white-space:nowrap}
   .algo h3 .tag{margin-left:8px}
   pre.code .hot{color:var(--warn)}
+  /* --- step-through visualizations (algorithms-viz.js) --- */
+  .viz{margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:12px;background:rgba(0,0,0,.15)}
+  .viz-head{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+  .viz-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-right:auto}
+  .vbtn{font:inherit;font-size:12px;padding:3px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--txt);cursor:pointer}
+  .vbtn:hover{border-color:var(--accent)}
+  .vbtn.on{border-color:var(--accent);color:var(--accent)}
+  .viz-cnt{font-size:11px;color:var(--muted);min-width:52px;text-align:right;font-family:monospace}
+  .viz-stage{min-height:56px;padding:4px 2px;overflow-x:auto}
+  .viz-msg{font-size:12.5px;border-left:3px solid var(--accent);padding:4px 10px;margin-top:8px;min-height:20px;color:var(--txt)}
+  .vrow{margin:10px 0 18px}
+  .vrow .rl{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
+  .vcells{display:flex;gap:4px}
+  .vcell{position:relative;min-width:34px;height:34px;padding:0 6px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:6px;font-family:monospace;font-size:13px;background:var(--panel)}
+  .vcell.hot{border-color:var(--accent);box-shadow:0 0 8px rgba(var(--accent-rgb),.35)}
+  .vcell.ok{border-color:var(--ok);background:rgba(var(--ok-rgb),.12)}
+  .vcell.bad{border-color:var(--bad);background:rgba(var(--bad-rgb),.12)}
+  .vcell.win{border-color:var(--accent2);background:rgba(var(--accent2-rgb),.12)}
+  .vcell.dim{opacity:.3}
+  .vlab{position:absolute;top:100%;left:50%;transform:translateX(-50%);font-size:9.5px;color:var(--accent);white-space:nowrap;padding-top:3px}
+  .vchips{display:flex;gap:4px;flex-wrap:wrap}
+  .vchip{font-family:monospace;font-size:12px;border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+  .vchip.hot{border-color:var(--accent);color:var(--accent)}
+  .vchip.ok{border-color:var(--ok);color:var(--ok)}
+  .vchip.bad{border-color:var(--bad);color:var(--bad)}
+  .vkv{font-family:monospace;font-size:12px;display:flex;gap:6px;flex-wrap:wrap}
+  .vkv span{border:1px solid var(--line);border-radius:6px;padding:2px 7px}
+  .vkv span.hot{border-color:var(--accent);color:var(--accent)}
+  .vkv span.hit{border-color:var(--ok);color:var(--ok)}
+  .vempty{font-size:12px;color:var(--muted);font-style:italic}
+  .vpre{font-family:monospace;font-size:12.5px;margin:0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);white-space:pre-wrap}
+  .vtl{position:relative;height:22px;border-bottom:1px dashed var(--line)}
+  .vdot{position:absolute;top:5px;width:11px;height:11px;border-radius:50%;transform:translateX(-50%)}
+  .vdot.evt{background:var(--muted)}
+  .vdot.fire{background:var(--ok)}
+  .vdot.future{opacity:.18}
+  .vnow{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--accent);transform:translateX(-50%)}
+  .vlane{position:relative;height:26px;background:rgba(0,0,0,.18);border-radius:6px;overflow:hidden}
+  .vblk{position:absolute;top:2px;bottom:2px;border-radius:4px;font-size:10px;font-family:monospace;display:flex;align-items:center;justify-content:center;border:1px solid var(--accent);background:rgba(var(--accent-rgb),.15);color:var(--txt)}
+  .vblk.done{border-color:var(--ok);background:rgba(var(--ok-rgb),.15)}
 </style>
 </head>
 <body>
@@ -67,6 +107,7 @@
           <tr><td>Searching objects with <code>===</code></td><td>Reference equality never matches a structurally-equal object; needs a key extractor / comparator.</td><td><span class="sev p0">P0</span></td></tr>
         </table>
         <p class="small muted">Note: the famous <code>(lo + hi)</code> integer overflow from Java/C doesn't bite in JS until 2⁵³ — but mentioning "in Java this would need <code>lo + (hi - lo) / 2</code>" is a free signal.</p>
+        <div class="viz" data-viz="bsearch"></div>
       </div>
 
       <div class="card algo">
@@ -90,6 +131,7 @@
           <tr><td><code>&lt;</code> instead of <code>&lt;=</code></td><td>Merge still sorts, but becomes <b>unstable</b> — equal elements from <code>b</code> jump ahead. Matters when elements carry payloads (sort by ts, keep insertion order).</td><td><span class="sev p1">P1</span></td></tr>
           <tr><td>Comparator via subtraction on non-numbers</td><td><code>a - b</code> on strings/Dates coerces or yields <code>NaN</code>; <code>NaN</code> makes the comparison false every time → arbitrary order.</td><td><span class="sev p0">P0</span></td></tr>
         </table>
+        <div class="viz" data-viz="merge"></div>
       </div>
 
       <div class="card algo">
@@ -124,6 +166,7 @@ function partition(arr, lo, hi) {
           <tr><td>Falling back to <code>arr.sort()</code> with no comparator</td><td>Default sort is <b>lexicographic</b>: <code>[10, 9, 1].sort()</code> → <code>[1, 10, 9]</code>. Needs <code>(a, b) =&gt; a - b</code> for numbers.</td><td><span class="sev p0">P0</span></td></tr>
         </table>
         <p class="small muted">Also know: quicksort is <b>not stable</b>; JS's built-in <code>Array.prototype.sort</code> is required to be stable (since ES2019) and is O(n log n) — in real code, "why not just <code>sort()</code> with a comparator?" is a legitimate review question.</p>
+        <div class="viz" data-viz="partition"></div>
       </div>
 
     </div>
@@ -159,6 +202,7 @@ function partition(arr, lo, hi) {
           <tr><td>Grid BFS: bounds check <i>after</i> reading the cell</td><td><code>grid[r][c]</code> with r out of range throws (or yields <code>undefined</code> and poisons logic). Check bounds first, then visited, then value.</td><td><span class="sev p0">P0</span></td></tr>
           <tr><td>Assuming one BFS covers the whole graph</td><td>Disconnected components are never visited. If the task is "process every node", loop over all nodes and BFS from each unvisited one.</td><td><span class="sev p1">P1</span></td></tr>
         </table>
+        <div class="viz" data-viz="bfs"></div>
       </div>
 
       <div class="card algo">
@@ -192,6 +236,7 @@ function dfsIterative(adj, start) {
           <tr><td>Cycle <i>detection</i> in a directed graph with a single visited set</td><td>A visited node reached again isn't necessarily a cycle — it may be a diamond (A→B→D, A→C→D). Directed cycle detection needs three states: unvisited / <b>in current path</b> / done. One boolean gives false positives.</td><td><span class="sev p0">P0</span></td></tr>
           <tr><td>Iterative version without the dedupe-on-pop check</td><td>Same node processed multiple times; with side effects per node (writes, sends) that's duplicated work or corrupted state.</td><td><span class="sev p1">P1</span></td></tr>
         </table>
+        <div class="viz" data-viz="dfs"></div>
       </div>
 
       <div class="card algo">
@@ -224,6 +269,7 @@ function dfsIterative(adj, start) {
           <tr><td>Pushing a node when <code>indeg &gt; 0</code> (e.g. <code>if (indeg[v] &lt;= 1)</code>)</td><td>Nodes run before all their prerequisites complete. In a migration runner that's data corruption.</td><td><span class="sev p0">P0</span></td></tr>
           <tr><td>Nodes that appear only in <code>edges</code>, with n derived from edges</td><td>Isolated nodes (no edges at all) vanish from the order. Ask where n comes from.</td><td><span class="sev p1">P1</span></td></tr>
         </table>
+        <div class="viz" data-viz="topo"></div>
       </div>
 
       <div class="card algo">
@@ -254,6 +300,7 @@ function dfsIterative(adj, start) {
           <tr><td><code>if (!dist.get(v))</code> instead of <code>ndist &lt; (dist.get(v) ?? Infinity)</code></td><td>Truthiness treats a legitimate distance of <b>0</b> (the source!) as "unset" and re-relaxes it. The <code>?? Infinity</code> pattern dodges both this and <code>undefined</code> comparisons.</td><td><span class="sev p0">P0</span></td></tr>
           <tr><td>Sorted array instead of a heap, re-sorted every push</td><td>O(n log n) per operation → O(n² log n) total. Works in the demo, dies at scale — a P1 with a "how big is V?" question attached.</td><td><span class="sev p1">P1</span></td></tr>
         </table>
+        <div class="viz" data-viz="dijkstra"></div>
       </div>
 
     </div>
@@ -287,6 +334,7 @@ function dfsIterative(adj, start) {
           <tr><td>Recording <code>best</code> before restoring validity (in while-shrink variants: <code>if</code> instead of <code>while</code>)</td><td>An invalid window gets counted as a candidate answer. Rule: expand → restore invariant → record.</td><td><span class="sev p0">P0</span></td></tr>
           <tr><td>Iterating with <code>s[right]</code> on unicode beyond BMP</td><td>Emoji / rare CJK are surrogate <i>pairs</i>: indexing splits them. Usually fine for interview strings — but noticing is a P2 that scores.</td><td><span class="sev p2">P2</span></td></tr>
         </table>
+        <div class="viz" data-viz="window"></div>
       </div>
 
       <div class="card algo">
@@ -308,6 +356,7 @@ function dfsIterative(adj, start) {
           <tr><td>Moving <b>both</b> pointers on a match while collecting <i>all</i> pairs with duplicates present</td><td>Either misses duplicate pairs or double-counts them; needs explicit duplicate-skipping loops (<code>while (arr[i] === arr[i+1]) i++</code>) — which themselves need bounds checks.</td><td><span class="sev p1">P1</span></td></tr>
           <tr><td>Overflow habits from other languages</td><td><code>a + b</code> can't overflow to negative in JS, but <b>precision</b> silently degrades past 2⁵³ (IDs!). <code>Number.isSafeInteger</code> is the check.</td><td><span class="sev p2">P2</span></td></tr>
         </table>
+        <div class="viz" data-viz="twoptr"></div>
       </div>
 
     </div>
@@ -369,6 +418,7 @@ function dfsIterative(adj, start) {
           <tr><td><code>pop()</code> ignoring the empty / 1-element cases</td><td><code>a[0] = a.pop()</code> on a 1-element heap re-inserts the element it just removed — heap never empties, consumer loops forever.</td><td><span class="sev p0">P0</span></td></tr>
           <tr><td>Top-K via full sort instead of a size-K heap</td><td>O(n log n) + O(n) memory vs O(n log k). Legit at small n — ask about n before flagging. Streaming input makes the heap mandatory.</td><td><span class="sev p1">P1</span></td></tr>
         </table>
+        <div class="viz" data-viz="heap"></div>
       </div>
 
       <div class="card algo">
@@ -404,6 +454,7 @@ function dfsIterative(adj, start) {
           <tr><td>Plain object <code>{}</code> as the store</td><td>No insertion-order guarantee for numeric-like keys (integer keys iterate first, sorted!), keys coerced to strings (<code>1</code> vs <code>"1"</code> collide), prototype pollution via <code>"__proto__"</code>. Map exists for this.</td><td><span class="sev p0">P0</span></td></tr>
           <tr><td>No TTL / no size bound in a "cache" that only ever grows</td><td>Not this class — but in review, any hand-rolled <code>cache = {}</code> without eviction is a slow memory leak. Standard P1 finding.</td><td><span class="sev p1">P1</span></td></tr>
         </table>
+        <div class="viz" data-viz="lru"></div>
       </div>
 
     </div>
@@ -446,6 +497,7 @@ function memoize(fn) {
           <tr><td>Unbounded memo on user-driven keys</td><td>A cache keyed by request input grows monotonically — memory leak in a long-lived process. Bound it (LRU above) or scope its lifetime.</td><td><span class="sev p1">P1</span></td></tr>
         </table>
         <p class="small muted">Bottom-up DP variant of the same bugs: array sized <code>n</code> instead of <code>n + 1</code> (read past the end → <code>undefined</code> → <code>NaN</code> cascades), and base cases at the wrong indices. <code>NaN</code> anywhere in a DP table means a base-case or sizing bug — say so out loud.</p>
+        <div class="viz" data-viz="memo"></div>
       </div>
 
     </div>
@@ -492,6 +544,7 @@ function throttle(fn, ms) {                   <span class="c">// leading + trail
           <tr><td>Debounced async fn — responses racing</td><td>Debounce limits <i>starts</i>, not <i>completions</i>: an older slow response can overwrite a newer fast one. Needs a request token / AbortController — the bug lives one level above the debounce.</td><td><span class="sev p0">P0</span></td></tr>
           <tr><td>Never cancelled on teardown</td><td>The pending timer fires after unmount/dispose and touches dead state. Expose a <code>.cancel()</code>; call it in cleanup.</td><td><span class="sev p1">P1</span></td></tr>
         </table>
+        <div class="viz" data-viz="debounce"></div>
       </div>
 
       <div class="card algo">
@@ -522,6 +575,7 @@ function throttle(fn, ms) {                   <span class="c">// leading + trail
           <tr><td>No per-task error handling</td><td>First rejection rejects <code>Promise.all</code>; in-flight work keeps running with no observer. Decide: fail-fast or <code>Promise.allSettled</code> semantics — and make the choice visible in the API.</td><td><span class="sev p1">P1</span></td></tr>
           <tr><td>Assuming results arrive in completion order</td><td>Anything keyed by "push as they finish" reorders under load. Index-addressed writes (as above) keep input order.</td><td><span class="sev p1">P1</span></td></tr>
         </table>
+        <div class="viz" data-viz="pool"></div>
       </div>
 
       <div class="card algo">
@@ -553,6 +607,7 @@ function deepClone(value, seen = new WeakMap()) {
           <tr><td>Cloning class instances as plain objects</td><td>Methods and <code>instanceof</code> silently vanish; the "copy" walks and quacks differently. Ask whether identity/prototype matters here.</td><td><span class="sev p1">P1</span></td></tr>
           <tr><td>Cloning defensively on every call in hot paths</td><td>O(size) per call where a reader could share immutably. The deeper finding: mutation-happy design forcing copies everywhere.</td><td><span class="sev p1">P1</span></td></tr>
         </table>
+        <div class="viz" data-viz="clone"></div>
       </div>
 
       <div class="card algo">
@@ -578,6 +633,7 @@ async function f() {
           <tr><td>Endless microtask chain (recursive <code>.then</code> / resolved-promise loop)</td><td>Microtasks starve rendering and timers completely — the tab hangs harder than a <code>while(true)</code> with awaits. Recursive <code>setTimeout</code> yields; recursive microtasks don't.</td><td><span class="sev p1">P1</span></td></tr>
           <tr><td><code>await</code> in a loop for independent work</td><td>Serializes what could run concurrently — N round-trips of latency instead of ~1. The fix is <code>Promise.all</code> (bounded by the pool above if N is big).</td><td><span class="sev p1">P1</span></td></tr>
         </table>
+        <div class="viz" data-viz="eventloop"></div>
       </div>
 
     </div>
@@ -596,5 +652,6 @@ async function f() {
   <p class="small muted">Pairs with the <a href="code-review.html">Code Review Protocol</a> (severity scale, pass structure) and the <code>code_review_practice/</code> examples. Data-structure internals: see the <a href="index.html">DS visualizers</a> (heaps, LRU/LFU, graphs, tries).</p>
 </div>
 <script src="site.js"></script>
+<script src="algorithms-viz.js"></script>
 </body>
 </html>
